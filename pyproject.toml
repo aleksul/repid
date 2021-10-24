@@ -1,0 +1,49 @@
+[tool.coverage]
+report.fail_under = 90
+
+[tool.black]
+line-length = 100
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+
+[tool.flake8]
+max-line-length = 100
+per-file-ignores = "tests/*: S101"
+
+[tool.mypy]
+ignore_missing_imports = true
+
+[tool.poetry]
+name = "repid"
+version = "0.1.0"
+description = "Async Redis queue for Python."
+authors = ["aleksul <aleksandrsulimov@bk.ru>"]
+license = "MIT"
+
+[tool.poetry.dependencies]
+python = "^3.8"
+aioredis = { extras = ["hiredis"], version = "^2.0.0" }
+
+[tool.poetry.dev-dependencies]
+# sort
+black = "^21.9b0"
+isort = "^5.9.3"
+# lint
+mypy = "^0.910"
+flake8 = "^4.0.1"
+flake8-bugbear = "^21.9.2"
+flake8-builtins = "^1.5.3"
+flake8-pytest-style = "^1.5.0"
+pyproject-flake8 = "^0.0.1-alpha.2"
+# test
+pytest = "^6.2.5"
+pytest-asyncio = "^0.15.1"
+pytest-cov = "^3.0.0"
+# pre-commit
+pre-commit = "^2.15.0"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

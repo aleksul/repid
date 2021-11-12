@@ -28,14 +28,14 @@ aioredis = { extras = ["hiredis"], version = "^2.0.0" }
 
 [tool.poetry.dev-dependencies]
 # sort
-black = "^21.9b0"
-isort = "^5.9.3"
+black = "^21.10b0"
+isort = "^5.10.1"
 # lint
 mypy = "^0.910"
 flake8 = "^4.0.1"
 flake8-bugbear = "^21.9.2"
 flake8-builtins = "^1.5.3"
-flake8-pytest-style = "^1.5.0"
+flake8-pytest-style = "^1.5.1"
 pyproject-flake8 = "^0.0.1-alpha.2"
 # test
 pytest = "^6.2.5"
@@ -43,6 +43,9 @@ pytest-asyncio = "^0.15.1"
 pytest-cov = "^3.0.0"
 # pre-commit
 pre-commit = "^2.15.0"
+# tox
+tox = "^3.24.4"
+tox-docker = "^3.1.0"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

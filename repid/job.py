@@ -24,13 +24,6 @@ class JobResult:
 
 
 class Job:
-    _id: str
-    name: str
-    queue: str
-    func_args: Dict[str, Any]
-    defer_until: Optional[datetime]
-    defer_by: Optional[timedelta]
-
     def __init__(
         self,
         redis: Redis,

@@ -1,4 +1,3 @@
-from repid.connections import Repid
-from repid.job import Job
-from repid.models import JobDefenition, JobResult, JobStatus
-from repid.worker import RepidWorker
+from repid.job import Job, JobResult, JobStatus
+from repid.repid import Repid
+from repid.worker import Worker

@@ -6,8 +6,6 @@ from aioredis import Redis
 
 from repid.job import Job
 
-# Job in redis pattern: job:{uid} where uid usually {name}:{uuid4().hex}
-
 
 class Repid:
     def __init__(self, redis: Redis):
@@ -42,7 +40,7 @@ class Repid:
         expires_in: Optional[int] = 86400,
         _id: Optional[str] = None,
     ) -> Job:
-        j = Job(
+        job = Job(
             self.__redis,
             name,
             queue=queue,
@@ -51,5 +49,5 @@ class Repid:
             defer_by=defer_by,
             _id=_id,
         )
-        await j.enqueue(expires_in=expires_in)
-        return j
+        await job.enqueue(expires_in=expires_in)
+        return job

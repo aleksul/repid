@@ -51,35 +51,35 @@ class Job:
         self.defer_by = defer_by
         # in redis
         self.__redis = redis
-        self.__id_redis = "job:" + self._id
-        self.__result_redis = "result:" + self._id
-        self.__queue_redis = "queue:" + self.queue
+        self._id_redis = "job:" + self._id
+        self._result_redis = "result:" + self._id
+        self._queue_redis = "queue:" + self.queue
 
     async def enqueue(self, expires_in: Optional[int] = 86400):
-        if await self.__redis.lpos(self.__queue_redis, self.__id_redis) is None:
+        if await self.__redis.lpos(self._queue_redis, self._id_redis) is None:
             await self.__redis.set(
-                self.__id_redis,
+                self._id_redis,
                 json.dumps(self.__dict__()),
                 ex=expires_in,
                 nx=True,
             )
             await self.__redis.rpush(
-                self.__queue_redis,
-                self.__id_redis,
+                self._queue_redis,
+                self._id_redis,
             )
 
     @property
     async def expires_in(self) -> Optional[int]:
-        seconds_left = await self.__redis.ttl(self.__id_redis)
+        seconds_left = await self.__redis.ttl(self._id_redis)
         if seconds_left < 0:
             return None
         return seconds_left
 
     @property
     async def status(self) -> JobStatus:
-        if not await self.__redis.exists(self.__id_redis):
+        if not await self.__redis.exists(self._id_redis):
             return JobStatus.NOT_FOUND
-        if await self.__redis.lpos(self.__queue_redis, self.__id_redis) is not None:
+        if await self.__redis.lpos(self._queue_redis, self._id_redis) is not None:
             return JobStatus.QUEUED
         if await self.result is not None:
             return JobStatus.DONE
@@ -88,17 +88,19 @@ class Job:
 
     @property
     async def result(self) -> Optional[JobResult]:
-        _result = await self.__redis.get(self.__result_redis)
+        _result = await self.__redis.get(self._result_redis)
         return None if _result is None else JobResult(**json.loads(_result))
 
     def is_scheduled_now(self) -> bool:
-        if (self.defer_until is None) or (self.defer_until > datetime.now()):
+        if self.defer_until is None:
+            return True
+        if self.defer_until > datetime.now():
             return False
         return True
 
     async def is_reccuring_now(self) -> bool:
         if self.defer_by is None:
-            return False
+            return True
         previous_result = await self.result
         if previous_result is not None:
             if previous_result.finished_when + self.defer_by < datetime.now():

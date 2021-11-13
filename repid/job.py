@@ -36,7 +36,7 @@ class Job:
     ):
         self.name = name
         self.queue = queue
-        self.func_argumnets = func_args or dict()
+        self.func_args = func_args or dict()
         self._id = _id or f"{self.name}:{uuid.uuid4().hex}"
         if bool(defer_until and defer_by):
             raise ValueError("Usage of 'defer_until' AND 'defer_by' together is prohibited.")
@@ -109,3 +109,17 @@ class Job:
             defer_until=self.defer_until,
             defer_by=self.defer_by,
         )
+
+    def __eq__(self, other):
+        if isinstance(other, Job):
+            return all(
+                [
+                    self._id == other._id,
+                    self.name == other.name,
+                    self.queue == other.queue,
+                    self.func_args == other.func_args,
+                    self.defer_until == other.defer_until,
+                    self.defer_by == other.defer_by,
+                ]
+            )
+        return False

@@ -12,10 +12,10 @@ class Repid:
         self.__redis = redis
 
     async def _get_all_queues(self) -> List[str]:
-        return await self.__redis.keys("queue:*")
+        return [q[len("queue:") :] for q in await self.__redis.keys("queue:*")]  # noqa: E203
 
     async def _get_queued_jobs_ids(self, queue: str) -> List[str]:
-        _queue: List[str] = await self.__redis.get(queue)
+        _queue: List[str] = await self.__redis.lrange("queue:" + queue, 0, -1)
         if _queue is None:
             raise ValueError(f"Queue with name {queue} doesn't exist.")
         return _queue

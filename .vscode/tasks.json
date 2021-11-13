@@ -1,0 +1,15 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Check coverage",
+            "command": "poetry run pytest -q --cov-report=xml --cov=repid",
+            "type": "shell",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "silent"
+            },
+            "group": "test"
+        }
+    ]
+}

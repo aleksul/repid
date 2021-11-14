@@ -5,6 +5,8 @@
         "**/.pytest_cache": true,
         ".coverage": true,
         "coverage.xml": true,
+        ".tox": true,
+        ".mypy_cache": true,
     },
     // Testing
     "python.testing.pytestEnabled": true,

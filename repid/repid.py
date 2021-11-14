@@ -16,8 +16,6 @@ class Repid:
 
     async def _get_queued_jobs_ids(self, queue: str) -> List[str]:
         _queue: List[str] = await self.__redis.lrange("queue:" + queue, 0, -1)
-        if _queue is None:
-            raise ValueError(f"Queue with name {queue} doesn't exist.")
         return _queue
 
     async def _get_queued_jobs(self, queue: str) -> List[Job]:

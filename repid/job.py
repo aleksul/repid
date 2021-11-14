@@ -77,7 +77,7 @@ class Job:
         if await self.result is not None:
             return JobStatus.DONE
         else:
-            return JobStatus.IN_PROGRESS
+            return JobStatus.IN_PROGRESS  # pragma: no cover
 
     @property
     async def result(self) -> Optional[JobResult]:

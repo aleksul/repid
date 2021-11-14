@@ -14,7 +14,7 @@ from repid.repid import Repid
 
 class Worker(Repid):
     actors: Dict[str, Callable] = {}
-    queues: Set[str] = set()
+    _queues: Set[str] = set()
     __executor = ThreadPoolExecutor()
 
     def __init__(self, redis: Redis):
@@ -24,9 +24,8 @@ class Worker(Repid):
     def actor(self, name: Optional[str] = None, queue: str = "default", retries=1):
         # actually it is a decorator fabric, real decorator is below
         def decorator(fn):
-            self.queues.add(queue)
+            self._queues.add("queue:" + queue)
             actor_name = name or fn.__name__
-            self.actors[actor_name] = fn
 
             @functools.wraps(fn)
             async def wrapper(*args, **kwargs):
@@ -56,13 +55,13 @@ class Worker(Repid):
                     result=result,
                 )
 
+            self.actors[actor_name] = wrapper
+
             return wrapper
 
         return decorator
 
     async def _pop_job(self, queue: str) -> Optional[Job]:
-        if not await self.__redis.exists(queue):
-            return None
         job_id = await self.__redis.lpop(queue)
         if job_id is None:
             return None
@@ -82,7 +81,7 @@ class Worker(Repid):
         return func
 
     async def run(self):
-        for queue in self.queues:
+        for queue in self._queues:
             # get a job from the queue
             job = await self._pop_job(queue)
             if job is None:
@@ -96,5 +95,12 @@ class Worker(Repid):
             if job.is_scheduled_now() and await job.is_reccuring_now():
                 # run the job
                 result: JobResult = await func(**job.func_args)
-                await self.__redis.set(job._result_redis, json.dumps(asdict(result)))
-        asyncio.ensure_future(self.run)
+                await self.__redis.set(job._result_redis, json.dumps(asdict(result), default=str))
+                # add reccuring job back to the queue
+                if job.defer_by is not None:
+                    await self.__redis.rpush(job._queue_redis, job._id_redis)
+
+    async def run_forever(self):
+        while 1:  # pragma: no cover
+            await self.run()
+            await asyncio.sleep(1)

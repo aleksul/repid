@@ -5,10 +5,6 @@
             "label": "Check coverage",
             "command": "poetry run pytest -q --cov-report=xml --cov=repid",
             "type": "shell",
-            "problemMatcher": [],
-            "presentation": {
-                "reveal": "silent"
-            },
             "group": "test"
         }
     ]

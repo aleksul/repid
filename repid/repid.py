@@ -35,7 +35,6 @@ class Repid:
         func_args: Optional[Dict[str, Any]] = None,
         defer_until: Optional[datetime] = None,
         defer_by: Optional[timedelta] = None,
-        expires_in: Optional[int] = 86400,
         _id: Optional[str] = None,
     ) -> Job:
         job = Job(
@@ -47,5 +46,5 @@ class Repid:
             defer_by=defer_by,
             _id=_id,
         )
-        await job.enqueue(expires_in=expires_in)
+        await job.enqueue()
         return job

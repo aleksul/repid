@@ -35,6 +35,7 @@ repos:
     rev: v0.910
     hooks:
       - id: mypy
+        additional_dependencies: [types-orjson~=3.6.1]
         name: mypy-repid
         files: repid/
       - id: mypy

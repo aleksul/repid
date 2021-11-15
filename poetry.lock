@@ -596,6 +596,14 @@ docker = ">=2.3.0,<6.0"
 tox = ">=3.0.0,<4.0"
 
 [[package]]
+name = "types-orjson"
+version = "3.6.1"
+description = "Typing stubs for orjson"
+category = "dev"
+optional = false
+python-versions = "*"
+
+[[package]]
 name = "typing-extensions"
 version = "3.10.0.2"
 description = "Backported and Experimental Type Hints for Python 3.5+"
@@ -650,7 +658,7 @@ test = ["websockets"]
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.8"
-content-hash = "3498f0712352c98df4dc1a99b53c2a384a35b1653b1e23bfa15c000375f2c0a1"
+content-hash = "53c3859b7572db5893df8ab47298b0fe4f3e586fb14f254cf916b7b66338799c"
 
 [metadata.files]
 aioredis = [
@@ -1074,6 +1082,10 @@ tox = [
 tox-docker = [
     {file = "tox-docker-3.1.0.tar.gz", hash = "sha256:e1d7d60254788a2c1956d6cdfbe2a6418ed0c18c7cf2486fd484079fc84d832c"},
     {file = "tox_docker-3.1.0-py2.py3-none-any.whl", hash = "sha256:3080c436f7fdfb5a7446215aee620638489ccd7abf812d38b6fb860337efd6f2"},
+]
+types-orjson = [
+    {file = "types-orjson-3.6.1.tar.gz", hash = "sha256:6bc2245b242c9ab4c8845495a4c16a51fa22510c8ac1d83da027ab3ce1f77d8a"},
+    {file = "types_orjson-3.6.1-py3-none-any.whl", hash = "sha256:b3e991dd05fc6571a423996cbde37183123983783db64c5bc53e985ae32c7176"},
 ]
 typing-extensions = [
     {file = "typing_extensions-3.10.0.2-py2-none-any.whl", hash = "sha256:d8226d10bc02a29bcc81df19a26e56a9647f8b0a6d4a83924139f4a8b01f17b7"},

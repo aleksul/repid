@@ -25,6 +25,7 @@ license = "MIT"
 [tool.poetry.dependencies]
 python = "^3.8"
 aioredis = { extras = ["hiredis"], version = "^2.0.0" }
+orjson = "^3.6.4"
 
 [tool.poetry.dev-dependencies]
 # sort

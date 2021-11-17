@@ -16,7 +16,6 @@ from .repid import Repid
 class Worker(Repid):
     actors: Dict[str, Callable] = {}
     _queues: Set[Queue] = set()
-    _executor = ThreadPoolExecutor()
 
     def __init__(self, redis: Redis):
         self.__redis__ = redis
@@ -30,19 +29,20 @@ class Worker(Repid):
 
             @functools.wraps(fn)
             async def wrapper(*args, **kwargs):
-                loop = asyncio.get_event_loop()
                 result: Any = None
                 success: bool = None
                 started_when = int(datetime.utcnow().timestamp())
+                loop = asyncio.get_event_loop()
                 for _ in range(retries):
                     try:
                         if asyncio.iscoroutinefunction(fn):
                             result = await fn(*args, **kwargs)
                         else:
-                            result = await loop.run_in_executor(
-                                self._executor,
-                                functools.partial(fn, *args, **kwargs),
-                            )
+                            with ThreadPoolExecutor() as pool:
+                                result = await loop.run_in_executor(
+                                    pool,
+                                    functools.partial(fn, *args, **kwargs),
+                                )
                     except Exception as exc:
                         result = f"Exception occured while running the job: {type(exc)}: {exc}."
                         success = False
@@ -84,7 +84,7 @@ class Worker(Repid):
     async def run(self):
         await asyncio.gather(*[self.run_one_queue(queue) for queue in self._queues])
 
-    async def run_forever(self):
+    async def run_forever(self, delay: float = 1.0):
         while 1:  # pragma: no cover
             await self.run()
-            await asyncio.sleep(1)
+            await asyncio.sleep(delay)

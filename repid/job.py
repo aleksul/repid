@@ -1,14 +1,18 @@
+from __future__ import annotations
+
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 import orjson
 from aioredis import Redis
 
 from .constants import JOB_PREFIX, RESULT_PREFIX
-from .queue import Queue
+
+if TYPE_CHECKING:
+    from .queue import Queue
 
 JSONType = Union[str, int, float, bool, None, Dict[str, Any], List[Any]]
 
@@ -44,6 +48,9 @@ class Job:
         self.__redis__ = redis
         self.name = name
         self._id = _id or f"{name}:{uuid.uuid4().hex}"
+
+        from .queue import Queue
+
         if not isinstance(queue, Queue):
             self.queue = Queue(redis, queue)
         else:
@@ -97,7 +104,7 @@ class Job:
     def is_defer_until(self) -> Optional[bool]:
         if self.defer_until is None:
             return None
-        if self.defer_until > int(datetime.utcnow().timestamp()):
+        if self.defer_until < int(datetime.utcnow().timestamp()):
             return True
         return False
 
@@ -106,13 +113,12 @@ class Job:
         if self.defer_by is None:
             return None
         res = await self.result
-        if res is not None:
-            if (
-                datetime.fromtimestamp(res.finished_when) + timedelta(seconds=self.defer_by)
-                < datetime.utcnow()
-            ):
-                return False
-        return True
+        if res is None:
+            return True
+        elif res.finished_when + self.defer_by < int(datetime.utcnow().timestamp()):
+            return True
+        else:
+            return False
 
     def __eq__(self, other):
         if isinstance(other, Job):
@@ -131,6 +137,11 @@ class Job:
     def __as_dict__(self) -> Dict[str, Any]:
         res = dict()
         for s in self.__slots__:
+            if s == "queue":
+                q: Queue = self.__getattribute__(s)
+                res[s] = q.name
+                continue
+
             if not s.startswith("__"):
                 res[s] = self.__getattribute__(s)
         return res

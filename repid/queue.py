@@ -96,9 +96,9 @@ class Queue:
         await self.__redis__.lrem(QUEUE_DEFER_PREFIX + self.name, count=0, value=job_id)
 
     async def is_job_queued(self, job_id: str) -> bool:
-        res1: Optional[int] = await self.__redis__.lpos(QUEUE_PREFIX + self.name, job_id)
-        res2: Optional[int] = await self.__redis__.lpos(QUEUE_DEFER_PREFIX + self.name, job_id)
-        return any([res1, res2])
+        res1 = await self.__redis__.lpos(QUEUE_PREFIX + self.name, job_id)
+        res2 = await self.__redis__.lpos(QUEUE_DEFER_PREFIX + self.name, job_id)
+        return any([res1 is not None, res2 is not None])
 
     @property
     async def jobs(self) -> List[Job]:
@@ -115,3 +115,6 @@ class Queue:
         if isinstance(other, Queue):
             return self.name == other.name
         return False
+
+    def __hash__(self):
+        return hash(self.name)

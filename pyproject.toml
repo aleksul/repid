@@ -29,7 +29,7 @@ orjson = "^3.6.4"
 
 [tool.poetry.dev-dependencies]
 # sort
-black = "^21.10b0"
+black = "^21.11b0"
 isort = "^5.10.1"
 # lint
 mypy = "^0.910"
@@ -41,7 +41,7 @@ flake8-pytest-style = "^1.5.1"
 pyproject-flake8 = "^0.0.1-alpha.2"
 # test
 pytest = "^6.2.5"
-pytest-asyncio = "^0.15.1"
+pytest-asyncio = "^0.16.0"
 pytest-cov = "^3.0.0"
 # pre-commit
 pre-commit = "^2.15.0"

@@ -1,3 +1,5 @@
+import asyncio
+
 import aioredis
 import pytest
 
@@ -8,3 +10,10 @@ async def redis():
     await redis.flushdb()
     yield redis
     await redis.close()
+
+
+@pytest.fixture(scope="session")
+def event_loop():
+    loop = asyncio.get_event_loop()
+    yield loop
+    loop.close()

@@ -1,4 +1,3 @@
-import asyncio
 from datetime import datetime, timedelta
 
 import pytest
@@ -14,40 +13,24 @@ async def test_job_defer_until_and_by(redis: Redis):
 
 
 @pytest.mark.asyncio()
-async def test_expire(redis: Redis):
-    j = Job(redis, "awesome_job")
-    await j.enqueue(expires_in=10)
-    seconds_left = await j.expires_in
-    assert type(seconds_left) is int
-    assert 0 < seconds_left <= 10
-
-
-@pytest.mark.asyncio()
-async def test_no_expire(redis: Redis):
-    j = Job(redis, "awesome_job")
-    await j.enqueue(expires_in=None)
-    assert (await j.expires_in) is None
-
-
-@pytest.mark.asyncio()
 async def test_no_reccuring_no_schedule(redis: Redis):
     j = Job(redis, "awesome_job")
-    assert bool(j.is_scheduled_now())
-    assert bool(await j.is_reccuring_now())
+    assert not j.is_defered
 
 
 @pytest.mark.asyncio()
 async def test_schedule(redis: Redis):
-    j = Job(redis, "awesome_job", defer_until=datetime.now() + timedelta(seconds=1))
-    assert not bool(j.is_scheduled_now())
-    await asyncio.sleep(1)
-    assert bool(j.is_scheduled_now())
+    defer_until = int(datetime.utcnow().timestamp())
+    j = Job(redis, "awesome_job", defer_until=defer_until + 1)
+    while j.defer_until >= int(datetime.utcnow().timestamp()):  # type: ignore
+        pass
+    assert bool(j.is_defer_until)
 
 
 @pytest.mark.asyncio()
 async def test_reccuring(redis: Redis):
     j = Job(redis, "awesome_job", defer_by=timedelta(seconds=10))
-    assert bool(await j.is_reccuring_now())
+    assert bool(await j.is_defer_by)
 
 
 @pytest.mark.asyncio()

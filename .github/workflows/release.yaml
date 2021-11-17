@@ -1,0 +1,23 @@
+name: Release
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Build and publish to pypi
+        uses: JRubics/poetry-publish@v1.9
+        with:
+          python_version: "3.8"
+          poetry_version: "==1.1.11"
+          pypi_token: ${{ secrets.PYPI_TOKEN }}
+          ignore_dev_requirements: "yes"

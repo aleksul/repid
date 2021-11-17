@@ -1,44 +1,39 @@
-import json
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from aioredis import Redis
 
-from repid.job import Job
+from .constants import QUEUE_PREFIX
+from .job import Job
+from .queue import Queue
 
 
 class Repid:
+    QUEUE_PREFIX_LEN = len(QUEUE_PREFIX)
+
     def __init__(self, redis: Redis):
-        self.__redis = redis
+        self.__redis__ = redis
 
-    async def _get_all_queues(self) -> List[str]:
-        return [q[len("queue:") :] for q in await self.__redis.keys("queue:*")]  # noqa: E203
+    async def get_all_queues(self) -> List[Queue]:
+        return [
+            Queue(q[self.QUEUE_PREFIX_LEN :])  # noqa: E203
+            for q in await self.__redis__.keys("queue:*")
+        ]
 
-    async def _get_queued_jobs_ids(self, queue: str) -> List[str]:
-        _queue: List[str] = await self.__redis.lrange("queue:" + queue, 0, -1)
-        return _queue
-
-    async def _get_queued_jobs(self, queue: str) -> List[Job]:
-        _queue = await self._get_queued_jobs_ids(queue=queue)
-        res = []
-        for _id in _queue:
-            d = await self.__redis.get(_id)
-            if d is None:
-                continue
-            res.append(Job(self.__redis, **json.loads(d)))
-        return res
+    def get_queue(self, queue_name: str) -> Queue:
+        return Queue(self.__redis__, queue_name)
 
     async def enqueue_job(
         self,
         name: str,
-        queue: str = "default",
+        queue: Union[str, Queue] = "default",
         func_args: Optional[Dict[str, Any]] = None,
-        defer_until: Optional[datetime] = None,
-        defer_by: Optional[timedelta] = None,
+        defer_until: Union[datetime, int, None] = None,
+        defer_by: Union[timedelta, int, None] = None,
         _id: Optional[str] = None,
     ) -> Job:
         job = Job(
-            self.__redis,
+            self.__redis__,
             name,
             queue=queue,
             func_args=func_args,

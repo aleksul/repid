@@ -7,8 +7,8 @@ from typing import Any, Dict, List, Optional, Union
 import orjson
 from aioredis import Redis
 
-from repid import JOB_PREFIX, RESULT_PREFIX
-from repid.queue import Queue
+from .constants import JOB_PREFIX, RESULT_PREFIX
+from .queue import Queue
 
 JSONType = Union[str, int, float, bool, None, Dict[str, Any], List[Any]]
 
@@ -53,13 +53,17 @@ class Job:
         if defer_until is not None and defer_by is not None:
             raise ValueError("Usage of 'defer_until' AND 'defer_by' together is prohibited.")
 
-        self.defer_until = defer_until
+        self.defer_until = None
         if isinstance(defer_until, datetime):
             self.defer_until = int(defer_until.timestamp())
+        elif type(defer_until) is int:
+            self.defer_until = defer_until
 
-        self.defer_by = defer_by
-        if isinstance(defer_until, timedelta):
+        self.defer_by = None
+        if isinstance(defer_by, timedelta):
             self.defer_by = int(defer_by.seconds)
+        elif type(defer_by) is int:
+            self.defer_by = defer_by
 
     async def enqueue(self):
         await self.__redis__.set(
@@ -86,24 +90,27 @@ class Job:
 
     @property
     async def result(self) -> Optional[JobResult]:
-        _result = await self.__redis__.get(RESULT_PREFIX + self._id)
-        return None if _result is None else JobResult(**orjson.loads(_result))
+        raw = await self.__redis__.get(RESULT_PREFIX + self._id)
+        return None if raw is None else JobResult(**orjson.loads(raw))
 
     @property
-    def is_defer_until(self) -> bool:
+    def is_defer_until(self) -> Optional[bool]:
         if self.defer_until is None:
+            return None
+        if self.defer_until > int(datetime.utcnow().timestamp()):
             return True
-        if self.defer_until > datetime.now().timestamp():  # type: ignore
-            return False
-        return True
+        return False
 
     @property
-    async def is_defer_by(self) -> bool:
+    async def is_defer_by(self) -> Optional[bool]:
         if self.defer_by is None:
-            return True
+            return None
         res = await self.result
         if res is not None:
-            if res.finished_when + self.defer_by < datetime.now().timestamp():  # type: ignore
+            if (
+                datetime.fromtimestamp(res.finished_when) + timedelta(seconds=self.defer_by)
+                < datetime.utcnow()
+            ):
                 return False
         return True
 

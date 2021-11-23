@@ -16,4 +16,4 @@ async def test_enqueue_job(redis: Redis):
     r = Repid(redis)
     job = await r.enqueue_job("super_job")
     assert await r.get_all_queues() == [Queue(redis, "default")]
-    assert await r.get_queue("default").jobs == [job]
+    assert await r.get_queue("default").ids == [job._id]

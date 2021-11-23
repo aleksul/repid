@@ -29,6 +29,8 @@ class JobResult:
 
 
 class Job:
+    """Describes how and when the job should be executed."""
+
     __slots__ = ("_id", "name", "queue", "func_args", "defer_until", "defer_by", "__redis__")
 
     def __init__(
@@ -75,11 +77,13 @@ class Job:
         await self.queue.add_job(self._id, self.is_deferred)
 
     async def update(self):
+        await self.queue.remove_job(self._id)
         await self.__redis__.set(
             JOB_PREFIX + self._id,
             orjson.dumps(self.__as_dict__()),
             xx=True,
         )
+        await self.queue.add_job(self._id, self.is_deferred)
 
     async def delete(self, delete_result: bool = True) -> None:
         await self.queue.remove_job(self._id)
@@ -132,6 +136,9 @@ class Job:
             )
         return False
 
+    def __hash__(self) -> int:
+        return hash(self.__as_dict__())
+
     def __as_dict__(self) -> Dict[str, Any]:
         res = dict()
         for s in self.__slots__:
@@ -143,3 +150,6 @@ class Job:
             if not s.startswith("__"):
                 res[s] = self.__getattribute__(s)
         return res
+
+    def __str__(self):
+        return f"Job(name={self.name}, queue={self.queue.name}, _id={JOB_PREFIX}{self._id})"

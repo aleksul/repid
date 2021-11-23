@@ -10,9 +10,15 @@ from .queue import Queue
 
 
 class Repid:
+    """Main class. Mostly useful for producer.
+    Helps enqueueing new jobs, get existing jobs and queues, as well as pop jobs.
+    """
+
     QUEUE_PREFIX_LEN = len(QUEUE_PREFIX)
 
     def __init__(self, redis: Redis):
+        if redis.connection_pool.encoder_class.decode_responses is not True:
+            ValueError("Redis instance must decode responses.")
         self.__redis__ = redis
 
     async def get_all_queues(self) -> List[Queue]:

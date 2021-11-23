@@ -43,8 +43,8 @@ class Queue:
             QUEUE_DEFER_PREFIX + self.name,
         )
 
-    async def add_job(self, job_id: str, defered: bool = False) -> None:
-        prefix = QUEUE_DEFER_PREFIX if defered else QUEUE_PREFIX
+    async def add_job(self, job_id: str, deferred: bool = False) -> None:
+        prefix = QUEUE_DEFER_PREFIX if deferred else QUEUE_PREFIX
         full_name = prefix + self.name
         async with self.__redis__.pipeline() as pipe:
             pipe.lrem(full_name, 0, job_id)

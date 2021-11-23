@@ -89,6 +89,7 @@ class Repid:
         while len(defered_by) > 0:
             j = defered_by.pop()
             if await j.is_deferred_already:
+                await queue.remove_job(j._id)
                 return j
         return None
 

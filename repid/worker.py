@@ -46,6 +46,9 @@ class Worker(Repid):
             return
         # run the job
         result: JobResult = await func(**job.func_args)
+        # re-enqueue defer_by job
+        if job.defer_by is not None:
+            await job.queue.add_job(job._id, deferred=True)
         await self._save_result(job._id, result)
 
     async def run(self):

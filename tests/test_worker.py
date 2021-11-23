@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import pytest
 from aioredis import Redis
 
-from repid import JobStatus, Worker
+from repid import JobStatus, Queue, Worker
 
 
 @pytest.mark.asyncio()
@@ -86,3 +86,9 @@ async def test_reccuring_job(redis: Redis):
     await w.run()
     second_result = await j.result
     assert first_result.result != second_result.result  # type: ignore
+
+
+@pytest.mark.asyncio()
+async def test_no_jobs(redis: Redis):
+    w = Worker(redis)
+    await w.run_one_queue(Queue(redis, "empty_queue"))

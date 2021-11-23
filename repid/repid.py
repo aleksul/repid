@@ -17,8 +17,8 @@ class Repid:
     QUEUE_PREFIX_LEN = len(QUEUE_PREFIX)
 
     def __init__(self, redis: Redis):
-        if redis.connection_pool.encoder_class.decode_responses is not True:
-            ValueError("Redis instance must decode responses.")
+        if redis.connection_pool.connection_kwargs.get("decode_responses") is not True:
+            raise ValueError("Redis instance must decode responses.")
         self.__redis__ = redis
 
     async def get_all_queues(self) -> List[Queue]:
@@ -62,38 +62,38 @@ class Repid:
                 return Job(self.__redis__, **orjson.loads(raw_job))
         return None
 
-    async def _pop_defered_job(self, queue_name: str) -> Optional[Job]:
+    async def _pop_deferred_job(self, queue_name: str) -> Optional[Job]:
         queue = Queue(self.__redis__, queue_name)
         all_jobs_ids = await queue.deferred_queue_ids
-        defered_by: List[Job] = []
-        defered_until: Dict[int, Job] = dict()
+        deferred_by: List[Job] = []
+        deferred_until: Dict[int, Job] = dict()
         for job_id in all_jobs_ids:
             if ((j := await self.get_job(job_id)) is None) or (not j.is_deferred):
                 await queue.remove_job(job_id)
                 continue
             if j.defer_until is not None:
-                defered_until[j.defer_until] = j
+                deferred_until[j.defer_until] = j
             if j.defer_by is not None:
-                defered_by.append(j)
+                deferred_by.append(j)
 
         # trying to get defered_until job
-        keys = list(defered_until.keys())
+        keys = list(deferred_until.keys())
         if len(keys) > 0:
-            j = defered_until[min(keys)]
+            j = deferred_until[min(keys)]
             if await j.is_deferred_already:
-                # this method pops the job, but we didn't removed it yet
-                await queue.remove_job(j._id)
-                return j
+                # return the job if it is still in queue
+                if await queue.remove_job(j._id) > 0:
+                    return j
 
         # ...otherwise, check all defered_by jobs, until find one that's ready
-        while len(defered_by) > 0:
-            j = defered_by.pop()
+        while len(deferred_by) > 0:
+            j = deferred_by.pop()
             if await j.is_deferred_already:
-                await queue.remove_job(j._id)
-                return j
+                if await queue.remove_job(j._id) > 0:
+                    return j
         return None
 
     async def pop_job(self, queue_name: str) -> Optional[Job]:
-        if (defered_job := await self._pop_defered_job(queue_name)) is not None:
+        if (defered_job := await self._pop_deferred_job(queue_name)) is not None:
             return defered_job
         return await self._pop_normal_job(queue_name)

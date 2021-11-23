@@ -51,9 +51,10 @@ class Queue:
             pipe.rpush(full_name, job_id)
             await pipe.execute()
 
-    async def remove_job(self, job_id: str) -> None:
-        await self.__redis__.lrem(QUEUE_PREFIX + self.name, count=0, value=job_id)
-        await self.__redis__.lrem(QUEUE_DEFER_PREFIX + self.name, count=0, value=job_id)
+    async def remove_job(self, job_id: str) -> int:
+        count1 = await self.__redis__.lrem(QUEUE_PREFIX + self.name, count=0, value=job_id)
+        count2 = await self.__redis__.lrem(QUEUE_DEFER_PREFIX + self.name, count=0, value=job_id)
+        return count1 + count2
 
     async def is_job_queued(self, job_id: str) -> bool:
         res1 = await self.__redis__.lpos(QUEUE_PREFIX + self.name, job_id)

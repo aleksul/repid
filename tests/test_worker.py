@@ -17,9 +17,9 @@ async def test_actor_and_its_result(redis: Redis):
         return 1
 
     j = await w.enqueue_job("super_duper_job")
-    assert await w.get_queue("default").jobs == [j]
+    assert await j.queue.is_job_queued(j._id)
     await w.run()
-    assert await w.get_queue("default").jobs == []
+    assert not await j.queue.is_job_queued(j._id)
     assert await j.status == JobStatus.DONE
     assert (await j.result).result == 1  # type: ignore
 
@@ -33,7 +33,6 @@ async def test_sync_actor(redis: Redis):
         return 11
 
     j = await w.enqueue_job("renamed_job")
-    assert await w.get_queue("default").jobs == [j]
     await w.run()
     assert (await j.result).result == 11  # type: ignore
 
@@ -42,9 +41,9 @@ async def test_sync_actor(redis: Redis):
 async def test_no_actor(redis: Redis):
     w = Worker(redis)
     j = await w.enqueue_job("non-existing-job")
-    assert await w.get_queue("default").jobs == [j]
+    assert await j.queue.is_job_queued(j._id)
     await w.run()
-    assert await w.get_queue("default").jobs == [j]
+    assert await j.queue.is_job_queued(j._id)
 
     @w.actor(name="non-existing-job")
     async def now_existing_job():
@@ -52,7 +51,7 @@ async def test_no_actor(redis: Redis):
 
     await w.run()
     assert (await j.result).result == 111  # type: ignore
-    assert await w.get_queue("default").jobs == []
+    assert not await j.queue.is_job_queued(j._id)
 
 
 @pytest.mark.asyncio()
@@ -77,13 +76,13 @@ async def test_reccuring_job(redis: Redis):
         return datetime.now().timestamp()
 
     j = await w.enqueue_job("reccuring_job", defer_by=timedelta(seconds=3))
-    assert await w.get_queue("default").jobs == [j]
+    assert await j.queue.is_job_queued(j._id)
     await w.run()
     first_result = await j.result
-    assert await w.get_queue("default").jobs == [j]
-    assert not await j.is_defer_by
+    assert await j.queue.is_job_queued(j._id)
+    assert not await j.is_deferred_already
     await asyncio.sleep(4)
-    assert await j.is_defer_by
+    assert await j.is_deferred_already
     await w.run()
     second_result = await j.result
     assert first_result.result != second_result.result  # type: ignore

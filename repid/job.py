@@ -1,18 +1,14 @@
-from __future__ import annotations
-
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import orjson
 from aioredis import Redis
 
 from .constants import JOB_PREFIX, RESULT_PREFIX
-
-if TYPE_CHECKING:
-    from .queue import Queue
+from .queue import Queue
 
 JSONType = Union[str, int, float, bool, None, Dict[str, Any], List[Any]]
 
@@ -49,8 +45,6 @@ class Job:
         self.name = name
         self._id = _id or f"{name}:{uuid.uuid4().hex}"
 
-        from .queue import Queue
-
         if not isinstance(queue, Queue):
             self.queue = Queue(redis, queue)
         else:
@@ -78,11 +72,35 @@ class Job:
             orjson.dumps(self.__as_dict__()),
             nx=True,
         )
-        await self.queue.add_job(self._id, self.is_defered)
+        await self.queue.add_job(self._id, self.is_deferred)
+
+    async def update(self):
+        await self.__redis__.set(
+            JOB_PREFIX + self._id,
+            orjson.dumps(self.__as_dict__()),
+            xx=True,
+        )
+
+    async def delete(self, delete_result: bool = True) -> None:
+        await self.queue.remove_job(self._id)
+        await self.__redis__.delete(JOB_PREFIX + self._id)
+        if delete_result:
+            await self.__redis__.delete(RESULT_PREFIX + self._id)
 
     @property
-    def is_defered(self) -> bool:
+    def is_deferred(self) -> bool:
         return (self.defer_until is not None) or (self.defer_by is not None)
+
+    @property
+    async def is_deferred_already(self) -> bool:
+        if self.defer_until is not None:
+            if self.defer_until > int(datetime.utcnow().timestamp()):
+                return False
+        if self.defer_by is not None:
+            if (res := await self.result) is not None:
+                if res.finished_when + self.defer_by > int(datetime.utcnow().timestamp()):
+                    return False
+        return True
 
     @property
     async def status(self) -> JobStatus:
@@ -99,26 +117,6 @@ class Job:
     async def result(self) -> Optional[JobResult]:
         raw = await self.__redis__.get(RESULT_PREFIX + self._id)
         return None if raw is None else JobResult(**orjson.loads(raw))
-
-    @property
-    def is_defer_until(self) -> Optional[bool]:
-        if self.defer_until is None:
-            return None
-        if self.defer_until < int(datetime.utcnow().timestamp()):
-            return True
-        return False
-
-    @property
-    async def is_defer_by(self) -> Optional[bool]:
-        if self.defer_by is None:
-            return None
-        res = await self.result
-        if res is None:
-            return True
-        elif res.finished_when + self.defer_by < int(datetime.utcnow().timestamp()):
-            return True
-        else:
-            return False
 
     def __eq__(self, other):
         if isinstance(other, Job):

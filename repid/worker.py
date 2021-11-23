@@ -70,12 +70,12 @@ class Worker(Repid):
 
     async def run_one_queue(self, queue: Queue):
         # pop a job from the queue
-        if (job := await queue.pop_job()) is None:
+        if (job := await super().pop_job(queue.name)) is None:
             return
         # find the job on the worker
         # if there is no such job on the worker, add it back to the queue
         if (func := self._get_func(job)) is None:
-            await job.queue.add_job(job._id, job.is_defered)  # re-enqueue job
+            await job.queue.add_job(job._id, job.is_deferred)  # re-enqueue job
             return
         # run the job
         result: JobResult = await func(**job.func_args)

@@ -12,6 +12,13 @@ _name_re = re.compile(r"[a-zA-Z_][a-zA-Z0-9._-]*")
 
 
 class Actor:
+    """Decorator class. Wraps async and sync functions.
+    Logs start and end time of the function, was its execution successful and its return value.
+    Adds ability to specify actor's name and queue, as well as specify number of retries.
+    """
+
+    __slots__ = ("fn", "name", "queue", "retries")
+
     def __init__(
         self,
         fn: Callable,
@@ -32,6 +39,8 @@ class Actor:
                 "Queue name must start with a letter or an underscore"
                 "followed by letters, digits, dashes or underscores."
             )
+        if retries < 1:
+            raise ValueError("Number of retries must be positive integer.")
         self.retries = retries
 
     async def __call__(self, *args, **kwargs):
@@ -63,7 +72,7 @@ class Actor:
         )
 
     def __repr__(self):
-        return "Actor(%(fn)r, queue=%(queue)r, name=%(name)r)" % vars(self)
+        return f"Actor({self.fn}, name={self.name}, queue={self.queue}, retries={self.retries})"
 
     def __str__(self):
-        return "Actor(%(name)s)" % vars(self)
+        return f"Actor({self.name})"

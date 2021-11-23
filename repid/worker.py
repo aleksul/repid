@@ -12,6 +12,8 @@ from .repid import Repid
 
 
 class Worker(Repid):
+    """Extends main class functionality to add ability to run jobs on consumers."""
+
     actors: Dict[str, Actor] = dict()
 
     def __init__(self, redis: Redis):

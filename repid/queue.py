@@ -6,6 +6,11 @@ from .constants import JOB_PREFIX, QUEUE_DEFER_PREFIX, QUEUE_PREFIX
 
 
 class Queue:
+    """Adds CRUD-like operations with jobs' ids in queue.
+    Those ids can be transformed into proper `Job` classes.
+    Handles both normal and deferred queues, acts like one.
+    """
+
     __slots__ = ("name", "__redis__")
 
     def __init__(self, redis: Redis, name: str = "default") -> None:
@@ -57,8 +62,11 @@ class Queue:
 
     def __eq__(self, other):
         if isinstance(other, Queue):
-            return self.name == other.name
+            return self.__hash__() == other.__hash__()
         return False
 
     def __hash__(self):
         return hash(self.name)
+
+    def __str__(self):
+        return f"Queue({self.name})"

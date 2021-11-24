@@ -6,15 +6,15 @@
 [![PyPI pyversions](https://img.shields.io/pypi/pyversions/repid.svg)](https://pypi.python.org/pypi/repid/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
-The `repid` package is an async Redis queue for Python, built around `aioredis`.
+**Repid** is a job queuing library for Python with focus on simplicity.
 
 ```bash
 pip install repid
 ```
 
-It can be easily used near to existing `aioredis` instances. Integration with other packages (such as `fastapi`) is quite simple too!
+## Quickstart
 
-## Usage
+Make sure Redis is running, then start 2 processes/containers with code as below.
 
 On producer side:
 
@@ -49,4 +49,11 @@ async def my_first_job():
 asyncio.run(myworker.run_forever())
 ```
 
-It's important to specify `decode_responses=True` because `repid` relaies on parsed data.
+Check out [user guide] to learn more!
+
+## License
+
+**Repid** is licensed under the MIT. Please see [License.md] for more information.
+
+[License.md]: https://github.com/aleksul/repid/blob/master/LICENSE
+[user guide]: http://aleksul.github.io/repid

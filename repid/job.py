@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Union
 import orjson
 from aioredis import Redis
 
-from .constants import JOB_PREFIX, RESULT_PREFIX
+from .constants import JOB_PREFIX, RESULT_PREFIX, VALID_NAME_RE
 from .queue import Queue
 
 JSONType = Union[str, int, float, bool, None, Dict[str, Any], List[Any]]
@@ -44,6 +44,11 @@ class Job:
         _id: Optional[str] = None,
     ):
         self.__redis__ = redis
+        if not VALID_NAME_RE.fullmatch(name):
+            raise ValueError(
+                "Job name must start with a letter or an underscore"
+                "followed by letters, digits, dashes or underscores."
+            )
         self.name = name
         self._id = _id or f"{name}:{uuid.uuid4().hex}"
 
@@ -137,7 +142,7 @@ class Job:
         return False
 
     def __hash__(self) -> int:
-        return hash(self.__as_dict__())
+        return hash(self.__as_dict__())  # pragma: no cover
 
     def __as_dict__(self) -> Dict[str, Any]:
         res = dict()

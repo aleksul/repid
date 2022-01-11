@@ -2,7 +2,7 @@ from typing import List
 
 from aioredis import Redis
 
-from .constants import JOB_PREFIX, QUEUE_DEFER_PREFIX, QUEUE_PREFIX
+from .constants import JOB_PREFIX, QUEUE_DEFER_PREFIX, QUEUE_PREFIX, VALID_NAME_RE
 
 
 class Queue:
@@ -15,6 +15,11 @@ class Queue:
 
     def __init__(self, redis: Redis, name: str = "default") -> None:
         self.__redis__ = redis
+        if not VALID_NAME_RE.fullmatch(name):
+            raise ValueError(
+                "Queue name must start with a letter or an underscore"
+                "followed by letters, digits, dashes or underscores."
+            )
         self.name = name
 
     @property

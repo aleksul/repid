@@ -1,14 +1,11 @@
 import asyncio
 import functools
-import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any, Callable, Optional
 
+from .constants import VALID_NAME_RE
 from .job import JobResult
-
-#: This re shows valid actor and queue names.
-_name_re = re.compile(r"[a-zA-Z_][a-zA-Z0-9._-]*")
 
 
 class Actor:
@@ -28,13 +25,13 @@ class Actor:
     ):
         self.fn = fn
         self.name = name or fn.__name__
-        if not _name_re.fullmatch(self.name):
+        if not VALID_NAME_RE.fullmatch(self.name):
             raise ValueError(
                 "Actor name must start with a letter or an underscore"
                 "followed by letters, digits, dashes or underscores."
             )
         self.queue = queue
-        if not _name_re.fullmatch(self.queue):
+        if not VALID_NAME_RE.fullmatch(self.queue):
             raise ValueError(
                 "Queue name must start with a letter or an underscore"
                 "followed by letters, digits, dashes or underscores."

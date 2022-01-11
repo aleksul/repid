@@ -26,6 +26,7 @@ class Worker(Repid):
         def decorator(fn):
             a = Actor(fn, name, queue, retries)
             self.actors[a.name] = a
+            return fn
 
         return decorator
 

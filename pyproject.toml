@@ -17,7 +17,7 @@ ignore_missing_imports = true
 
 [tool.poetry]
 name = "repid"
-version = "0.2.0"
+version = "0.2.1"
 description = "Async Redis queue for Python."
 authors = ["aleksul <aleksandrsulimov@bk.ru>"]
 repository = "https://github.com/aleksul/repid"

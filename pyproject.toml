@@ -17,16 +17,17 @@ ignore_missing_imports = true
 
 [tool.poetry]
 name = "repid"
-version = "0.2.1"
+version = "0.2.2"
 description = "Async Redis queue for Python."
 authors = ["aleksul <aleksandrsulimov@bk.ru>"]
 repository = "https://github.com/aleksul/repid"
+documentation = "https://aleksul.github.io/repid"
 readme = "README.md"
 license = "MIT"
 
 [tool.poetry.dependencies]
 python = "^3.8"
-aioredis = { extras = ["hiredis"], version = "^2.0.1" }
+aioredis = "^2.0.1"
 orjson = "^3.6.5"
 
 [tool.poetry.dev-dependencies]

@@ -2,6 +2,8 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/repid.svg)](https://pypi.org/project/repid/)
 [![codecov](https://codecov.io/gh/aleksul/repid/branch/main/graph/badge.svg?token=IP3Z1VXB1G)](https://codecov.io/gh/aleksul/repid)
+[![PyPI pyversions](https://img.shields.io/pypi/pyversions/repid.svg)](https://pypi.python.org/pypi/repid/)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
 **Repid** is a job queuing library for Python with focus on simplicity.
 

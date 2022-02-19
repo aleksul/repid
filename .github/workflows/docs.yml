@@ -5,15 +5,27 @@ on:
     branches:
       - main
     paths:
-      - docs
+      - 'docs/**'
 
 jobs:
-  deploy:
+  deploy_docs:
     runs-on: ubuntu-20.04
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-python@v2
+      - name: Checkout repository
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Setup git user
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+      - name: Setup Python
+        uses: actions/setup-python@v2
         with:
           python-version: 3.8
-      - run: pip install mkdocs-material==8.2.1
-      - run: mkdocs gh-deploy --force
+      - name: Get current version from pyproject.toml
+        run: echo "VER=$(grep -w '^version' pyproject.toml | grep -oP '"\K[^"\047]+(?=["\047])')" >> $GITHUB_ENV
+      - name: Install dependencies
+        run: pip install mkdocs-material==8.2.1 mike==1.1.2
+      - name: Mike update version
+        run: mike deploy --push --force --update-aliases ${{ env.VER }} latest

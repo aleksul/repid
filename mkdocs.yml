@@ -30,6 +30,8 @@ markdown_extensions:
 
 extra:
   generator: false
+  version:
+    provider: mike
 repo_name: aleksul/repid
 repo_url: https://github.com/aleksul/repid
 nav:

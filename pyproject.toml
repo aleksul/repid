@@ -28,11 +28,11 @@ license = "MIT"
 [tool.poetry.dependencies]
 python = "^3.8"
 aioredis = "^2.0.1"
-orjson = "^3.6.5"
+orjson = "^3.6.7"
 
 [tool.poetry.dev-dependencies]
 # sort
-black = "^21.12b0"
+black = "^22.1.0"
 isort = "^5.10.1"
 # lint
 mypy = "^0.910"
@@ -47,7 +47,7 @@ pytest = "^6.2.5"
 pytest-asyncio = "^0.16.0"
 pytest-cov = "^3.0.0"
 # pre-commit
-pre-commit = "^2.16.0"
+pre-commit = "^2.17.0"
 # tox
 tox = "^3.24.5"
 tox-docker = "^3.1.0"

@@ -15,11 +15,15 @@
     ],
     "python.testing.autoTestDiscoverOnSaveEnabled": true,
     // Linting
-    "python.linting.flake8Path": "pflake8",
     "python.linting.enabled": true,
     "python.linting.lintOnSave": true,
     "python.linting.flake8Enabled": true,
     "python.linting.mypyEnabled": true,
+    "python.linting.flake8Args": [
+        "--max-line-length=100",
+        "--per-file-ignores=repid/__init__.py:F401",
+        "--ignore=S101 tests/",
+    ],
     // Formatting
     "python.formatting.provider": "black",
     "editor.formatOnSave": true,

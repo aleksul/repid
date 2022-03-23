@@ -32,6 +32,9 @@ extra:
   generator: false
   version:
     provider: mike
+  analytics:
+    provider: google
+    property: G-7SV7Z9EX54
 repo_name: aleksul/repid
 repo_url: https://github.com/aleksul/repid
 nav:

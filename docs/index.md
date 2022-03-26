@@ -14,7 +14,7 @@ Here's what a smallest (but already working) peace of code can look like:
 ```python
 import repid
 import asyncio
-from aioredis import Redis
+from redis.asyncio import Redis
 
 # create redis instance as usual
 myredis = Redis(host="localhost", port=6379, db=0, decode_responses=True)
@@ -55,7 +55,7 @@ And you don't have to worry that it will slow down your other asyncio-driven cod
 
 ### Ease of integration
 
-You are probably already used to `aioredis`. Why don't you utilize it?
+You are probably already used to `redis-py`. Why don't you utilize it?
 Just pass its instance to `repid` and you are ready to go!
 
 ### Built with microservices in mind

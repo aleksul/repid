@@ -26,6 +26,6 @@ jobs:
       - name: Get current version from pyproject.toml
         run: echo "VER=$(grep -w '^version' pyproject.toml | grep -oP '"\K[^"\047]+(?=["\047])')" >> $GITHUB_ENV
       - name: Install dependencies
-        run: pip install mkdocs-material==8.2.1 mike==1.1.2
+        run: pip install mkdocs-material==8.2.7 mike==1.1.2
       - name: Mike update version
         run: mike deploy --push --force --update-aliases ${{ env.VER }} latest

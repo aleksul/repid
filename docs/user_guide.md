@@ -19,10 +19,10 @@ Now, to add queuing and RPC functionality to this function all we have to do is:
 
 ```python hl_lines="5 6 8 13"
 import asyncio
-import aioredis
+from redis.asyncio import Redis
 import repid
 
-redis = aioredis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
+redis = Redis(host="localhost", port=6379, db=0, decode_responses=True)
 worker = repid.Worker(redis)
 
 @worker.actor()
@@ -41,10 +41,10 @@ The example above is a totally valid RPC server but what if we want to use sync 
 
 ```python hl_lines="13-16"
 import asyncio
-import aioredis
+from redis.asyncio import Redis
 import repid
 
-redis = aioredis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
+redis = Redis(host="localhost", port=6379, db=0, decode_responses=True)
 worker = repid.Worker(redis)
 
 @worker.actor()
@@ -69,10 +69,10 @@ Simplest example to enqueue a job is:
 
 ```python
 import asyncio
-import aioredis
+from redis.asyncio import Redis
 import repid
 
-redis = aioredis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
+redis = Redis(host="localhost", port=6379, db=0, decode_responses=True)
 producer = repid.Repid(redis)
 
 asyncio.run(producer.enqueue_job("my_func_name"))
@@ -107,11 +107,11 @@ If a queue is not mentioned `default` queue will be used.
 
 ```python hl_lines="9"
 import asyncio
-import aioredis
+from redis.asyncio import Redis
 import repid
 from datetime import timedelta
 
-redis = aioredis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
+redis = Redis(host="localhost", port=6379, db=0, decode_responses=True)
 producer = repid.Repid(redis)
 
 asyncio.run(await producer.enqueue_job("hello_another_queue", queue="myqueue"))
@@ -119,10 +119,10 @@ asyncio.run(await producer.enqueue_job("hello_another_queue", queue="myqueue"))
 
 ```python hl_lines="8"
 import asyncio
-import aioredis
+from redis.asyncio import Redis
 import repid
 
-redis = aioredis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
+redis = Redis(host="localhost", port=6379, db=0, decode_responses=True)
 worker = repid.Worker(redis)
 
 @worker.actor(queue="myqueue")
@@ -169,11 +169,11 @@ You can defer your job's execution until or by some time. To do so, follow examp
 
 ```python hl_lines="10"
 import asyncio
-import aioredis
+from redis.asyncio import Redis
 import repid
 from datetime import datetime
 
-redis = aioredis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
+redis = Redis(host="localhost", port=6379, db=0, decode_responses=True)
 producer = repid.Repid(redis)
 
 async def main():
@@ -186,11 +186,11 @@ asyncio.run(main())
 
 ```python hl_lines="10"
 import asyncio
-import aioredis
+from redis.asyncio import Redis
 import repid
 from datetime import timedelta
 
-redis = aioredis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
+redis = Redis(host="localhost", port=6379, db=0, decode_responses=True)
 producer = repid.Repid(redis)
 
 async def main():
@@ -206,11 +206,11 @@ You can access it with result property on the job.
 
 ```python hl_lines="12"
 import asyncio
-import aioredis
+from redis.asyncio import Redis
 import repid
 from datetime import timedelta
 
-redis = aioredis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
+redis = Redis(host="localhost", port=6379, db=0, decode_responses=True)
 producer = repid.Repid(redis)
 
 async def main():

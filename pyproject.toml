@@ -23,7 +23,7 @@ license = "MIT"
 
 [tool.poetry.dependencies]
 python = "^3.8"
-aioredis = "^2.0.1"
+redis = "^4.2.0"
 orjson = "^3.6.7"
 
 [tool.poetry.dev-dependencies]
@@ -33,6 +33,7 @@ isort = "^5.10.1"
 # lint
 mypy = "^0.910"
 types-orjson = "^3.6.2"
+types-redis = "^4.1.18"
 flake8 = "^4.0.1"
 flake8-bugbear = "^21.11.29"
 flake8-builtins = "^1.5.3"
@@ -41,11 +42,9 @@ flake8-pytest-style = "^1.6.0"
 pytest = "^6.2.5"
 pytest-asyncio = "^0.16.0"
 pytest-cov = "^3.0.0"
+pytest-docker = "^0.10.3"
 # pre-commit
 pre-commit = "^2.17.0"
-# tox
-tox = "^3.24.5"
-tox-docker = "^3.1.0"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

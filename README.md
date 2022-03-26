@@ -21,7 +21,7 @@ On producer side:
 ```python
 import repid
 import asyncio
-from aioredis import Redis
+from redis.asyncio import Redis
 
 myredis = Redis(host="localhost", port=6379, db=0, decode_responses=True)
 myrepid = repid.Repid(myredis)
@@ -37,7 +37,7 @@ On consumer side:
 ```python
 import repid
 import asyncio
-from aioredis import Redis
+from redis.asyncio import Redis
 
 myredis = Redis(host="localhost", port=6379, db=0, decode_responses=True)
 myworker = repid.Worker(myredis)

@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
 import orjson
-from aioredis import Redis
+from redis.asyncio import Redis
 
 from .constants import JOB_PREFIX, RESULT_PREFIX, VALID_NAME_RE
 from .queue import Queue

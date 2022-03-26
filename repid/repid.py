@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Union
 
 import orjson
-from aioredis import Redis
+from redis.asyncio import Redis
 
 from .constants import JOB_PREFIX, QUEUE_PREFIX
 from .job import Job

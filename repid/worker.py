@@ -2,7 +2,7 @@ import asyncio
 from typing import Callable, Dict, Optional
 
 import orjson
-from aioredis import Redis
+from redis.asyncio import Redis
 
 from .actor import Actor
 from .constants import RESULT_PREFIX

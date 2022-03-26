@@ -1,7 +1,7 @@
 from datetime import datetime
 
 import pytest
-from aioredis import Redis
+from redis.asyncio import Redis
 
 from repid import Queue, Repid
 

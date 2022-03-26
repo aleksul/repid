@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 
 import pytest
-from aioredis import Redis
+from redis.asyncio import Redis
 
 from repid import Job, JobStatus
 from repid.queue import JOB_PREFIX, Queue

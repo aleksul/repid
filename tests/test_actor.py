@@ -1,5 +1,5 @@
 import pytest
-from aioredis import Redis
+from redis.asyncio import Redis
 
 from repid import Worker
 from repid.actor import Actor

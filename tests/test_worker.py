@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timedelta
 
 import pytest
-from aioredis import Redis
+from redis.asyncio import Redis
 
 from repid import JobStatus, Queue, Worker
 

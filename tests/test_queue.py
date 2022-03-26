@@ -1,6 +1,6 @@
 import orjson
 import pytest
-from aioredis import Redis
+from redis.asyncio import Redis
 
 from repid import JOB_PREFIX, QUEUE_PREFIX, Job, Queue
 

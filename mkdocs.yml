@@ -34,7 +34,7 @@ extra:
     provider: mike
   analytics:
     provider: google
-    property: G-7SV7Z9EX54
+    property: G-NWQ37DSSKV
 repo_name: aleksul/repid
 repo_url: https://github.com/aleksul/repid
 nav:

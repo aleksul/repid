@@ -5,7 +5,9 @@ on:
     branches:
       - main
     paths:
-      - 'docs/**'
+      - "docs/**"
+      - "mkdocs.yml"
+  workflow_dispatch:
 
 jobs:
   deploy_docs:

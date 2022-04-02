@@ -1,12 +1,11 @@
 import pytest
-from redis.asyncio import Redis
 
 from repid import Worker
 from repid.actor import Actor
 
 
-def test_inappropriate_actor_inputs(redis: Redis):
-    w = Worker(redis)
+async def test_inappropriate_actor_inputs(fake_connection):
+    w = Worker()
 
     with pytest.raises(ValueError, match="Actor name must"):
 
@@ -20,22 +19,9 @@ def test_inappropriate_actor_inputs(redis: Redis):
         def b():
             pass
 
-    with pytest.raises(ValueError, match="Number of retries"):
 
-        @w.actor(retries=0)
-        def c():
-            pass
-
-
-def test_actor_repr(redis: Redis):
+def test_actor_str():
     def a():
         pass
 
-    assert Actor(a).__repr__() == f"Actor({a}, name=a, queue=default, retries=1)"
-
-
-def test_actor_str(redis: Redis):
-    def a():
-        pass
-
-    assert str(Actor(a)) == "Actor(a)"
+    assert str(Actor(a)) == f"Actor({a}, name='a', queue='default')"

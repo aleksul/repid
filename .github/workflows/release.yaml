@@ -10,14 +10,20 @@ jobs:
   release:
     runs-on: ubuntu-20.04
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
-      - name: Build and publish to pypi
-        uses: JRubics/poetry-publish@v1.12
+      - name: Setup PDM
+        uses: pdm-project/setup-pdm@v2
         with:
-          python_version: "3.8"
-          poetry_version: "==1.1.13"
-          pypi_token: ${{ secrets.PYPI_TOKEN }}
-          ignore_dev_requirements: "yes"
+          python-version: "3.8"
+
+      - name: Configure PyPI token
+        run: |
+          pdm config repository.pypi.username "__token__"
+          pdm config repository.pypi.password "{{ secrets.PYPI_TOKEN }}"
+
+      - name: Publish to PyPI
+        run: pdm publish -r pypi

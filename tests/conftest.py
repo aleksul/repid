@@ -1,32 +1,30 @@
 import asyncio
 
 import pytest
-from redis.asyncio import Redis
+import uvloop
 
-
-async def test_redis_connection(url: str) -> bool:
-    try:
-        r = Redis.from_url(url)
-        await r.ping()
-    except Exception:
-        return False
-    else:
-        return True
+from repid import Repid
+from repid.connection import Connection
+from repid.main import DEFAULT_CONNECTION
 
 
 @pytest.fixture(scope="session")
-def redis_service(docker_services):
-    port = docker_services.port_for("redis", 6379)
-    url = f"redis://:pass@localhost:{port}"
-    docker_services.wait_until_responsive(
-        timeout=30.0, pause=0.1, check=lambda: asyncio.run(test_redis_connection(url))
+def event_loop():
+    uvloop.install()
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
+
+
+@pytest.fixture(scope="session")
+def fake_connection() -> Connection:
+    repid = Repid(
+        "amqp://user:testtest@localhost:5672",
+        "redis://:test@localhost:6379/0",
+        "redis://:test@localhost:6379/1",
     )
-    return url
-
-
-@pytest.fixture()
-async def redis(redis_service):
-    redis = Redis.from_url(redis_service, decode_responses=True)
-    await redis.flushdb()
-    yield redis
-    await redis.close()
+    assert DEFAULT_CONNECTION.get()
+    return repid._Repid__conn

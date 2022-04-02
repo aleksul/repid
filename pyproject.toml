@@ -1,5 +1,57 @@
+[project]
+name = "repid"
+description = "Async queue for Python."
+authors = [{ name = "aleksul", email = "me@aleksul.space" }]
+dependencies = ["anyio>=3.5.0,<4.0.0", "orjson>=3.7.11,<4.0.0"]
+requires-python = ">=3.8"
+readme = "README.md"
+dynamic = ["version"]
+license = { text = "MIT" }
+
+[project.urls]
+repository = "https://github.com/aleksul/repid"
+documentation = "https://aleksul.github.io/repid"
+
+[project.optional-dependencies]
+amqp = ["aio-pika<8.0.0,>=7.1.2"]
+redis = ["redis<5.0.0,>=4.3.3"]
+# kafka = ["aiokafka<1.0.0,>=0.7.2"]
+# nats = ["nats-py<3.0.0,>=2.1.0"]
+cron = ["croniter<2.0.0,>=1.3.4"]
+
+[tool.pdm]
+version = { source = "scm" }
+
+[tool.pdm.dev-dependencies]
+format = ["black<23.0.0,>=22.6.0", "isort<6.0.0,>=5.10.1"]
+lint = [
+    "mypy<0.1000,>=0.910",
+    "types-orjson<4.0.0,>=3.6.2",
+    "types-redis<5.0.0,>=4.3.3",
+    "types-croniter<2.0.0,>=1.3.0",
+    "flake8<5.0.0,>=4.0.1",
+    "flake8-bugbear",
+    "flake8-builtins",
+    "flake8-bandit",
+    "flake8-pep518",
+]
+tests = [
+    "pytest<7.0.0,>=6.2.5",
+    "pytest-cov<4.0.0,>=3.0.0",
+    "pytest-sugar<1.0.0,>=0.9.4",
+    "pytest-icdiff<1.0,>=0.5",
+    "pytest-docker-tools<4.0.0,>=3.1.3",
+    "pytest-asyncio>=0.19.0",
+    "hypothesis<7.0.0,>=6.49.1",
+    "dirty-equals<1.0.0,>=0.2.1",
+    "time-machine<3.0.0,>=2.7.1",
+    "uvloop>=0.16.0",
+]
+pre-commit = ["pre-commit<3.0.0,>=2.19.0"]
+docs = ["mkdocs-material>=8.3.9", "mike>=1.1.2"]
+
 [tool.coverage]
-report.fail_under = 90
+report.fail_under = 100
 
 [tool.black]
 line-length = 100
@@ -9,43 +61,29 @@ profile = "black"
 multi_line_output = 3
 
 [tool.mypy]
-ignore_missing_imports = true
+disallow_untyped_defs = true
+disallow_any_unimported = true
+no_implicit_optional = true
+check_untyped_defs = true
+warn_return_any = true
+warn_unused_ignores = true
+show_error_codes = true
+exclude = "^tests/"
 
-[tool.poetry]
-name = "repid"
-version = "0.2.3"
-description = "Async Redis queue for Python."
-authors = ["aleksul <aleksandrsulimov@bk.ru>"]
-repository = "https://github.com/aleksul/repid"
-documentation = "https://aleksul.github.io/repid"
-readme = "README.md"
-license = "MIT"
+[tool.pyright]
+ignore = ["repid/data.py"]
 
-[tool.poetry.dependencies]
-python = "^3.8"
-redis = "^4.2.0"
-orjson = "^3.6.7"
+[tool.flake8]
+max-line-length = 100
+per-file-ignores = "__init__.py:F401"
+ignore = "S101 tests/, W503, PT013"
 
-[tool.poetry.dev-dependencies]
-# sort
-black = "^22.1.0"
-isort = "^5.10.1"
-# lint
-mypy = "^0.910"
-types-orjson = "^3.6.2"
-types-redis = "^4.1.18"
-flake8 = "^4.0.1"
-flake8-bugbear = "^21.11.29"
-flake8-builtins = "^1.5.3"
-flake8-pytest-style = "^1.6.0"
-# test
-pytest = "^6.2.5"
-pytest-asyncio = "^0.16.0"
-pytest-cov = "^3.0.0"
-pytest-docker = "^0.10.3"
-# pre-commit
-pre-commit = "^2.17.0"
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.pdm.build]
+package-dir = "repid"
 
 [build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["pdm-pep517>=1.0.0"]
+build-backend = "pdm.pep517.api"

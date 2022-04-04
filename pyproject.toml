@@ -14,7 +14,7 @@ ignore_missing_imports = true
 [tool.poetry]
 name = "repid"
 version = "0.2.3"
-description = "Async Redis queue for Python."
+description = "Async queue for Python."
 authors = ["aleksul <aleksandrsulimov@bk.ru>"]
 repository = "https://github.com/aleksul/repid"
 documentation = "https://aleksul.github.io/repid"
@@ -23,8 +23,21 @@ license = "MIT"
 
 [tool.poetry.dependencies]
 python = "^3.8"
-redis = "^4.2.1"
+anyio = { extras = ["trio"], version = "^3.5.0" }
+uvloop = "^0.16.0"
+pydantic = "^1.9.0"
 orjson = "^3.6.7"
+
+redis = { version = "^4.2.2", optional = true }
+aioamqp = { version = "^0.14.0", optional = true }
+aiokafka = { version = "^0.7.2", optional = true }
+aiobotocore = { version = "^2.2.0", optional = true }
+
+[tool.poetry.extras]
+redis = ["redis"]
+amqp = ["aioamqp"]
+kafka = ["aiokafka"]
+sqs = ["aiobotocore"]
 
 [tool.poetry.dev-dependencies]
 # sort

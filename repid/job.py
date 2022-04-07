@@ -1,77 +1,130 @@
 import uuid
-from dataclasses import dataclass
 from datetime import datetime, timedelta
-from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from enum import Enum, auto
+from typing import Literal, Optional, Type, Union
 
 import orjson
-from redis.asyncio import Redis
+from pydantic import BaseModel
 
-from .constants import JOB_PREFIX, RESULT_PREFIX, VALID_NAME_RE
+from . import _connection_manager
+from .connections.connection import Connection
 from .queue import Queue
-
-JSONType = Union[str, int, float, bool, None, Dict[str, Any], List[Any]]
+from .utils import VALID_NAME_RE, current_unix_time, orjson_dumper
 
 
 class JobStatus(Enum):
-    QUEUED = 1
-    IN_PROGRESS = 2
-    DONE = 3
-    NOT_FOUND = 4
-
-
-@dataclass
-class JobResult:
-    success: bool
-    started_when: int
-    finished_when: int
-    result: JSONType
+    QUEUED = auto()
+    PROCESSING = auto()
+    DONE = auto()
+    DEAD = auto()
+    NOT_FOUND = auto()
 
 
 class Job:
     """Describes how and when the job should be executed."""
 
-    __slots__ = ("_id", "name", "queue", "func_args", "defer_until", "defer_by", "__redis__")
+    __slots__ = (
+        "id_",
+        "name",
+        "queue",
+        "priority",
+        "deferred_until",
+        "deferred_by",
+        "retries",
+        "timeout",
+        "created",
+        "updated",
+        "ttl",
+        "_request_schema",
+        "_request_data",
+        "_response_schema",
+        "_created",
+        "_updated",
+        "_dead",
+        "_retries_left",
+        "_next_exec_time",
+        "__connection",
+    )
 
     def __init__(
         self,
-        redis: Redis,
         name: str,
         queue: Union[str, Queue] = "default",
-        func_args: Optional[Dict[str, JSONType]] = None,
-        defer_until: Union[datetime, int, None] = None,
-        defer_by: Union[timedelta, int, None] = None,
-        _id: Optional[str] = None,
+        priority: Literal["HIGH", "NORMAL", "LOW", "DEFERRED"] = "NORMAL",
+        deferred_until: Union[datetime, int, None] = None,
+        deferred_by: Union[timedelta, int, None] = None,
+        retries: int = 1,
+        timeout: int = 600,
+        request_model: Optional[BaseModel] = None,
+        response_model: Optional[Type[BaseModel]] = None,
+        ttl: Optional[int] = None,
+        id_: Optional[str] = None,
+        _connection: Optional["Connection"] = None,
+        **kwargs,
     ):
-        self.__redis__ = redis
         if not VALID_NAME_RE.fullmatch(name):
             raise ValueError(
                 "Job name must start with a letter or an underscore"
                 "followed by letters, digits, dashes or underscores."
             )
         self.name = name
-        self._id = _id or f"{name}:{uuid.uuid4().hex}"
+        self.id_ = id_ or f"{name}:{uuid.uuid4().hex}"
 
         if not isinstance(queue, Queue):
-            self.queue = Queue(redis, queue)
+            self.queue = Queue(queue)
         else:
             self.queue = queue
-        self.func_args = func_args or dict()
 
-        if defer_until is not None and defer_by is not None:
-            raise ValueError("Usage of 'defer_until' AND 'defer_by' together is prohibited.")
+        self.priority = priority
 
-        self.defer_until = None
-        if isinstance(defer_until, datetime):
-            self.defer_until = int(defer_until.timestamp())
-        elif type(defer_until) is int:
-            self.defer_until = defer_until
+        is_deferred: bool = any(v is not None for v in [deferred_by, deferred_until])
+        if is_deferred and self.priority != "DEFERRED":
+            raise ValueError("Deferred job must have priority='DEFERRED'.")
 
-        self.defer_by = None
-        if isinstance(defer_by, timedelta):
-            self.defer_by = int(defer_by.seconds)
-        elif type(defer_by) is int:
-            self.defer_by = defer_by
+        if deferred_until is not None and deferred_by is not None:
+            raise ValueError("Usage of 'deferred_until' AND 'deferred_by' together is prohibited.")
+
+        self.deferred_until: Optional[int] = None
+        if isinstance(deferred_until, datetime):
+            self.deferred_until = int(deferred_until.timestamp())
+        elif type(deferred_until) is int:
+            self.deferred_until = deferred_until
+
+        self.deferred_by: Optional[int] = None
+        if isinstance(deferred_by, timedelta):
+            self.deferred_by = int(deferred_by.seconds)
+        elif type(deferred_by) is int:
+            self.deferred_by = deferred_by
+
+        if retries < 1:
+            raise ValueError("Retries must be greater than or equal to 1.")
+        self.retries = retries
+
+        if timeout < 1:
+            raise ValueError("Execution timeout must be greater than or equal to 1 second.")
+        self.timeout = timeout
+
+        if ttl is not None and ttl < 1:
+            raise ValueError("TTL must be greater than or equal to 1 second.")
+        self.ttl = ttl
+
+        if request_model is not None:
+            request_model.Config.json_dumps = orjson_dumper
+            self._request_schema = request_model.schema_json()
+            self._request_data = request_model.json()
+
+        if response_model is not None:
+            response_model.Config.json_dumps = orjson_dumper
+            self._response_schema = response_model.schema_json()
+
+        now = current_unix_time()
+        self._created, self._updated = now, now
+
+        self.__connection = _connection or _connection_manager.default_connection
+
+        for k, v in kwargs.items():
+            if k.startswith("_") and k in self.__slots__:
+                setattr(self, k, v)
 
     async def enqueue(self):
         await self.__redis__.set(
@@ -90,11 +143,8 @@ class Job:
         )
         await self.queue.add_job(self._id, self.is_deferred)
 
-    async def delete(self, delete_result: bool = True) -> None:
-        await self.queue.remove_job(self._id)
-        await self.__redis__.delete(JOB_PREFIX + self._id)
-        if delete_result:
-            await self.__redis__.delete(RESULT_PREFIX + self._id)
+    async def delete(self) -> None:
+        await self.__connection.delete_job(self.id_)
 
     @property
     def is_deferred(self) -> bool:
@@ -126,35 +176,3 @@ class Job:
     async def result(self) -> Optional[JobResult]:
         raw = await self.__redis__.get(RESULT_PREFIX + self._id)
         return None if raw is None else JobResult(**orjson.loads(raw))
-
-    def __eq__(self, other):
-        if isinstance(other, Job):
-            return all(
-                [
-                    self._id == other._id,
-                    self.name == other.name,
-                    self.queue == other.queue,
-                    self.func_args == other.func_args,
-                    self.defer_until == other.defer_until,
-                    self.defer_by == other.defer_by,
-                ]
-            )
-        return False
-
-    def __hash__(self) -> int:
-        return hash(self.__as_dict__())  # pragma: no cover
-
-    def __as_dict__(self) -> Dict[str, Any]:
-        res = dict()
-        for s in self.__slots__:
-            if s == "queue":
-                q: Queue = self.__getattribute__(s)
-                res[s] = q.name
-                continue
-
-            if not s.startswith("__"):
-                res[s] = self.__getattribute__(s)
-        return res
-
-    def __str__(self):
-        return f"Job(name={self.name}, queue={self.queue.name}, _id={JOB_PREFIX}{self._id})"

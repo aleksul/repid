@@ -7,7 +7,8 @@ import orjson
 from redis.asyncio import Redis  # type: ignore
 
 from repid.connections.connection import Messaging
-from repid.data import JobData, JobResult, QueueData
+from repid.middlewares.middleware import with_middleware
+from repid.queue import Queue
 from repid.utils import current_unix_time
 
 JobPrefix = "job:"
@@ -34,43 +35,37 @@ class RedisConnection(Messaging):
             script=(scripts_path / "redis_consume_job.lua").read_text()
         )
 
-    async def create_queue(self, name: str = "default") -> QueueData:
-        # NOTE: doesn't raise an exception if queue already exists
-        return await self.read_queue(name)  # in Redis there is no need to initialize queues
+    @with_middleware
+    async def consume(self, queue: Queue) -> AsyncGenerator[AnyMessage, None]:
+        
+        
 
-    async def read_queue(self, name: str, limit: int = 10, offset: int = 0) -> QueueData:
-        async with self.connection.pipeline(transaction=True) as pipe:
-            high, deferred, normal, low, dead = await (
-                pipe.lrange(QueuePrefix.HighPriority.value + name, 0, -1)
-                .zrange(QueuePrefix.Deferred.value + name, 0, -1)
-                .lrange(QueuePrefix.NormalPriority.value + name, 0, -1)
-                .lrange(QueuePrefix.LowPriority.value + name, 0, -1)
-                .lrange(QueuePrefix.Dead.value + name, 0, -1)
-                .execute()
-            )
-        return QueueData(
-            name=name,
-            high_priority=high,
-            deferred=deferred,
-            normal_priority=normal,
-            low_priority=low,
-            dead=dead,
-        )
+    @with_middleware
+    async def enqueue(  # TODO: overload
+        self,
+        message: AnyMessage,
+        priority: Literal["HIGH", "NORMAL", "LOW"] = "NORMAL",
+    ) -> None:
+        """Appends the message to the queue."""
+        ...
 
-    async def flush_queue(self, name: str) -> None:
+    @with_middleware
+    async def queue_declare(self, queue: Queue) -> None:
+        return
+
+    @with_middleware
+    async def queue_flush(self, queue: Queue) -> None:
         # NOTE: flush and delete are exactly the same in Redis
-        await self.delete_queue(name)
+        await self.delete_queue(queue)
 
-    async def delete_queue(self, name: str) -> None:
+    @with_middleware
+    async def queue_delete(self, queue: Queue) -> None:
         async with self.connection.pipeline(transaction=True) as pipe:
-            await (
-                pipe.delete(QueuePrefix.HighPriority.value + name)
-                .delete(QueuePrefix.NormalPriority.value + name)
-                .delete(QueuePrefix.Deferred.value + name)
-                .delete(QueuePrefix.LowPriority.value + name)
-                .delete(QueuePrefix.Dead.value + name)
-                .execute()
-            )
+            for prefix in QueuePrefix:
+                pipe.delete(prefix.value + queue.name)
+            await pipe.execute()
+
+    # ===============================================================================
 
     async def consume_job(self, queue_name: str) -> Optional[JobData]:
         job_id = await self.consume_job_script(

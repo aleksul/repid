@@ -1,8 +1,8 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 import msgspec
 
-from .utils import current_unix_time
+from .utils import JSONType, current_unix_time
 
 
 class Message(msgspec.Struct, tag=True, omit_defaults=True):
@@ -29,12 +29,15 @@ class DeferredMessage(msgspec.Struct, tag=True, omit_defaults=True):
     ttl: Optional[int] = None
 
 
+AnyMessage = Union[Message, DeferredMessage]
+
+
 class Result(msgspec.Struct, tag=True, omit_defaults=True):
     id_: str  # should correspond to message id
     success: bool
     started_when: int
     finished_when: int
-    data: Dict[str, Any] = dict()
+    data: JSONType = None
     exception: Optional[str] = None
     timestamp: int = current_unix_time()
     ttl: Optional[int] = 86400

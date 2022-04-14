@@ -1,7 +1,8 @@
-from typing import AsyncGenerator, Literal, Protocol, Union
+from typing import TYPE_CHECKING, AsyncGenerator, Literal, Protocol, Union
 
-from repid.message import DeferredMessage, Message, Result
-from repid.queue import Queue
+if TYPE_CHECKING:
+    from repid.message import DeferredMessage, Message, Result
+    from repid.queue import Queue
 
 AnyMessage = Union[Message, DeferredMessage]
 

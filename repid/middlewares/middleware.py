@@ -51,10 +51,7 @@ class _Middleware:
         if name in self._events:
             async with anyio.create_task_group() as tg:
                 for fn in self._events[name]:
-                    if fn.__code__.co_argcount > 0:
-                        tg.start_soon(fn, *data)
-                    else:
-                        tg.start_soon(fn)
+                    tg.start_soon(fn, *data[: fn.__code__.co_argcount])
 
 
 Middleware = _Middleware()

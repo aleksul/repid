@@ -1,53 +1,81 @@
 import uuid
-from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, AsyncGenerator, Literal, Optional
 
+import msgspec
 import orjson
 from redis.asyncio import Redis  # type: ignore
 
-from repid.connections.connection import Messaging
+from repid.message import DeferredMessage, Message
 from repid.middlewares.middleware import with_middleware
-from repid.queue import Queue
 from repid.utils import current_unix_time
 
-JobPrefix = "job:"
+if TYPE_CHECKING:
+    from redis.asyncio.client.Redis import pipeline as Pipeline
+
+    from repid.message import AnyMessage
+    from repid.queue import Queue
+
+MessagePrefix = "job:"
 ResultPrefix = "result:"
 ProcessingQueue = "processing"  # set
+Priorities = Literal["HIGH", "NORMAL", "LOW"]
 
 
-class QueuePrefix(Enum):
-    HighPriority = "queue_high_priority:"  # list
-    Deferred = "queue_deferred:"  # sorted set, with time of execution as key
-    NormalPriority = "queue_normal_priority:"  # list
-    LowPriority = "queue_low_priority:"  # list
-    Dead = "queue_dead:"  # list
+QueuePrefix = dict(
+    HIGH="queue_high_priority:",  # list
+    NORMAL="queue_normal_priority:",  # list
+    LOW="queue_low_priority:",  # list
+    DEFERRED="queue_deferred:",  # sorted set, with time of execution as key
+    DEAD="queue_dead:",  # list
+)
+
+msg_dec = msgspec.msgpack.Decoder(type=AnyMessage)  # type: ignore
+msg_enc = msgspec.msgpack.Encoder()
 
 
-class RedisConnection(Messaging):
+class RedisConnection:
     supports_delayed_messages = True
     queue_type = "FIFO"
 
     def __init__(self, connection: Redis) -> None:
         self.connection = connection
         scripts_path = Path(__file__).parent / "redis_scripts"
-        self.consume_job_script = connection.register_script(
-            script=(scripts_path / "redis_consume_job.lua").read_text()
+        self.consume_script = connection.register_script(
+            script=(scripts_path / "consume.lua").read_text()
         )
+
+    @staticmethod
+    async def _create_message(self, message: AnyMessage, pipe: Pipeline) -> None:
+        pipe.set(MessagePrefix + message.id_, message.serialize())
+
+    async def _read_message(self, id_: str) -> Optional[AnyMessage]:
+        data = await self.connection.get(MessagePrefix + id_)
+        if data is None:
+            return None
+        return self.msg_dec.decode(data)
 
     @with_middleware
     async def consume(self, queue: Queue) -> AsyncGenerator[AnyMessage, None]:
-        
-        
+        while (
+            msg := await self.consume_script(keys=(queue.name,), args=(current_unix_time(),))
+        ) is not None:
+            message: AnyMessage = self.msg_dec.decode(msg)
+            if message.timestamp + message.ttl < current_unix_time():
+                continue
+            await self.connection.sadd(ProcessingQueue, msg)
+            yield message
 
     @with_middleware
-    async def enqueue(  # TODO: overload
-        self,
-        message: AnyMessage,
-        priority: Literal["HIGH", "NORMAL", "LOW"] = "NORMAL",
-    ) -> None:
-        """Appends the message to the queue."""
-        ...
+    async def enqueue(self, message: AnyMessage, priority: Priorities = "NORMAL") -> None:
+        packed = msgspec.msgpack.encode(message)
+        queue: str
+        if type(message) is Message:
+            queue = QueuePrefix[priority] + message.queue
+            await self.connection.lpush(queue, packed)
+        elif type(message) is DeferredMessage:
+            queue = QueuePrefix["DEFERRED"] + message.queue
+            await self.connection.zadd(queue, {message.delay_until: packed})
 
     @with_middleware
     async def queue_declare(self, queue: Queue) -> None:
@@ -56,59 +84,43 @@ class RedisConnection(Messaging):
     @with_middleware
     async def queue_flush(self, queue: Queue) -> None:
         # NOTE: flush and delete are exactly the same in Redis
-        await self.delete_queue(queue)
+        async with self.connection.pipeline(transaction=True) as pipe:
+            for prefix in QueuePrefix.values():
+                pipe.delete(prefix + queue.name)
+            await pipe.execute()
 
     @with_middleware
     async def queue_delete(self, queue: Queue) -> None:
+        # NOTE: flush and delete are exactly the same in Redis
         async with self.connection.pipeline(transaction=True) as pipe:
-            for prefix in QueuePrefix:
-                pipe.delete(prefix.value + queue.name)
+            for prefix in QueuePrefix.values():
+                pipe.delete(prefix + queue.name)
             await pipe.execute()
 
-    # ===============================================================================
-
-    async def consume_job(self, queue_name: str) -> Optional[JobData]:
-        job_id = await self.consume_job_script(
-            keys=(
-                QueuePrefix.HighPriority.value + queue_name,
-                QueuePrefix.Deferred.value + queue_name,
-                QueuePrefix.NormalPriority.value + queue_name,
-                QueuePrefix.LowPriority.value + queue_name,
-                ProcessingQueue,
-            ),
-            args=(current_unix_time(),),
+    def __reschedule_deferred_by(self, message: DeferredMessage, pipe: Pipeline) -> None:
+        if message.defer_by is None:
+            return
+        queue = QueuePrefix.Deferred.value + message.queue
+        message.delay_until = message.timestamp + (
+            message.defer_by * ((current_unix_time() - message.timestamp) // message.defer_by + 1)
         )
-        if job_id is not None:
-            return await self.read_job(job_id)
-        return None
+        # TODO
+        pipe.zadd(queue, {message.delay_until: message.id_})
 
-    async def enqueue_job(self, job: JobData) -> None:
+    @with_middleware
+    async def message_ack(self, message: AnyMessage):
         async with self.connection.pipeline(transaction=True) as pipe:
-            pipe.set(
-                JobPrefix + job.id_,  # type: ignore
-                orjson.dumps(job),
-                exat=(job.created + job.ttl) if job.ttl is not None else None,
-            )
-            if job.dead:
-                pipe.lpush(QueuePrefix.Dead.value + job.queue, job.id_)
-            elif job.next_exec_time is not None:
-                pipe.zadd(QueuePrefix.Deferred.value + job.queue, {job.next_exec_time: job.id_})
-            elif job.priority == "DEFERRED":
-                pipe.zadd(QueuePrefix.Deferred.value + job.queue, {job.deferred_until: job.id_})
-            elif job.priority == "HIGH":
-                pipe.lpush(QueuePrefix.HighPriority.value + job.queue, job.id_)
-            elif job.priority == "NORMAL":
-                pipe.lpush(QueuePrefix.NormalPriority.value + job.queue, job.id_)
-            elif job.priority == "LOW":
-                pipe.lpush(QueuePrefix.LowPriority.value + job.queue, job.id_)
+            pipe.srem(ProcessingQueue, message.id_)
+            if type(message) is DeferredMessage:
+                self.__reschedule_deferred_by(message, pipe)
             await pipe.execute()
 
-    async def read_job(self, job_id: str) -> Optional[JobData]:
-        job_data = await self.connection.get(JobPrefix + job_id)
-        if job_data is not None:
-            return orjson.loads(job_data)
-        return None
+    @with_middleware
+    async def message_nack(self, message: AnyMessage):
+        pass
 
+
+class Temp:
     async def report_job(self, result: JobResult) -> None:
         async with self.connection.pipeline(transaction=True) as pipe:
             await (
@@ -175,7 +187,7 @@ class RedisConnection(Messaging):
         if job is None:
             return None
         async with self.connection.pipeline(transaction=True) as pipe:
-            pipe.delete(JobPrefix + job_id).delete(ResultPrefix + job_id)
+            pipe.delete(MessagePrefix + job_id).delete(ResultPrefix + job_id)
             if delete_from_queues:
                 if job.priority == "HIGH":
                     pipe.lrem(name=QueuePrefix.HighPriority.value + job.queue, value=job_id)

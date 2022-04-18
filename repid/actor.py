@@ -4,8 +4,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any, Callable, Optional
 
-from .constants import VALID_NAME_RE
-from .job import JobResult
+# from .constants import VALID_NAME_RE
+# from .job import JobResult
 
 
 class Actor:

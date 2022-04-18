@@ -1,23 +1,22 @@
-from typing import TYPE_CHECKING, AsyncGenerator, Literal, Protocol, Union
+from typing import TYPE_CHECKING, AsyncGenerator, Literal, Protocol
 
 if TYPE_CHECKING:
-    from repid.message import DeferredMessage, Message, Result
+    from repid.data import AnyBucketT, AnyMessageT
     from repid.queue import Queue
-
-AnyMessage = Union[Message, DeferredMessage]
 
 
 class Messaging(Protocol):
     supports_delayed_messages: bool = False
     queue_type: Literal["FIFO", "LIFO", "SIMPLE"] = "FIFO"
+    priorities_distribution: str
 
-    async def consume(self, queue: Queue) -> AsyncGenerator[AnyMessage, None]:
+    async def consume(self, queue: Queue) -> AsyncGenerator[AnyMessageT, None]:
         """Consumes messages from the specified queue."""
         ...
 
     async def enqueue(
         self,
-        message: AnyMessage,
+        message: AnyMessageT,
         priority: Literal["HIGH", "NORMAL", "LOW"] = "NORMAL",
     ) -> None:
         """Appends the message to the queue."""
@@ -35,24 +34,24 @@ class Messaging(Protocol):
         """Deletes the queue with all of its messages."""
         ...
 
-    async def message_ack(self, message: AnyMessage) -> None:
+    async def message_ack(self, message: AnyMessageT) -> None:
         """Informs message broker that job execution succeed."""
         ...
 
-    async def message_nack(self, message: AnyMessage) -> None:
+    async def message_nack(self, message: AnyMessageT) -> None:
         """Informs message broker that job execution failed."""
         ...
 
 
-class Resulting(Protocol):
-    async def get_result(self, message_id: str) -> Result:
-        """Retrivies the result of the job."""
+class Bucketing(Protocol):
+    async def get_bucket(self, id_: str) -> AnyBucketT:
+        """Retrivies the bucket of the job."""
         ...
 
-    async def store_result(self, result: Result) -> None:
-        """Stores the result of the job."""
+    async def store_bucket(self, bucket: AnyBucketT) -> None:
+        """Stores the bucket of the job."""
         ...
 
-    async def delete_result(self, message_id: str) -> None:
-        """Deletes the result of the job."""
+    async def delete_bucket(self, id_: str) -> None:
+        """Deletes the bucket of the job."""
         ...

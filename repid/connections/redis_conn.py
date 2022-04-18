@@ -1,3 +1,4 @@
+import re
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, AsyncGenerator, Literal, Optional
@@ -16,12 +17,14 @@ if TYPE_CHECKING:
     from repid.message import AnyMessage
     from repid.queue import Queue
 
-MessagePrefix = "message:"
-ResultPrefix = "result:"
-ProcessingQueue = "processing"  # set
-Priorities = ("HIGH", "MEDIUM", "LOW")
+MessagePrefix = "message"
+ResultPrefix = "result"
+QueuePrefix = "queue"
+DelayedSuffix = "delayed"
 
-PrioritiesT = Literal["HIGH", "MEDIUM", "LOW"]
+ProcessingQueue = "processing"  # set
+
+
 
 
 QueuePrefix = dict(
@@ -32,13 +35,13 @@ QueuePrefix = dict(
     DEAD="queue_dead:",  # list
 )
 
-msg_dec = msgspec.msgpack.Decoder(type=AnyMessage)  # type: ignore
-msg_enc = msgspec.msgpack.Encoder()
+
 
 
 class RedisConnection:
     supports_delayed_messages = True
     queue_type = "FIFO"
+    priorities_distribution = "10/3/1"
 
     def __init__(self, connection: Redis) -> None:
         self.connection = connection

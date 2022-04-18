@@ -7,6 +7,7 @@
         "coverage.xml": true,
         ".tox": true,
         ".mypy_cache": true,
+        "repid/py.typed": true,
     },
     // Testing
     "python.testing.pytestEnabled": true,

@@ -6,10 +6,10 @@ from typing import Literal, Optional, Type, Union
 import orjson
 from pydantic import BaseModel
 
-from . import _connection_manager
-from .connections.connection import Connection
-from .queue import Queue
-from .utils import VALID_NAME_RE, current_unix_time, orjson_dumper
+# from . import _connection_manager
+# from .connections.connection import Connection
+# from .queue import Queue
+# from .utils import VALID_NAME, current_unix_time, orjson_dumper
 
 
 class JobStatus(Enum):
@@ -62,7 +62,7 @@ class Job:
         _connection: Optional["Connection"] = None,
         **kwargs,
     ):
-        if not VALID_NAME_RE.fullmatch(name):
+        if not VALID_NAME.fullmatch(name):
             raise ValueError(
                 "Job name must start with a letter or an underscore"
                 "followed by letters, digits, dashes or underscores."

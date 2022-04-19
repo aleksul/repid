@@ -1,7 +1,7 @@
-import re
+import random
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, AsyncGenerator, Literal, Optional
+from typing import TYPE_CHECKING, AsyncGenerator, List, Literal, Optional
 
 import msgspec
 import orjson
@@ -9,7 +9,9 @@ from redis.asyncio import Redis  # type: ignore
 
 from repid.message import DeferredMessage, Message
 from repid.middlewares.middleware import with_middleware
-from repid.utils import current_unix_time
+from repid.utils import VALID_PRIORITIES, PrioritiesT, current_unix_time
+from repid.utils import message_name_constructor as mnc
+from repid.utils import queue_name_constructor as qnc
 
 if TYPE_CHECKING:
     from redis.asyncio.client.Redis import pipeline as Pipeline
@@ -17,25 +19,8 @@ if TYPE_CHECKING:
     from repid.message import AnyMessage
     from repid.queue import Queue
 
-MessagePrefix = "message"
 ResultPrefix = "result"
-QueuePrefix = "queue"
-DelayedSuffix = "delayed"
-
 ProcessingQueue = "processing"  # set
-
-
-
-
-QueuePrefix = dict(
-    HIGH="queue_high_priority:",  # list
-    NORMAL="queue_normal_priority:",  # list
-    LOW="queue_low_priority:",  # list
-    DEFERRED="queue_deferred:",  # sorted set, with time of execution as key
-    DEAD="queue_dead:",  # list
-)
-
-
 
 
 class RedisConnection:
@@ -49,6 +34,19 @@ class RedisConnection:
         self.consume_script = connection.register_script(
             script=(scripts_path / "consume.lua").read_text()
         )
+        if not VALID_PRIORITIES.fullmatch(self.__class__.priorities_distribution):
+            raise ValueError(
+                f"Invalid priorities distribution: {self.__class__.priorities_distribution}"
+            )
+        pr_dist = [int(x) for x in self.__class__.priorities_distribution.split("/")]
+
+        if pr_dist[0] > pr_dist[1] or pr_dist[1] > pr_dist[2]:
+            raise ValueError(
+                f"Invalid priorities distribution: {self.__class__.priorities_distribution}"
+            )
+
+        pr_dist_sum = sum(self._priorities_distribution)
+        self._priorities = [x / pr_dist_sum for x in pr_dist]
 
     @staticmethod
     def _create_message(message: AnyMessage, pipe: Pipeline) -> None:
@@ -65,8 +63,8 @@ class RedisConnection:
         return msg_dec.decode(message)
 
     @staticmethod
-    def _delete_message(id_: str, queue: str, pipe: Pipeline) -> None:
-        pipe.delete(f"{MessagePrefix}{queue}:{id_}")
+    def _delete_message(name: str, queue: str, id_: str, pipe: Pipeline) -> None:
+        pipe.delete(mnc(name, queue, id_))
 
     async def __reschedule_deferred_by(self, message: DeferredMessage) -> None:
         if message.defer_by is None:
@@ -80,11 +78,23 @@ class RedisConnection:
             pipe.zadd(queue, {message.delay_until: message.id_})
             await pipe.execute()
 
+    def __get_order(self, rand: float) -> List[PrioritiesT]:
+        if rand <= self._priorities[0]:
+            return [PrioritiesT.HIGH, PrioritiesT.MEDIUM, PrioritiesT.LOW]
+        elif rand <= self._priorities[0] + self._priorities[1]:
+            return [PrioritiesT.MEDIUM, PrioritiesT.HIGH, PrioritiesT.LOW]
+        else:
+            return [PrioritiesT.LOW, PrioritiesT.HIGH, PrioritiesT.MEDIUM]
+
     @with_middleware
     async def consume(self, queue: Queue) -> AsyncGenerator[AnyMessage, None]:
-        while (
-            id_ := await self.consume_script(args=(queue.name, current_unix_time()))
-        ) is not None:
+        while True:
+            for p in self.__get_order(random.random()):
+                id_ = await self.consume_script(
+                    keys=(qnc(queue.name, p), qnc(queue.name, p, delayed=True)),
+                    args=(current_unix_time(),),
+                )
+            random.random()
             message = await self._read_message(id_, queue.name)
             if message is None:
                 await self.connection.srem(ProcessingQueue, id_)
@@ -142,7 +152,7 @@ class RedisConnection:
                 if type(message) is DeferredMessage and message.defer_by is not None:
                     pass
                 else:
-                    
+                    pass
             else:
                 queue = QueuePrefix["DEAD"] + message.queue
                 pipe.lpush(queue, message.id_)

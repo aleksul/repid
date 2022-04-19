@@ -1,24 +1,14 @@
-local queue_name = ARGV[1]
-
-local high_priority_queue = 'queue_high_priority:' .. queue_name  -- list
-local deferred_queue = 'queue_deferred:' .. queue_name  -- sorted set
-local normal_priority_queue = 'queue_normal_priority:' .. queue_name  -- list
-local low_priority_queue = 'queue_low_priority:' .. queue_name  -- list
-local processing_queue = 'processing'  -- set
+local queue = KEYS[1]  -- list
+local deferred_queue = KEYS[2]  -- sorted set
+local processing_queue = 'processing'  -- sorted set
 
 local current_time = ARGV[2]  -- int (unix timestamp)
 
 local function mark_processing(message_id)
-    redis.call('sadd', processing_queue, message_id)
+    redis.call('sadd', processing_queue, current_time, message_id)
 end
 
 local msg_id
-
-if redis.call('exists', high_priority_queue) == 1 then
-    msg_id = redis.call('rpop', high_priority_queue)
-    mark_processing(msg_id)
-    return msg_id
-end
 
 if redis.call('exists', deferred_queue) == 1 then
     msg_id = next(redis.call('zrange', deferred_queue, '-inf', current_time, 'BYSCORE', 'LIMIT', 0, 1))
@@ -29,14 +19,8 @@ if redis.call('exists', deferred_queue) == 1 then
     end
 end
 
-if redis.call('exists', normal_priority_queue) == 1 then
-    msg_id = redis.call('rpop', normal_priority_queue)
-    mark_processing(msg_id)
-    return msg_id
-end
-
-if redis.call('exists', low_priority_queue) == 1 then
-    msg_id = redis.call('rpop', low_priority_queue)
+if redis.call('exists', queue) == 1 then
+    msg_id = redis.call('rpop', queue)  -- not nil, because queue exists
     mark_processing(msg_id)
     return msg_id
 end

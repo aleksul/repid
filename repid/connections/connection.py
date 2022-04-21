@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, AsyncGenerator, Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Optional, Protocol
 
 if TYPE_CHECKING:
     from repid.data import AnyBucketT, AnyMessageT
@@ -10,8 +10,8 @@ class Messaging(Protocol):
     queue_type: Literal["FIFO", "LIFO", "SIMPLE"] = "FIFO"
     priorities_distribution: str
 
-    async def consume(self, queue: Queue) -> AsyncGenerator[AnyMessageT, None]:
-        """Consumes messages from the specified queue."""
+    async def consume(self, queue: Queue) -> Optional[AnyMessageT]:
+        """Consumes one message from the specified queue."""
         ...
 
     async def enqueue(

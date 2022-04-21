@@ -14,11 +14,7 @@ class Messaging(Protocol):
         """Consumes one message from the specified queue."""
         ...
 
-    async def enqueue(
-        self,
-        message: AnyMessageT,
-        priority: Literal["HIGH", "NORMAL", "LOW"] = "NORMAL",
-    ) -> None:
+    async def enqueue(self, message: AnyMessageT) -> None:
         """Appends the message to the queue."""
         ...
 
@@ -40,6 +36,14 @@ class Messaging(Protocol):
 
     async def message_nack(self, message: AnyMessageT) -> None:
         """Informs message broker that job execution failed."""
+        ...
+
+    async def message_requeue(self, message: AnyMessageT) -> None:
+        """Requeues the message."""
+        ...
+
+    async def maintenance(self) -> None:
+        """Performs maintenance tasks."""
         ...
 
 

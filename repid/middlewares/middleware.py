@@ -17,12 +17,16 @@ Events = Literal[
     "after_message_ack",
     "before_message_nack",
     "after_message_nack",
-    "before_get_result",
-    "after_get_result",
-    "before_store_result",
-    "after_store_result",
-    "before_delete_result",
-    "after_delete_result",
+    "before_message_requeue",
+    "after_message_requeue",
+    "before_maintenance",
+    "after_maintenance",
+    "before_get_bucket",
+    "after_get_bucket",
+    "before_store_bucket",
+    "after_store_bucket",
+    "before_delete_bucket",
+    "after_delete_bucket",
 ]
 
 
@@ -45,7 +49,7 @@ class _Middleware:
     def add_middleware(self, middleware: Any) -> None:
         for event in dir(middleware):
             if event in self.__possible_events:
-                self._add_event(event, getattr(middleware, event))  # type: ignore
+                self._add_event(event, getattr(middleware, event))  # type: ignore[arg-type]
 
     async def emit_signal(self, name: Events, *data: List[Any]) -> None:
         if name in self._events:
@@ -60,9 +64,9 @@ Middleware = _Middleware()
 def with_middleware(fn):
     async def wrapper(*args, **kwargs):
         nonlocal fn
-        await Middleware.emit_signal(f"before_{fn.__name__}", args)  # type: ignore
+        await Middleware.emit_signal(f"before_{fn.__name__}", args)
         result = await fn(*args, **kwargs)
-        await Middleware.emit_signal(f"after_{fn.__name__}", args)  # type: ignore
+        await Middleware.emit_signal(f"after_{fn.__name__}", args)
         return result
 
     return wrapper

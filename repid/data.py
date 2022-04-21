@@ -1,9 +1,16 @@
+from enum import Enum
 from typing import Any, Optional, Union
 
 import msgspec
 
 
-class StructWithParams(msgspec.Struct, tag=True, omit_defaults=True):
+class PrioritiesT(Enum):
+    HIGH = "hi"
+    MEDIUM = "me"
+    LOW = "lo"
+
+
+class StructWithParams(msgspec.Struct, tag=True, omit_defaults=True):  # type: ignore[call-arg]
     pass
 
 
@@ -16,6 +23,7 @@ class Message(StructWithParams, Timestamp):
     id_: str
     actor_name: str
     queue: str
+    priority: PrioritiesT
     retries_left: int = 1
     actor_timeout: int = 600
     bucket_id: Optional[str] = None
@@ -47,7 +55,7 @@ AnySerializableT = Union[Message, DeferredMessage, Bucket, ResultBucket]
 
 
 class Serializer:
-    decoder = msgspec.msgpack.Decoder(type=AnySerializableT)  # type: ignore
+    decoder = msgspec.msgpack.Decoder(type=AnySerializableT)  # type: ignore[call-overload]
     encoder = msgspec.msgpack.Encoder()
 
     @classmethod

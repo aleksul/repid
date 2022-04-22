@@ -9,7 +9,7 @@ from pydantic import BaseModel
 # from . import _connection_manager
 # from .connections.connection import Connection
 # from .queue import Queue
-# from .utils import VALID_NAME, current_unix_time, orjson_dumper
+# from .utils import VALID_NAME, unix_time, orjson_dumper
 
 
 class JobStatus(Enum):
@@ -117,7 +117,7 @@ class Job:
             response_model.Config.json_dumps = orjson_dumper
             self._response_schema = response_model.schema_json()
 
-        now = current_unix_time()
+        now = unix_time()
         self._created, self._updated = now, now
 
         self.__connection = _connection or _connection_manager.default_connection

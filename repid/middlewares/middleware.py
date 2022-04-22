@@ -35,7 +35,7 @@ class _Middleware:
 
     def __new__(cls):  # Singleton
         if not hasattr(cls, "__instance"):
-            cls.__instance = super().__new__(cls)
+            cls.__instance = cls.__init__()
         return cls.__instance
 
     def __init__(self):

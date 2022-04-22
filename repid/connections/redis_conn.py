@@ -1,15 +1,15 @@
 import random
-from itertools import count
 from pathlib import Path
-from typing import TYPE_CHECKING, AsyncGenerator, List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from redis.asyncio import Redis
 
 from repid.data import DeferredMessage, Message, Serializer
 from repid.middlewares.middleware import with_middleware
-from repid.utils import VALID_PRIORITIES, PrioritiesT, current_unix_time
+from repid.utils import VALID_PRIORITIES, PrioritiesT
 from repid.utils import message_name_constructor as mnc
 from repid.utils import queue_name_constructor as qnc
+from repid.utils import unix_time
 
 if TYPE_CHECKING:
     from repid.data import AnyMessageT
@@ -46,18 +46,36 @@ class RedisMessaging:
     async def __reschedule_deferred_by(self, message: DeferredMessage) -> None:
         if message.defer_by is None:
             return
-        queue = qnc(message.queue, message.priority, delayed=True)
         message.delay_until = message.timestamp + (
-            message.defer_by * ((current_unix_time() - message.timestamp) // message.defer_by + 1)
+            message.defer_by * ((unix_time() - message.timestamp) // message.defer_by + 1)
         )
         async with self.connection.pipeline(transaction=True) as pipe:
             pipe.set(
                 mnc(message.queue, message.id_),
                 Serializer.encode(message),
-                exat=message.timestamp + message.ttl if message.ttl is not None else None,
+                xx=True,
             )
-            pipe.zadd(queue, {message.delay_until: message.id_})
+            pipe.zadd(
+                qnc(message.queue, message.priority, delayed=True),
+                {message.delay_until: message.id_},
+            )
             await pipe.execute()
+
+    async def __is_ttl_expired(self, message: Message) -> bool:
+        if message.ttl is not None and message.timestamp + message.ttl < unix_time():
+            # ttl expired - put message to the dead queue
+            dead_queue = qnc(
+                message.queue,
+                message.priority,
+                delayed=True if type(message) is DeferredMessage else False,
+                dead=True,
+            )
+            async with self.connection.pipeline(transaction=True) as pipe:
+                pipe.rpush(dead_queue, message.id_)
+                pipe.zrem(ProcessingQueue, message.id_)
+                await pipe.execute()
+            return True
+        return False
 
     def __get_order(self, rand: float) -> List[PrioritiesT]:
         if rand <= self._priorities[0]:
@@ -72,30 +90,32 @@ class RedisMessaging:
         for priority in self.__get_order(random.random()):
             data = await self.consume_script(
                 keys=(qnc(queue.name, priority), qnc(queue.name, priority, delayed=True)),
-                args=(current_unix_time(), mnc(queue.name, "")),
+                args=(unix_time(), mnc(queue.name, "")),
             )
             if data is not None:
-                message = Serializer.decode(data)
+                message: AnyMessageT = Serializer.decode(data)  # type: ignore[assignment]
+                if await self.__is_ttl_expired(message):
+                    return await self.consume(queue)
                 if type(message) is DeferredMessage:
                     await self.__reschedule_deferred_by(message)
-                return message  # type: ignore[return-value]
+                return message
         return None
 
     @with_middleware
     async def enqueue(self, message: AnyMessageT) -> None:
-        async with self.connection.pipeline() as pipe:
-            pipe.set(
-                mnc(message.queue, message.id_),
-                Serializer.encode(message),
-                exat=message.timestamp + message.ttl if message.ttl is not None else None,
-            )
-            if type(message) is Message:
-                queue = qnc(message.queue, message.priority)
-                pipe.lpush(queue, message.id_)
-            elif type(message) is DeferredMessage:
-                queue = qnc(message.queue, message.priority, delayed=True)
-                pipe.zadd(queue, {message.delay_until: message.id_})
-            await pipe.execute()
+        res = await self.connection.set(
+            mnc(message.queue, message.id_),
+            Serializer.encode(message),
+            nx=True,
+        )
+        if res is None:  # message already exists
+            return None
+        if type(message) is Message:
+            queue = qnc(message.queue, message.priority)
+            await self.connection.lpush(queue, message.id_)
+        elif type(message) is DeferredMessage:
+            queue = qnc(message.queue, message.priority, delayed=True)
+            await self.connection.zadd(queue, {message.delay_until: message.id_})
 
     @with_middleware
     async def queue_declare(self, queue: Queue) -> None:
@@ -103,25 +123,17 @@ class RedisMessaging:
 
     @with_middleware
     async def queue_flush(self, queue: Queue) -> None:
-        keys = await self.connection.keys(mnc(queue.name, "*"))
-        async with self.connection.pipeline(transaction=True) as pipe:
-            for key in keys:
-                pipe.delete(key)
-            for priority in PrioritiesT:
-                pipe.delete(qnc(queue.name, priority))
-                pipe.delete(qnc(queue.name, priority, delayed=True))
-            await pipe.execute()
+        async for msg in self.connection.scan_iter(match=mnc(queue.name, "*")):
+            await self.connection.delete(msg)
+        async for queue in self.connection.scan_iter(match=f"q:{queue.name}:*"):
+            await self.connection.delete(queue)
 
     @with_middleware
     async def queue_delete(self, queue: Queue) -> None:
-        keys = await self.connection.keys(mnc(queue.name, "*"))
-        async with self.connection.pipeline(transaction=True) as pipe:
-            for key in keys:
-                pipe.delete(key)
-            for priority in PrioritiesT:
-                pipe.delete(qnc(queue.name, priority))
-                pipe.delete(qnc(queue.name, priority, delayed=True))
-            await pipe.execute()
+        async for msg in self.connection.scan_iter(match=mnc(queue.name, "*")):
+            await self.connection.delete(msg)
+        async for queue in self.connection.scan_iter(match=f"q:{queue.name}:*"):
+            await self.connection.delete(queue)
 
     @with_middleware
     async def message_ack(self, message: AnyMessageT):
@@ -138,7 +150,7 @@ class RedisMessaging:
                 message.retries_left -= 1
                 if type(message) is DeferredMessage and message.defer_by is not None:
                     message = Message(
-                        id_=f"retry-{current_unix_time()}-{message.id_}",
+                        id_=f"retry-{unix_time()}-{message.id_}",
                         queue=message.queue,
                         actor_name=message.actor_name,
                         retries_left=message.retries_left,
@@ -150,7 +162,7 @@ class RedisMessaging:
                 pipe.set(
                     mnc(message.queue, message.id_),
                     Serializer.encode(message),
-                    exat=message.timestamp + message.ttl if message.ttl is not None else None,
+                    nx=True,
                 )
                 pipe.lpush(qnc(message.queue, message.priority), message.id_)
             else:
@@ -164,49 +176,42 @@ class RedisMessaging:
             await pipe.execute()
 
     @with_middleware
-    async def message_requeue(self, message: AnyMessageT) -> None:
-        if await self.connection.exists(mnc(message.queue, message.id_)):
+    async def message_requeue(
+        self,
+        message: AnyMessageT,
+        unmark_processing: bool = False,
+        unmark_dead: bool = False,
+    ) -> None:
+        msg_name = mnc(message.queue, message.id_)
+        if await self.connection.exists(msg_name):
             async with self.connection.pipeline(transaction=True) as pipe:
-                pipe.lrem(
-                    qnc(
-                        message.queue,
-                        message.priority,
-                        delayed=True if type(message) is DeferredMessage else False,
-                        dead=True,
-                    ),
-                    0,
-                    message.id_,
-                )
+                pipe.set(msg_name, Serializer.encode(message), xx=True)
                 if type(message) is Message:
                     queue = qnc(message.queue, message.priority)
                     pipe.lpush(queue, message.id_)
                 elif type(message) is DeferredMessage:
                     queue = qnc(message.queue, message.priority, delayed=True)
                     pipe.zadd(queue, {message.delay_until: message.id_})
+                if unmark_processing:
+                    pipe.zrem(ProcessingQueue, message.id_)
+                if unmark_dead:
+                    pipe.lrem(f"{queue}:dead", message.id_)
                 await pipe.execute()
-
-    async def __get_proccessing_message(self) -> AsyncGenerator:
-        for offset in count(0):
-            score, id_ = await self.connection.zrange(
-                ProcessingQueue, offset, offset, withscores=True
-            )
-            if score is None or id_ is None:
-                raise StopAsyncIteration
-            yield (score, id_)
 
     @with_middleware
     async def maintenance(self):
-        now = current_unix_time()
-        async for score, id_ in self.__get_proccessing_message():
-            k = await self.connection.keys(f"m:*:{id_}")
-            if k:
+        """This method is called periodically to clean up the processing queue."""
+        now = unix_time()
+        async for id_, score in self.connection.zscan_iter(ProcessingQueue):
+            k = await self.connection.scan(match=f"m:*:{id_}", count=1)
+            if k is not None:
                 message = await self.connection.get(k)
             if message is None:
                 await self.connection.zrem(ProcessingQueue, id_)
                 continue
-            message = Serializer.decode(message)
+            message: AnyMessageT = Serializer.decode(message)
             if now - score > message.actor_timeout:
-                await self.message_nack(message)
+                await self.message_requeue(message, unmark_processing=True)
 
 
 class RedisBucketing:

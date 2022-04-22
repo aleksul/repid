@@ -7,7 +7,8 @@ VALID_NAME = re.compile(r"[a-zA-Z_][a-zA-Z0-9._-]*")  # valid actor and queue na
 VALID_PRIORITIES = re.compile(r"[0-9]+\/[0-9]+\/[0-9]+")
 
 
-current_unix_time = lambda: int(time.time())  # noqa: E731
+def unix_time() -> int:
+    return int(time.time())
 
 
 def queue_name_constructor(

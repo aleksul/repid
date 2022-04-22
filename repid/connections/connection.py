@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Optional, Protocol
 
 if TYPE_CHECKING:
@@ -59,3 +60,10 @@ class Bucketing(Protocol):
     async def delete_bucket(self, id_: str) -> None:
         """Deletes the bucket of the job."""
         ...
+
+
+@dataclass(frozen=True)
+class Connection:
+    messager: Messaging
+    args_bucketer: Optional[Bucketing] = None
+    results_bucketer: Optional[Bucketing] = None

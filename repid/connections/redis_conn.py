@@ -176,7 +176,7 @@ class RedisMessaging:
         self,
         message: AnyMessageT,
         unmark_processing: bool = False,
-        unmark_dead: bool = False,
+        unmark_dead: bool = True,
     ) -> None:
         msg_name = mnc(message.queue, message.id_)
         if await self.connection.exists(msg_name):

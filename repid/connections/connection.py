@@ -3,7 +3,6 @@ from typing import TYPE_CHECKING, Literal, Optional, Protocol
 
 if TYPE_CHECKING:
     from repid.data import AnyBucketT, AnyMessageT
-    from repid.queue import Queue
 
 
 class Messaging(Protocol):
@@ -11,7 +10,7 @@ class Messaging(Protocol):
     queue_type: Literal["FIFO", "LIFO", "SIMPLE"] = "FIFO"
     priorities_distribution: str
 
-    async def consume(self, queue: Queue) -> Optional[AnyMessageT]:
+    async def consume(self, queue_name: str) -> Optional[AnyMessageT]:
         """Consumes one message from the specified queue."""
         ...
 
@@ -19,15 +18,15 @@ class Messaging(Protocol):
         """Appends the message to the queue."""
         ...
 
-    async def queue_declare(self, queue: Queue) -> None:
+    async def queue_declare(self, queue_name: str) -> None:
         """Creates the specified queue."""
         ...
 
-    async def queue_flush(self, queue: Queue) -> None:
+    async def queue_flush(self, queue_name: str) -> None:
         """Empties the queue. Doesn't delete the queue itself."""
         ...
 
-    async def queue_delete(self, queue: Queue) -> None:
+    async def queue_delete(self, queue_name: str) -> None:
         """Deletes the queue with all of its messages."""
         ...
 
@@ -49,7 +48,7 @@ class Messaging(Protocol):
 
 
 class Bucketing(Protocol):
-    async def get_bucket(self, id_: str) -> AnyBucketT:
+    async def get_bucket(self, id_: str) -> Optional[AnyBucketT]:
         """Retrivies the bucket of the job."""
         ...
 

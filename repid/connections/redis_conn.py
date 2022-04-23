@@ -12,8 +12,7 @@ from repid.utils import queue_name_constructor as qnc
 from repid.utils import unix_time
 
 if TYPE_CHECKING:
-    from repid.data import AnyMessageT
-    from repid.queue import Queue
+    from repid.data import AnyBucketT, AnyMessageT
 
 ProcessingQueue = "processing"  # sorted set
 
@@ -23,7 +22,7 @@ class RedisMessaging:
     queue_type = "FIFO"
     priorities_distribution = "10/3/1"
 
-    def __init__(self, connection: Redis) -> None:
+    def __init__(self, connection: Redis):
         self.connection = connection
         scripts_path = Path(__file__).parent / "redis_scripts"
         self.consume_script = connection.register_script(
@@ -61,7 +60,7 @@ class RedisMessaging:
             )
             await pipe.execute()
 
-    async def __is_ttl_expired(self, message: Message) -> bool:
+    async def __is_ttl_expired(self, message: AnyMessageT) -> bool:
         if message.ttl is not None and message.timestamp + message.ttl < unix_time():
             # ttl expired - put message to the dead queue
             dead_queue = qnc(
@@ -86,16 +85,16 @@ class RedisMessaging:
             return [PrioritiesT.LOW, PrioritiesT.HIGH, PrioritiesT.MEDIUM]
 
     @with_middleware
-    async def consume(self, queue: Queue) -> Optional[AnyMessageT]:
+    async def consume(self, queue_name: str) -> Optional[AnyMessageT]:
         for priority in self.__get_order(random.random()):
             data = await self.consume_script(
-                keys=(qnc(queue.name, priority), qnc(queue.name, priority, delayed=True)),
-                args=(unix_time(), mnc(queue.name, "")),
+                keys=(qnc(queue_name, priority), qnc(queue_name, priority, delayed=True)),
+                args=(unix_time(), mnc(queue_name, "")),
             )
             if data is not None:
                 message: AnyMessageT = Serializer.decode(data)  # type: ignore[assignment]
                 if await self.__is_ttl_expired(message):
-                    return await self.consume(queue)
+                    return await self.consume(queue_name)
                 if type(message) is DeferredMessage:
                     await self.__reschedule_deferred_by(message)
                 return message
@@ -118,22 +117,19 @@ class RedisMessaging:
             await self.connection.zadd(queue, {message.delay_until: message.id_})
 
     @with_middleware
-    async def queue_declare(self, queue: Queue) -> None:
+    async def queue_declare(self, queue_name: str) -> None:
         return
 
     @with_middleware
-    async def queue_flush(self, queue: Queue) -> None:
-        async for msg in self.connection.scan_iter(match=mnc(queue.name, "*")):
+    async def queue_flush(self, queue_name: str) -> None:
+        async for msg in self.connection.scan_iter(match=mnc(queue_name, "*")):
             await self.connection.delete(msg)
-        async for queue in self.connection.scan_iter(match=f"q:{queue.name}:*"):
+        async for queue in self.connection.scan_iter(match=f"q:{queue_name}:*"):
             await self.connection.delete(queue)
 
     @with_middleware
-    async def queue_delete(self, queue: Queue) -> None:
-        async for msg in self.connection.scan_iter(match=mnc(queue.name, "*")):
-            await self.connection.delete(msg)
-        async for queue in self.connection.scan_iter(match=f"q:{queue.name}:*"):
-            await self.connection.delete(queue)
+    async def queue_delete(self, queue_name: str) -> None:
+        await self.queue_flush(queue_name)
 
     @with_middleware
     async def message_ack(self, message: AnyMessageT):
@@ -215,4 +211,25 @@ class RedisMessaging:
 
 
 class RedisBucketing:
-    pass
+    def __init__(self, connection: Redis):
+        self.connection = connection
+
+    @with_middleware
+    async def get_bucket(self, id_: str) -> Optional[AnyBucketT]:
+        data = await self.connection.get(id_)
+        if data is not None:
+            return Serializer.decode(data)  # type: ignore[return-value]
+        return None
+
+    @with_middleware
+    async def store_bucket(self, bucket: AnyBucketT) -> None:
+        await self.connection.set(
+            bucket.id_,
+            Serializer.encode(bucket),
+            nx=True,
+            exat=bucket.timestamp + bucket.ttl if bucket.ttl is not None else None,
+        )
+
+    @with_middleware
+    async def delete_bucket(self, id_: str) -> None:
+        await self.connection.delete(id_)

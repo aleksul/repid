@@ -3,7 +3,8 @@ import time
 
 from repid.data import PrioritiesT
 
-VALID_NAME = re.compile(r"[a-zA-Z_][a-zA-Z0-9._-]*")  # valid actor and queue names
+VALID_ID = re.compile(r"[a-zA-Z0-9_-]*")
+VALID_NAME = re.compile(r"[a-zA-Z_][a-zA-Z0-9_-]*")  # valid actor and queue names
 VALID_PRIORITIES = re.compile(r"[0-9]+\/[0-9]+\/[0-9]+")
 
 

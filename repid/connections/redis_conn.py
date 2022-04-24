@@ -200,6 +200,7 @@ class RedisMessaging:
         now = unix_time()
         async for id_, score in self.connection.zscan_iter(ProcessingQueue):
             k = await self.connection.scan(match=f"m:*:{id_}", count=1)
+            message = None
             if k is not None:
                 message = await self.connection.get(k)
             if message is None:

@@ -1,23 +1,16 @@
 import uuid
 from datetime import datetime, timedelta
-from enum import Enum, auto
-from typing import Literal, Optional, Type, Union
+from functools import cached_property
+from typing import TYPE_CHECKING, Optional, Union
 
-import orjson
-from pydantic import BaseModel
+from repid import _default_connection
+from repid.connections.connection import Connection
+from repid.data import DeferredMessage, Message, PrioritiesT, ResultBucket
+from repid.queue import Queue
+from repid.utils import VALID_ID, VALID_NAME, unix_time
 
-# from . import _connection_manager
-# from .connections.connection import Connection
-# from .queue import Queue
-# from .utils import VALID_NAME, unix_time, orjson_dumper
-
-
-class JobStatus(Enum):
-    QUEUED = auto()
-    PROCESSING = auto()
-    DONE = auto()
-    DEAD = auto()
-    NOT_FOUND = auto()
+if TYPE_CHECKING:
+    from repid.data import AnyMessageT
 
 
 class Job:
@@ -34,34 +27,40 @@ class Job:
         "timeout",
         "created",
         "ttl",
-        "_retries_left",
-        "_next_exec_time",
-        "__connection",
+        "__conn",
     )
 
     def __init__(
         self,
         name: str,
         queue: Union[str, Queue] = "default",
-        priority: Literal["HIGH", "NORMAL", "LOW", "DEFERRED"] = "NORMAL",
+        priority: PrioritiesT = PrioritiesT.MEDIUM,
         deferred_until: Union[datetime, int, None] = None,
         deferred_by: Union[timedelta, int, None] = None,
         retries: int = 1,
         timeout: int = 600,
-        request_model: Optional[BaseModel] = None,
-        response_model: Optional[Type[BaseModel]] = None,
         ttl: Optional[int] = None,
         id_: Optional[str] = None,
-        _connection: Optional["Connection"] = None,
-        **kwargs,
+        _connection: Optional[Connection] = None,
     ):
+        self.__conn: Connection = _connection or _default_connection  # type: ignore[assignment]
+
+        if self.__conn is None:
+            raise ValueError("No connection provided.")
+
+        if not self.__conn.messager.supports_delayed_messages and self.is_deferred:
+            raise ValueError("Deferred jobs are not supported by this connection.")
+
         if not VALID_NAME.fullmatch(name):
             raise ValueError(
                 "Job name must start with a letter or an underscore"
                 "followed by letters, digits, dashes or underscores."
             )
         self.name = name
-        self.id_ = id_ or f"{name}:{uuid.uuid4().hex}"
+
+        if id_ is not None and not VALID_ID.fullmatch(id_):
+            raise ValueError("Job id must contain only letters, numbers, dashes and underscores.")
+        self.id_ = id_ or uuid.uuid4().hex
 
         if not isinstance(queue, Queue):
             self.queue = Queue(queue)
@@ -70,23 +69,19 @@ class Job:
 
         self.priority = priority
 
-        is_deferred: bool = any(v is not None for v in [deferred_by, deferred_until])
-        if is_deferred and self.priority != "DEFERRED":
-            raise ValueError("Deferred job must have priority='DEFERRED'.")
-
-        if deferred_until is not None and deferred_by is not None:
+        if (deferred_until is not None) and (deferred_by is not None):
             raise ValueError("Usage of 'deferred_until' AND 'deferred_by' together is prohibited.")
 
         self.deferred_until: Optional[int] = None
         if isinstance(deferred_until, datetime):
             self.deferred_until = int(deferred_until.timestamp())
-        elif type(deferred_until) is int:
+        elif isinstance(deferred_until, int):
             self.deferred_until = deferred_until
 
         self.deferred_by: Optional[int] = None
         if isinstance(deferred_by, timedelta):
             self.deferred_by = int(deferred_by.seconds)
-        elif type(deferred_by) is int:
+        elif isinstance(deferred_by, int):
             self.deferred_by = deferred_by
 
         if retries < 1:
@@ -101,71 +96,71 @@ class Job:
             raise ValueError("TTL must be greater than or equal to 1 second.")
         self.ttl = ttl
 
-        if request_model is not None:
-            request_model.Config.json_dumps = orjson_dumper
-            self._request_schema = request_model.schema_json()
-            self._request_data = request_model.json()
+        self.created = unix_time()
 
-        if response_model is not None:
-            response_model.Config.json_dumps = orjson_dumper
-            self._response_schema = response_model.schema_json()
+    @cached_property
+    def is_deferred(self) -> bool:
+        return (self.deferred_until is not None) or (self.deferred_by is not None)
 
-        now = unix_time()
-        self._created, self._updated = now, now
+    @property
+    def next_execution_time(self) -> int:
+        if self.deferred_until is not None:
+            return self.deferred_until
+        elif self.deferred_by is not None:
+            return self.created + (
+                self.deferred_by * ((unix_time() - self.created) // self.deferred_by + 1)
+            )
+        else:
+            raise TypeError("Job is not deferred.")
 
-        self.__connection = _connection or _connection_manager.default_connection
+    @property
+    def is_overdue(self) -> bool:
+        if self.ttl is not None:
+            return unix_time() > self.created + self.ttl
+        return False
 
-        for k, v in kwargs.items():
-            if k.startswith("_") and k in self.__slots__:
-                setattr(self, k, v)
+    def _to_message(self) -> AnyMessageT:
+        if self.is_deferred:
+            return DeferredMessage(
+                id_=self.id_,
+                actor_name=self.name,
+                queue=self.queue.name,
+                priority=self.priority,
+                delay_until=self.next_execution_time,
+                defer_by=self.deferred_by,
+                retries_left=self.retries,
+                actor_timeout=self.timeout,
+                ttl=self.ttl,
+                timestamp=self.created,
+            )
+        else:
+            return Message(
+                id_=self.id_,
+                actor_name=self.name,
+                queue=self.queue.name,
+                priority=self.priority,
+                retries_left=self.retries,
+                actor_timeout=self.timeout,
+                ttl=self.ttl,
+                timestamp=self.created,
+            )
 
     async def enqueue(self):
-        await self.__redis__.set(
-            JOB_PREFIX + self._id,
-            orjson.dumps(self.__as_dict__()),
-            nx=True,
-        )
-        await self.queue.add_job(self._id, self.is_deferred)
-
-    async def update(self):
-        await self.queue.remove_job(self._id)
-        await self.__redis__.set(
-            JOB_PREFIX + self._id,
-            orjson.dumps(self.__as_dict__()),
-            xx=True,
-        )
-        await self.queue.add_job(self._id, self.is_deferred)
-
-    async def delete(self) -> None:
-        await self.__connection.delete_job(self.id_)
+        await self.__conn.messager.enqueue(self._to_message())
 
     @property
-    def is_deferred(self) -> bool:
-        return (self.defer_until is not None) or (self.defer_by is not None)
+    async def result(self) -> Optional[ResultBucket]:
+        if self.__conn.results_bucketer is None:
+            raise ConnectionError("Results bucketer is not configured.")
+        data = await self.__conn.results_bucketer.get_bucket(f"result:{self.id_}")
+        if type(data) is ResultBucket:
+            return data
+        return None
 
-    @property
-    async def is_deferred_already(self) -> bool:
-        if self.defer_until is not None:
-            if self.defer_until > int(datetime.utcnow().timestamp()):
-                return False
-        if self.defer_by is not None:
-            if (res := await self.result) is not None:
-                if res.finished_when + self.defer_by > int(datetime.utcnow().timestamp()):
-                    return False
-        return True
-
-    @property
-    async def status(self) -> JobStatus:
-        if not await self.__redis__.exists(JOB_PREFIX + self._id):
-            return JobStatus.NOT_FOUND
-        if await self.queue.is_job_queued(self._id):
-            return JobStatus.QUEUED
-        if await self.result is not None:
-            return JobStatus.DONE
-        else:
-            return JobStatus.IN_PROGRESS  # pragma: no cover
-
-    @property
-    async def result(self) -> Optional[JobResult]:
-        raw = await self.__redis__.get(RESULT_PREFIX + self._id)
-        return None if raw is None else JobResult(**orjson.loads(raw))
+    @result.setter
+    async def result(self, value: ResultBucket):
+        if not value.id_.startswith("result:"):
+            raise ValueError("Result id must start with 'result:'.")
+        if self.__conn.results_bucketer is None:
+            raise ConnectionError("Results bucketer is not configured.")
+        await self.__conn.results_bucketer.store_bucket(value)

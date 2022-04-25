@@ -1,11 +1,12 @@
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import cached_property
 from typing import TYPE_CHECKING, Optional, Union
 
 from repid import _default_connection
 from repid.connections.connection import Connection
-from repid.data import DeferredMessage, Message, PrioritiesT, ResultBucket
+from repid.data import Bucket, DeferredMessage, Message, PrioritiesT, ResultBucket
 from repid.queue import Queue
 from repid.utils import VALID_ID, VALID_NAME, unix_time
 
@@ -63,7 +64,7 @@ class Job:
         self.id_ = id_ or uuid.uuid4().hex
 
         if not isinstance(queue, Queue):
-            self.queue = Queue(queue)
+            self.queue = Queue(queue, self.__conn)
         else:
             self.queue = queue
 
@@ -119,6 +120,43 @@ class Job:
             return unix_time() > self.created + self.ttl
         return False
 
+    async def enqueue(self):
+        await self.__conn.messager.enqueue(self._to_message())
+
+    @property
+    async def data(self) -> Optional[Bucket]:
+        if self.__conn.args_bucketer is None:
+            raise ConnectionError("No args bucketer provided.")
+        data = await self.__conn.args_bucketer.get_bucket(f"args:{self.id_}")
+        if type(data) is Bucket:
+            return data
+        return None
+
+    @data.setter
+    async def data(self, value: Bucket):
+        if not value.id_.startswith("args:"):
+            raise ValueError("Bucket id must start with 'args:'.")
+        if self.__conn.args_bucketer is None:
+            raise ConnectionError("No args bucketer provided.")
+        await self.__conn.args_bucketer.store_bucket(value)
+
+    @property
+    async def result(self) -> Optional[ResultBucket]:
+        if self.__conn.results_bucketer is None:
+            raise ConnectionError("Results bucketer is not configured.")
+        data = await self.__conn.results_bucketer.get_bucket(f"result:{self.id_}")
+        if type(data) is ResultBucket:
+            return data
+        return None
+
+    @result.setter
+    async def result(self, value: ResultBucket):
+        if not value.id_.startswith("result:"):
+            raise ValueError("Result id must start with 'result:'.")
+        if self.__conn.results_bucketer is None:
+            raise ConnectionError("Results bucketer is not configured.")
+        await self.__conn.results_bucketer.store_bucket(value)
+
     def _to_message(self) -> AnyMessageT:
         if self.is_deferred:
             return DeferredMessage(
@@ -145,22 +183,22 @@ class Job:
                 timestamp=self.created,
             )
 
-    async def enqueue(self):
-        await self.__conn.messager.enqueue(self._to_message())
+    def __eq__(self, __o: object) -> bool:
+        if not isinstance(__o, Job):
+            return False
+        return self.id_ == __o.id_
 
-    @property
-    async def result(self) -> Optional[ResultBucket]:
-        if self.__conn.results_bucketer is None:
-            raise ConnectionError("Results bucketer is not configured.")
-        data = await self.__conn.results_bucketer.get_bucket(f"result:{self.id_}")
-        if type(data) is ResultBucket:
-            return data
-        return None
+    def __hash__(self) -> int:
+        return hash(self.id_)
 
-    @result.setter
-    async def result(self, value: ResultBucket):
-        if not value.id_.startswith("result:"):
-            raise ValueError("Result id must start with 'result:'.")
-        if self.__conn.results_bucketer is None:
-            raise ConnectionError("Results bucketer is not configured.")
-        await self.__conn.results_bucketer.store_bucket(value)
+    def __str__(self) -> str:
+        return f"Job(id={self.id_}, name={self.name}, queue={self.queue.name})"
+
+
+@dataclass
+class JobResult:
+    success: bool
+    started_when: int
+    finished_when: int
+    result: str  # json
+    exception: Optional[str] = None

@@ -26,7 +26,6 @@ class Message(StructWithParams, Timestamp):
     priority: PrioritiesT
     retries_left: int = 1
     actor_timeout: int = 600
-    bucket_id: Optional[str] = None
 
 
 class DeferredMessage(Message):

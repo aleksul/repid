@@ -22,10 +22,10 @@ class RedisMessaging:
     queue_type = "FIFO"
     priorities_distribution = "10/3/1"
 
-    def __init__(self, connection: Redis):
-        self.connection = connection
+    def __init__(self, connection: str):
+        self.conn = Redis(connection)
         scripts_path = Path(__file__).parent / "redis_scripts"
-        self.consume_script = connection.register_script(
+        self.consume_script = self.conn.register_script(
             script=(scripts_path / "consume.lua").read_text()
         )
         if not VALID_PRIORITIES.fullmatch(self.__class__.priorities_distribution):
@@ -48,7 +48,7 @@ class RedisMessaging:
         message.delay_until = message.timestamp + (
             message.defer_by * ((unix_time() - message.timestamp) // message.defer_by + 1)
         )
-        async with self.connection.pipeline(transaction=True) as pipe:
+        async with self.conn.pipeline(transaction=True) as pipe:
             pipe.set(
                 mnc(message.queue, message.id_),
                 Serializer.encode(message),
@@ -69,7 +69,7 @@ class RedisMessaging:
                 delayed=True if type(message) is DeferredMessage else False,
                 dead=True,
             )
-            async with self.connection.pipeline(transaction=True) as pipe:
+            async with self.conn.pipeline(transaction=True) as pipe:
                 pipe.rpush(dead_queue, message.id_)
                 pipe.zrem(ProcessingQueue, message.id_)
                 await pipe.execute()
@@ -102,7 +102,7 @@ class RedisMessaging:
 
     @with_middleware
     async def enqueue(self, message: AnyMessageT) -> None:
-        res = await self.connection.set(
+        res = await self.conn.set(
             mnc(message.queue, message.id_),
             Serializer.encode(message),
             nx=True,
@@ -111,10 +111,10 @@ class RedisMessaging:
             return None
         if type(message) is Message:
             queue = qnc(message.queue, message.priority)
-            await self.connection.lpush(queue, message.id_)
+            await self.conn.lpush(queue, message.id_)
         elif type(message) is DeferredMessage:
             queue = qnc(message.queue, message.priority, delayed=True)
-            await self.connection.zadd(queue, {message.delay_until: message.id_})
+            await self.conn.zadd(queue, {message.delay_until: message.id_})
 
     @with_middleware
     async def queue_declare(self, queue_name: str) -> None:
@@ -122,25 +122,25 @@ class RedisMessaging:
 
     @with_middleware
     async def queue_flush(self, queue_name: str) -> None:
-        async for msg in self.connection.scan_iter(match=mnc(queue_name, "*")):
-            await self.connection.delete(msg)
-        async for queue in self.connection.scan_iter(match=f"q:{queue_name}:*"):
-            await self.connection.delete(queue)
+        async for msg in self.conn.scan_iter(match=mnc(queue_name, "*")):
+            await self.conn.delete(msg)
+        async for queue in self.conn.scan_iter(match=f"q:{queue_name}:*"):
+            await self.conn.delete(queue)
 
     @with_middleware
     async def queue_delete(self, queue_name: str) -> None:
         await self.queue_flush(queue_name)
 
     @with_middleware
-    async def message_ack(self, message: AnyMessageT):
-        async with self.connection.pipeline(transaction=True) as pipe:
+    async def ack(self, message: AnyMessageT):
+        async with self.conn.pipeline(transaction=True) as pipe:
             pipe.delete(mnc(message.queue, message.id_))
             pipe.zrem(ProcessingQueue, message.id_)
             await pipe.execute()
 
     @with_middleware
-    async def message_nack(self, message: AnyMessageT):
-        async with self.connection.pipeline(transaction=True) as pipe:
+    async def nack(self, message: AnyMessageT):
+        async with self.conn.pipeline(transaction=True) as pipe:
             pipe.zrem(ProcessingQueue, message.id_)
             if message.retries_left > 1:
                 message.retries_left -= 1
@@ -151,7 +151,6 @@ class RedisMessaging:
                         actor_name=message.actor_name,
                         retries_left=message.retries_left,
                         actor_timeout=message.actor_timeout,
-                        bucket_id=message.bucket_id,
                         timestamp=message.timestamp,
                         ttl=message.ttl,
                     )
@@ -172,15 +171,15 @@ class RedisMessaging:
             await pipe.execute()
 
     @with_middleware
-    async def message_requeue(
+    async def requeue(
         self,
         message: AnyMessageT,
         unmark_processing: bool = False,
         unmark_dead: bool = True,
     ) -> None:
         msg_name = mnc(message.queue, message.id_)
-        if await self.connection.exists(msg_name):
-            async with self.connection.pipeline(transaction=True) as pipe:
+        if await self.conn.exists(msg_name):
+            async with self.conn.pipeline(transaction=True) as pipe:
                 pipe.set(msg_name, Serializer.encode(message), xx=True)
                 if type(message) is Message:
                     queue = qnc(message.queue, message.priority)
@@ -198,13 +197,13 @@ class RedisMessaging:
     async def maintenance(self):
         """This method is called periodically to clean up the processing queue."""
         now = unix_time()
-        async for id_, score in self.connection.zscan_iter(ProcessingQueue):
-            k = await self.connection.scan(match=f"m:*:{id_}", count=1)
+        async for id_, score in self.conn.zscan_iter(ProcessingQueue):
+            k = await self.conn.scan(match=f"m:*:{id_}", count=1)
             message = None
             if k is not None:
-                message = await self.connection.get(k)
+                message = await self.conn.get(k)
             if message is None:
-                await self.connection.zrem(ProcessingQueue, id_)
+                await self.conn.zrem(ProcessingQueue, id_)
                 continue
             message: AnyMessageT = Serializer.decode(message)
             if now - score > message.actor_timeout:

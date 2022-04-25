@@ -1,0 +1,2 @@
+class AMQPMessaging:
+    raise NotImplementedError

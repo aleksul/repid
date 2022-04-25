@@ -18,6 +18,18 @@ class Messaging(Protocol):
         """Appends the message to the queue."""
         ...
 
+    async def ack(self, message: AnyMessageT) -> None:
+        """Informs message broker that job execution succeed."""
+        ...
+
+    async def nack(self, message: AnyMessageT) -> None:
+        """Informs message broker that job execution failed."""
+        ...
+
+    async def requeue(self, message: AnyMessageT) -> None:
+        """Requeues the message."""
+        ...
+
     async def queue_declare(self, queue_name: str) -> None:
         """Creates the specified queue."""
         ...
@@ -28,18 +40,6 @@ class Messaging(Protocol):
 
     async def queue_delete(self, queue_name: str) -> None:
         """Deletes the queue with all of its messages."""
-        ...
-
-    async def message_ack(self, message: AnyMessageT) -> None:
-        """Informs message broker that job execution succeed."""
-        ...
-
-    async def message_nack(self, message: AnyMessageT) -> None:
-        """Informs message broker that job execution failed."""
-        ...
-
-    async def message_requeue(self, message: AnyMessageT) -> None:
-        """Requeues the message."""
         ...
 
     async def maintenance(self) -> None:

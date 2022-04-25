@@ -1,0 +1,2 @@
+class NatsMessaging:
+    raise NotImplementedError

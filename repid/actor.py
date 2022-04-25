@@ -1,11 +1,10 @@
 import asyncio
 import functools
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 from typing import Any, Callable, Optional
 
-# from .constants import VALID_NAME_RE
-# from .job import JobResult
+from repid.job import JobResult
+from repid.utils import VALID_NAME, unix_time
 
 
 class Actor:
@@ -21,50 +20,44 @@ class Actor:
         fn: Callable,
         name: Optional[str] = None,
         queue: str = "default",
-        retries: int = 1,
     ):
         self.fn = fn
         self.name = name or fn.__name__
-        if not VALID_NAME_RE.fullmatch(self.name):
+        if not VALID_NAME.fullmatch(self.name):
             raise ValueError(
                 "Actor name must start with a letter or an underscore"
                 "followed by letters, digits, dashes or underscores."
             )
         self.queue = queue
-        if not VALID_NAME_RE.fullmatch(self.queue):
+        if not VALID_NAME.fullmatch(self.queue):
             raise ValueError(
                 "Queue name must start with a letter or an underscore"
                 "followed by letters, digits, dashes or underscores."
             )
-        if retries < 1:
-            raise ValueError("Number of retries must be positive integer.")
-        self.retries = retries
 
     async def __call__(self, *args, **kwargs):
         result: Any = None
-        success: bool = None
-        started_when = int(datetime.utcnow().timestamp())
+        success: bool
+        started_when = unix_time()
         loop = asyncio.get_event_loop()
-        for _ in range(self.retries):
-            try:
-                if asyncio.iscoroutinefunction(self.fn):
-                    result = await self.fn(*args, **kwargs)
-                else:
-                    with ThreadPoolExecutor() as pool:
-                        result = await loop.run_in_executor(
-                            pool,
-                            functools.partial(self.fn, *args, **kwargs),
-                        )
-            except Exception as exc:
-                result = f"Exception occured while running the job: {type(exc)}: {exc}."
-                success = False
+        try:
+            if asyncio.iscoroutinefunction(self.fn):
+                result = await self.fn(*args, **kwargs)
             else:
-                success = True
-                break
+                with ThreadPoolExecutor() as pool:
+                    result = await loop.run_in_executor(
+                        pool,
+                        functools.partial(self.fn, *args, **kwargs),
+                    )
+        except Exception as exc:
+            result = f"Exception occured while running the job: {type(exc)}: {exc}."
+            success = False
+        else:
+            success = True
         return JobResult(
             success=success,
             started_when=started_when,
-            finished_when=int(datetime.utcnow().timestamp()),
+            finished_when=unix_time(),
             result=result,
         )
 

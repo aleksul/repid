@@ -1,30 +1,26 @@
 import asyncio
-from typing import Callable, Dict, Optional
+from typing import TYPE_CHECKING, Callable, Dict, Optional
 
-import orjson
-from redis.asyncio import Redis
+import anyio
 
-from .actor import Actor
-from .constants import RESULT_PREFIX
-from .job import Job, JobResult
-from .queue import Queue
-from .repid import Repid
+from repid import _default_connection
+from repid.actor import Actor
+
+if TYPE_CHECKING:
+    from repid.connections.connection import Connection
 
 
-class Worker(Repid):
-    """Extends main class functionality to add ability to run jobs on consumers."""
+class Worker:
+    def __init__(self, limit: int = 16, _connection: Optional[Connection] = None):
+        self.__conn = _connection or _default_connection
+        self.actors: Dict[str, Actor] = dict()
+        self.limiter = anyio.CapacityLimiter(limit)
 
-    actors: Dict[str, Actor] = dict()
-
-    def __init__(self, redis: Redis):
-        self.__redis__ = redis
-        super().__init__(redis)
-
-    def actor(self, name: Optional[str] = None, queue: str = "default", retries=1):
-        # actually it is a decorator fabric
+    def actor(self, name: Optional[str] = None, queue: str = "default"):
+        """Decorator fabric."""
 
         def decorator(fn):
-            a = Actor(fn, name, queue, retries)
+            a = Actor(fn, name, queue)
             self.actors[a.name] = a
             return fn
 
@@ -55,8 +51,3 @@ class Worker(Repid):
     async def run(self):
         queues = {Queue(self.__redis__, q.queue) for q in list(self.actors.values())}
         await asyncio.gather(*[self.run_one_queue(q) for q in queues])
-
-    async def run_forever(self, delay: float = 1.0):
-        while 1:  # pragma: no cover
-            await self.run()
-            await asyncio.sleep(delay)

@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Optional
 
 from repid.job import JobResult
+from repid.data import ResultBucket
 from repid.utils import VALID_NAME, unix_time
 
 
@@ -13,7 +14,7 @@ class Actor:
     Adds ability to specify actor's name and queue, as well as specify number of retries.
     """
 
-    __slots__ = ("fn", "name", "queue", "retries")
+    __slots__ = ("fn", "name", "queue")
 
     def __init__(
         self,
@@ -54,15 +55,17 @@ class Actor:
             success = False
         else:
             success = True
-        return JobResult(
+        return ResultBucket(
+            id=
+            data=result,
             success=success,
             started_when=started_when,
             finished_when=unix_time(),
-            result=result,
+            
         )
 
     def __repr__(self):
-        return f"Actor({self.fn}, name={self.name}, queue={self.queue}, retries={self.retries})"
+        return f"Actor({self.fn}, {self.name=}, {self.queue=})"
 
     def __str__(self):
         return f"Actor({self.name})"

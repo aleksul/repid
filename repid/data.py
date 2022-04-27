@@ -30,7 +30,14 @@ class Message(StructWithParams, Timestamp):
 
 class DeferredMessage(Message):
     delay_until: int
-    defer_by: Optional[int] = None
+
+
+class DeferredByMessage(DeferredMessage):
+    defer_by: int
+
+
+class DeferredCronMessage(DeferredMessage):
+    cron: str
 
 
 AnyMessageT = Union[Message, DeferredMessage]

@@ -4,6 +4,14 @@ from typing import TYPE_CHECKING, Union
 
 from repid.data import PrioritiesT
 
+try:
+    from croniter import croniter
+except ImportError:
+
+    class croniter:  # type: ignore[no-redef]
+        raise ImportError("Please install croniter.")
+
+
 if TYPE_CHECKING:
     from repid.data import DeferredByMessage, DeferredCronMessage
 
@@ -47,6 +55,4 @@ def next_exec_time(msg: Union[DeferredByMessage, DeferredCronMessage]) -> int:
         time_offset = msg.defer_by * defer_by_times
         return msg.timestamp + time_offset
     elif isinstance(msg, DeferredCronMessage):
-        msg.cron.split(" ")
-        # TODO: count next cron
-        return 0
+        return int(croniter(msg.cron, time.time()).get_next(ret_type=float))

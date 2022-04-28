@@ -1,6 +1,7 @@
+import random
 import re
 import time
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, List, Union
 
 from repid.data import PrioritiesT
 
@@ -56,3 +57,13 @@ def next_exec_time(msg: Union[DeferredByMessage, DeferredCronMessage]) -> int:
         return msg.timestamp + time_offset
     elif isinstance(msg, DeferredCronMessage):
         return int(croniter(msg.cron, time.time()).get_next(ret_type=float))
+
+
+def get_priorities_order(priorities_distribution: List[float]) -> List[PrioritiesT]:
+    rand = random.random()
+    if rand <= priorities_distribution[0]:
+        return [PrioritiesT.HIGH, PrioritiesT.MEDIUM, PrioritiesT.LOW]
+    elif rand <= priorities_distribution[0] + priorities_distribution[1]:
+        return [PrioritiesT.MEDIUM, PrioritiesT.HIGH, PrioritiesT.LOW]
+    else:
+        return [PrioritiesT.LOW, PrioritiesT.HIGH, PrioritiesT.MEDIUM]

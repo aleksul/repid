@@ -1,4 +1,3 @@
-import random
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional
 
@@ -6,7 +5,7 @@ from redis.asyncio import Redis
 
 from repid.data import DeferredMessage, Message, Serializer
 from repid.middlewares.middleware import with_middleware
-from repid.utils import VALID_PRIORITIES, PrioritiesT
+from repid.utils import VALID_PRIORITIES, PrioritiesT, get_priorities_order
 from repid.utils import message_name_constructor as mnc
 from repid.utils import queue_name_constructor as qnc
 from repid.utils import unix_time
@@ -76,17 +75,9 @@ class RedisMessaging:
             return True
         return False
 
-    def __get_order(self, rand: float) -> List[PrioritiesT]:
-        if rand <= self._priorities[0]:
-            return [PrioritiesT.HIGH, PrioritiesT.MEDIUM, PrioritiesT.LOW]
-        elif rand <= self._priorities[0] + self._priorities[1]:
-            return [PrioritiesT.MEDIUM, PrioritiesT.HIGH, PrioritiesT.LOW]
-        else:
-            return [PrioritiesT.LOW, PrioritiesT.HIGH, PrioritiesT.MEDIUM]
-
     @with_middleware
     async def consume(self, queue_name: str) -> Optional[AnyMessageT]:
-        for priority in self.__get_order(random.random()):
+        for priority in get_priorities_order(self._priorities):
             data = await self.consume_script(
                 keys=(qnc(queue_name, priority), qnc(queue_name, priority, delayed=True)),
                 args=(unix_time(), mnc(queue_name, "")),

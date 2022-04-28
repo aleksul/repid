@@ -40,7 +40,7 @@ class DeferredCronMessage(DeferredMessage):
     cron: str
 
 
-AnyMessageT = Union[Message, DeferredMessage]
+AnyMessageT = Union[Message, DeferredMessage, DeferredByMessage, DeferredCronMessage]
 
 
 class Bucket(StructWithParams, Timestamp):
@@ -57,7 +57,9 @@ class ResultBucket(Bucket):
 
 AnyBucketT = Union[Bucket, ResultBucket]
 
-AnySerializableT = Union[Message, DeferredMessage, Bucket, ResultBucket]
+AnySerializableT = Union[
+    Message, DeferredMessage, DeferredByMessage, DeferredCronMessage, Bucket, ResultBucket
+]
 
 
 class Serializer:

@@ -35,12 +35,14 @@ repos:
       - id: mypy
         args:
           - "--show-error-codes"
-        additional_dependencies: [types-orjson~=3.6.2, types-redis~=4.1.19]
+        additional_dependencies:
+          [types-orjson~=3.6.2, types-redis~=4.2.0, types-croniter~=1.0.10]
         name: mypy-repid
         files: repid/
       - id: mypy
         args:
           - "--show-error-codes"
-        additional_dependencies: [types-orjson~=3.6.2, types-redis~=4.1.19]
+        additional_dependencies:
+          [types-orjson~=3.6.2, types-redis~=4.2.0, types-croniter~=1.0.10]
         name: mypy-tests
         files: tests/

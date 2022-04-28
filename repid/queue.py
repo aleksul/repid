@@ -26,6 +26,15 @@ class Queue:
         if self.__conn is None:
             raise ValueError("No connection provided.")
 
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        msg = await self.__conn.messager.consume(queue_name=self.name)
+        if msg is None:
+            raise StopAsyncIteration
+        return msg
+
     async def declare(self):
         await self.__conn.messager.queue_declare(self.name)
 

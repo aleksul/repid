@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, List, Optional, Union
 
 from redis.asyncio import Redis
 
@@ -7,11 +7,17 @@ from repid.data import DeferredMessage, Message, Serializer
 from repid.middlewares.middleware import with_middleware
 from repid.utils import VALID_PRIORITIES, PrioritiesT, get_priorities_order
 from repid.utils import message_name_constructor as mnc
+from repid.utils import next_exec_time
 from repid.utils import queue_name_constructor as qnc
 from repid.utils import unix_time
 
 if TYPE_CHECKING:
-    from repid.data import AnyBucketT, AnyMessageT
+    from repid.data import (
+        AnyBucketT,
+        AnyMessageT,
+        DeferredByMessage,
+        DeferredCronMessage,
+    )
 
 ProcessingQueue = "processing"  # sorted set
 
@@ -41,12 +47,10 @@ class RedisMessaging:
         pr_dist_sum = sum(pr_dist)
         self._priorities = [x / pr_dist_sum for x in pr_dist]
 
-    async def __reschedule_deferred_by(self, message: DeferredMessage) -> None:
-        if message.defer_by is None:
-            return
-        message.delay_until = message.timestamp + (
-            message.defer_by * ((unix_time() - message.timestamp) // message.defer_by + 1)
-        )
+    async def __reschedule_deferred_by(
+        self, message: Union[DeferredByMessage, DeferredCronMessage]
+    ) -> None:
+        message.delay_until = next_exec_time(message)
         async with self.conn.pipeline(transaction=True) as pipe:
             pipe.set(
                 mnc(message.queue, message.id_),
@@ -86,7 +90,7 @@ class RedisMessaging:
                 message: AnyMessageT = Serializer.decode(data)  # type: ignore[assignment]
                 if await self.__is_ttl_expired(message):
                     return await self.consume(queue_name)
-                if type(message) is DeferredMessage:
+                if isinstance(message, (DeferredByMessage, DeferredCronMessage)):
                     await self.__reschedule_deferred_by(message)
                 return message
         return None
@@ -175,9 +179,9 @@ class RedisMessaging:
                 if type(message) is Message:
                     queue = qnc(message.queue, message.priority)
                     pipe.lpush(queue, message.id_)
-                elif type(message) is DeferredMessage:
+                elif issubclass(type(message), DeferredMessage):
                     queue = qnc(message.queue, message.priority, delayed=True)
-                    pipe.zadd(queue, {message.delay_until: message.id_})
+                    pipe.zadd(queue, {message.delay_until: message.id_})  # type: ignore[union-attr]
                 if unmark_processing:
                     pipe.zrem(ProcessingQueue, message.id_)
                 if unmark_dead:

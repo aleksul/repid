@@ -23,7 +23,7 @@ license = "MIT"
 
 [tool.poetry.dependencies]
 python = "^3.8"
-anyio = { extras = ["trio"], version = "^3.5.0" }
+anyio = "^3.5.0"
 uvloop = "^0.16.0"
 pydantic = "^1.9.0"
 msgspec = "^0.6.0"
@@ -62,7 +62,6 @@ flake8-builtins = "^1.5.3"
 flake8-pytest-style = "^1.6.0"
 # test
 pytest = "^6.2.5"
-pytest-asyncio = "^0.16.0"
 pytest-cov = "^3.0.0"
 pytest-docker = "^0.10.3"
 dirty-equals = "^0.2.1"

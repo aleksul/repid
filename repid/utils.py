@@ -1,7 +1,7 @@
 import random
 import re
 import time
-from typing import TYPE_CHECKING, List, Union
+from typing import List, Union
 
 from repid.data import PrioritiesT
 
@@ -13,8 +13,7 @@ except ImportError:
         raise ImportError("Please install croniter.")
 
 
-if TYPE_CHECKING:
-    from repid.data import DeferredByMessage, DeferredCronMessage
+from repid.data import DeferredByMessage, DeferredCronMessage
 
 VALID_ID = re.compile(r"[a-zA-Z0-9_-]*")
 VALID_NAME = re.compile(r"[a-zA-Z_][a-zA-Z0-9_-]*")  # valid actor and queue names
@@ -67,3 +66,11 @@ def get_priorities_order(priorities_distribution: List[float]) -> List[Prioritie
         return [PrioritiesT.MEDIUM, PrioritiesT.HIGH, PrioritiesT.LOW]
     else:
         return [PrioritiesT.LOW, PrioritiesT.HIGH, PrioritiesT.MEDIUM]
+
+
+def parse_priorities_distribution(priorities_distribution: str) -> List[float]:
+    if not VALID_PRIORITIES.fullmatch(priorities_distribution):
+        raise ValueError(f"Invalid priorities distribution: {priorities_distribution}")
+    pr_dist = [int(x) for x in priorities_distribution.split("/")]
+    pr_dist_sum = sum(pr_dist)
+    return [x / pr_dist_sum for x in pr_dist]

@@ -1,3 +1,4 @@
+"""
 import orjson
 import pytest
 from redis.asyncio import Redis
@@ -102,3 +103,4 @@ async def test_remove_job(redis: Redis):
     assert await q.ids == [j1._id, j2._id]
     await q.remove_job(j2._id)
     assert await q.ids == [j1._id]
+"""

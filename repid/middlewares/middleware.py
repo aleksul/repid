@@ -33,11 +33,6 @@ Events = Literal[
 class _Middleware:
     __possible_events = get_args(Events)
 
-    def __new__(cls):  # Singleton
-        if not hasattr(cls, "__instance"):
-            cls.__instance = cls.__init__()
-        return cls.__instance
-
     def __init__(self):
         self._events: Dict[Events, List[Callable[..., Coroutine[Any, Any, Any]]]] = dict()
 

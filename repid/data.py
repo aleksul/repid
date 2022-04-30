@@ -22,8 +22,8 @@ class Timestamp(msgspec.Struct):
 class Message(StructWithParams, Timestamp):
     id_: str
     actor_name: str
-    queue: str
-    priority: PrioritiesT
+    queue: str = "default"
+    priority: PrioritiesT = PrioritiesT.MEDIUM
     retries_left: int = 1
     actor_timeout: int = 600
 

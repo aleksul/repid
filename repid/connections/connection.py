@@ -1,8 +1,7 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Optional, Protocol
+from typing import Literal, Optional, Protocol
 
-if TYPE_CHECKING:
-    from repid.data import AnyBucketT, AnyMessageT
+from repid.data import AnyBucketT, AnyMessageT
 
 
 class Messaging(Protocol):

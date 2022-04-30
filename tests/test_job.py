@@ -1,3 +1,4 @@
+"""
 from datetime import datetime, timedelta
 
 import pytest
@@ -89,3 +90,4 @@ async def test_update(redis: Redis):
 def test_job_str(redis: Redis):
     j = Job(redis, "awesome_job")
     assert str(j) == f"Job(name=awesome_job, queue=default, _id={JOB_PREFIX}{j._id})"
+"""

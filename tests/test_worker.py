@@ -1,3 +1,4 @@
+"""
 import asyncio
 from datetime import datetime, timedelta
 
@@ -92,3 +93,4 @@ async def test_reccuring_job(redis: Redis):
 async def test_no_jobs(redis: Redis):
     w = Worker(redis)
     await w.run_one_queue(Queue(redis, "empty_queue"))
+"""

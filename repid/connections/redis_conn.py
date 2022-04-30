@@ -3,21 +3,21 @@ from typing import TYPE_CHECKING, List, Optional, Union
 
 from redis.asyncio import Redis
 
-from repid.data import DeferredMessage, Message, Serializer
+from repid.data import (
+    AnyBucketT,
+    AnyMessageT,
+    DeferredByMessage,
+    DeferredCronMessage,
+    DeferredMessage,
+    Message,
+    Serializer,
+)
 from repid.middlewares.middleware import with_middleware
 from repid.utils import VALID_PRIORITIES, PrioritiesT, get_priorities_order
 from repid.utils import message_name_constructor as mnc
-from repid.utils import next_exec_time
+from repid.utils import next_exec_time, parse_priorities_distribution
 from repid.utils import queue_name_constructor as qnc
 from repid.utils import unix_time
-
-if TYPE_CHECKING:
-    from repid.data import (
-        AnyBucketT,
-        AnyMessageT,
-        DeferredByMessage,
-        DeferredCronMessage,
-    )
 
 ProcessingQueue = "processing"  # sorted set
 
@@ -28,24 +28,12 @@ class RedisMessaging:
     priorities_distribution = "10/3/1"
 
     def __init__(self, connection: str):
-        self.conn = Redis(connection)
+        self.conn = Redis.from_url(connection)
         scripts_path = Path(__file__).parent / "redis_scripts"
         self.consume_script = self.conn.register_script(
             script=(scripts_path / "consume.lua").read_text()
         )
-        if not VALID_PRIORITIES.fullmatch(self.__class__.priorities_distribution):
-            raise ValueError(
-                f"Invalid priorities distribution: {self.__class__.priorities_distribution}"
-            )
-        pr_dist = [int(x) for x in self.__class__.priorities_distribution.split("/")]
-
-        if pr_dist[0] > pr_dist[1] or pr_dist[1] > pr_dist[2]:
-            raise ValueError(
-                f"Invalid priorities distribution: {self.__class__.priorities_distribution}"
-            )
-
-        pr_dist_sum = sum(pr_dist)
-        self._priorities = [x / pr_dist_sum for x in pr_dist]
+        self._priorities = parse_priorities_distribution(self.__class__.priorities_distribution)
 
     async def __reschedule_deferred_by(
         self, message: Union[DeferredByMessage, DeferredCronMessage]
@@ -139,9 +127,9 @@ class RedisMessaging:
             pipe.zrem(ProcessingQueue, message.id_)
             if message.retries_left > 1:
                 message.retries_left -= 1
-                if type(message) is DeferredMessage and message.defer_by is not None:
+                if isinstance(message, (DeferredByMessage, DeferredCronMessage)):
                     message = Message(
-                        id_=f"retry-{unix_time()}-{message.id_}",
+                        id_=f"retry-{message.id_}-{unix_time()}",
                         queue=message.queue,
                         actor_name=message.actor_name,
                         retries_left=message.retries_left,
@@ -179,7 +167,7 @@ class RedisMessaging:
                 if type(message) is Message:
                     queue = qnc(message.queue, message.priority)
                     pipe.lpush(queue, message.id_)
-                elif issubclass(type(message), DeferredMessage):
+                else:
                     queue = qnc(message.queue, message.priority, delayed=True)
                     pipe.zadd(queue, {message.delay_until: message.id_})  # type: ignore[union-attr]
                 if unmark_processing:
@@ -194,15 +182,15 @@ class RedisMessaging:
         now = unix_time()
         async for id_, score in self.conn.zscan_iter(ProcessingQueue):
             k = await self.conn.scan(match=f"m:*:{id_}", count=1)
-            message = None
+            msg = None
             if k is not None:
-                message = await self.conn.get(k)
-            if message is None:
+                msg = await self.conn.get(k)
+            if msg is None:
                 await self.conn.zrem(ProcessingQueue, id_)
                 continue
-            message: AnyMessageT = Serializer.decode(message)
+            message: AnyMessageT = Serializer.decode(msg)  # type: ignore[assignment]
             if now - score > message.actor_timeout:
-                await self.message_requeue(message, unmark_processing=True)
+                await self.requeue(message, unmark_processing=True)
 
 
 class RedisBucketing:

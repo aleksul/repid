@@ -1,3 +1,4 @@
+"""
 from datetime import datetime
 
 import pytest
@@ -67,3 +68,4 @@ async def test_pop_normal_job_from_deferred_queue(redis: Redis):
     popped = await r._pop_deferred_job("default")
     assert popped is None
     assert len(await job.queue.deferred_queue_ids) == 0
+"""

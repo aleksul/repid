@@ -1,3 +1,4 @@
+"""
 import pytest
 from redis.asyncio import Redis
 
@@ -39,3 +40,4 @@ def test_actor_str(redis: Redis):
         pass
 
     assert str(Actor(a)) == "Actor(a)"
+"""

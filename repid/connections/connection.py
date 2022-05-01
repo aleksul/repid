@@ -13,6 +13,10 @@ class Messaging(Protocol):
         """Consumes one message from the specified queue."""
         ...
 
+    async def subscribe(self, queue_name: str, topic: str) -> None:
+        """Subscribes to the specified topic in the queue."""
+        ...
+
     async def enqueue(self, message: AnyMessageT) -> None:
         """Appends the message to the queue."""
         ...

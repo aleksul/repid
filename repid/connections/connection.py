@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal, Optional, Protocol
+from typing import List, Literal, Optional, Protocol
 
 from repid.data import AnyBucketT, AnyMessageT
 
@@ -9,13 +9,9 @@ class Messaging(Protocol):
     queue_type: Literal["FIFO", "LIFO", "SIMPLE"] = "FIFO"
     priorities_distribution: str
 
-    async def consume(self, queue_name: str) -> Optional[AnyMessageT]:
-        """Consumes one message from the specified queue."""
-        ...
-
-    async def subscribe(self, queue_name: str, topic: str) -> None:
-        """Subscribes to the specified topic in the queue."""
-        ...
+    async def consume(self, queue_name: str, topics: Optional[List[str]]) -> Optional[AnyMessageT]:
+        """Consumes one message from the specified queue. If topics is specified,
+        only messages with those topics are consumed."""
 
     async def enqueue(self, message: AnyMessageT) -> None:
         """Appends the message to the queue."""

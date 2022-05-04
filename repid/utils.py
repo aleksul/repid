@@ -24,22 +24,6 @@ def unix_time() -> int:
     return int(time.time())
 
 
-def queue_name_constructor(
-    name: str,
-    priority: PrioritiesT = PrioritiesT.MEDIUM,
-    delayed: bool = False,
-    dead: bool = False,
-) -> str:
-    return f"q:{name}:{priority.value}:{'d' if delayed else 'n'}{':dead' if dead else ''}"
-
-
-def message_name_constructor(
-    queue: str,
-    id_: str,
-) -> str:
-    return f"m:{queue}:{id_}"
-
-
 def next_exec_time(msg: Union[DeferredByMessage, DeferredCronMessage]) -> int:
     """Counts next execution time of the message.
     Depends on current time.

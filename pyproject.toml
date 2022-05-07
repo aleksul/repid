@@ -9,13 +9,19 @@ profile = "black"
 multi_line_output = 3
 
 [tool.mypy]
-ignore_missing_imports = true
+disallow_untyped_defs = true
+disallow_any_unimported = true
+no_implicit_optional = true
+check_untyped_defs = true
+warn_return_any = true
+warn_unused_ignores = true
+show_error_codes = true
 
 [tool.poetry]
 name = "repid"
 version = "0.2.3"
 description = "Async queue for Python."
-authors = ["aleksul <aleksandrsulimov@bk.ru>"]
+authors = ["aleksul <me@aleksul.space>"]
 repository = "https://github.com/aleksul/repid"
 documentation = "https://aleksul.github.io/repid"
 readme = "README.md"
@@ -54,7 +60,7 @@ isort = "^5.10.1"
 # lint
 mypy = "^0.910"
 types-orjson = "^3.6.2"
-types-redis = "^4.2.0"
+types-redis = "^4.2.2"
 types-croniter = "^1.0.10"
 flake8 = "^4.0.1"
 flake8-bugbear = "^21.11.29"
@@ -63,7 +69,7 @@ flake8-pytest-style = "^1.6.0"
 # test
 pytest = "^6.2.5"
 pytest-cov = "^3.0.0"
-pytest-docker = "^0.10.3"
+pytest-docker = { git = "https://github.com/n1ngu/pytest-docker.git", rev = "8e293e60069886b4e379d9bd77bf754bcfff5a75" }
 dirty-equals = "^0.2.1"
 time-machine = "^2.6.0"
 # pre-commit

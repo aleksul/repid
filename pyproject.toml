@@ -69,7 +69,7 @@ flake8-pytest-style = "^1.6.0"
 # test
 pytest = "^6.2.5"
 pytest-cov = "^3.0.0"
-pytest-docker = { git = "https://github.com/n1ngu/pytest-docker.git", rev = "8e293e60069886b4e379d9bd77bf754bcfff5a75" }
+pytest-docker = { git = "https://github.com/aleksul/pytest-docker.git", rev = "83ece5405aabcefa958b493f5e2996aaff6d6e1d" }
 dirty-equals = "^0.2.1"
 time-machine = "^2.6.0"
 # pre-commit

@@ -161,24 +161,24 @@ class Job:
         if self.is_deferred:
             return DeferredMessage(
                 id_=self.id_,
-                actor_name=self.name,
+                topic=self.name,
                 queue=self.queue.name,
                 priority=self.priority,
                 delay_until=self.next_execution_time,
                 defer_by=self.deferred_by,
                 retries_left=self.retries,
-                actor_timeout=self.timeout,
+                timeout=self.timeout,
                 ttl=self.ttl,
                 timestamp=self.created,
             )
         else:
             return Message(
                 id_=self.id_,
-                actor_name=self.name,
+                topic=self.name,
                 queue=self.queue.name,
                 priority=self.priority,
                 retries_left=self.retries,
-                actor_timeout=self.timeout,
+                timeout=self.timeout,
                 ttl=self.ttl,
                 timestamp=self.created,
             )

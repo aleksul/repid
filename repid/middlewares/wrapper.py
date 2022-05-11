@@ -3,10 +3,14 @@ import traceback
 from types import TracebackType
 from typing import Any, Callable, Dict, Optional, Tuple, Type
 
-from repid.middlewares.middleware import Middleware, available_functions
+from repid.middlewares import Middleware, available_functions
 
 
 class MiddlewareWrapperContextManager:
+    """An async context manager that emits signals before and after the function call."""
+
+    __slots__ = ("fn", "args", "kwargs", "signal_kwargs")
+
     def __init__(self, fn: Callable, *args: Tuple, **kwargs: Dict):
         self.fn, self.args, self.kwargs = fn, args, kwargs
         sig = inspect.signature(fn)
@@ -29,6 +33,8 @@ class MiddlewareWrapperContextManager:
 
 
 class MiddlewareWrapper:
+    """A function decorator that wraps the function with middleware context manager."""
+
     __slots__ = ("fn", "args", "kwargs")
 
     def __init__(self, fn: Callable):
@@ -51,7 +57,11 @@ class MiddlewareWrapper:
         return await self.fn(*args, **kwargs)
 
 
-class AddMiddleware:
+class InjectMiddleware:
+    """A class decorator that wraps certain methods upon creation of the class."""
+
+    __slots__ = ("cls",)
+
     def __init__(self, cls: Any):
         self.cls = cls
 

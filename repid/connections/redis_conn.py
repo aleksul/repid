@@ -12,7 +12,7 @@ from repid.data import (
     Message,
     Serializer,
 )
-from repid.middlewares.wrapper import AddMiddleware
+from repid.middlewares.wrapper import InjectMiddleware
 from repid.utils import (
     PrioritiesT,
     get_priorities_order,
@@ -42,7 +42,7 @@ def mnc(message: AnyMessageT, short: bool = False) -> str:  # message name const
         return f"{prefix}{message.topic}:{message.id_}"
 
 
-@AddMiddleware
+@InjectMiddleware
 class RedisMessaging:
     supports_delayed_messages = True
     queue_type = "FIFO"
@@ -186,7 +186,7 @@ class RedisMessaging:
                 await self.requeue(message, unmark_processing=True)
 
 
-@AddMiddleware
+@InjectMiddleware
 class RedisBucketing:
     def __init__(self, connection: Redis):
         self.connection = connection

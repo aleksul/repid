@@ -17,6 +17,15 @@ warn_return_any = true
 warn_unused_ignores = true
 show_error_codes = true
 
+[tool.pylint.messages_control]
+max_line_length = 100
+disable = [
+    "missing-docstring",
+    "invalid-name",
+    "too-few-public-methods",
+    "import-error",
+]
+
 [tool.poetry]
 name = "repid"
 version = "0.2.3"
@@ -62,10 +71,7 @@ mypy = "^0.910"
 types-orjson = "^3.6.2"
 types-redis = "^4.2.2"
 types-croniter = "^1.0.10"
-flake8 = "^4.0.1"
-flake8-bugbear = "^21.11.29"
-flake8-builtins = "^1.5.3"
-flake8-pytest-style = "^1.6.0"
+pylint = "^2.13.8"
 # test
 pytest = "^6.2.5"
 pytest-cov = "^3.0.0"

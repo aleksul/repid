@@ -10,7 +10,7 @@ class PrioritiesT(Enum):
     LOW = "lo"
 
 
-class StructWithParams(msgspec.Struct, tag=True, omit_defaults=True):  # type: ignore[call-arg]
+class StructWithParams(msgspec.Struct, tag=True, omit_defaults=True):
     pass
 
 
@@ -21,11 +21,11 @@ class Timestamp(msgspec.Struct):
 
 class Message(StructWithParams, Timestamp):
     id_: str
-    actor_name: str
+    topic: str
     queue: str = "default"
     priority: PrioritiesT = PrioritiesT.MEDIUM
     retries_left: int = 1
-    actor_timeout: int = 600
+    timeout: int = 600
 
 
 class DeferredMessage(Message):
@@ -72,4 +72,4 @@ class Serializer:
 
     @classmethod
     def decode(cls, data: bytes) -> AnySerializableT:
-        return cls.decoder.decode(data)
+        return cls.decoder.decode(data)  # type: ignore[no-any-return]

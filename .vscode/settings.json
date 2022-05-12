@@ -17,7 +17,7 @@
     // Linting
     "python.linting.enabled": true,
     "python.linting.lintOnSave": true,
-    "python.linting.pylintEnabled": true,
+    "python.linting.flake8Enabled": true,
     "python.linting.mypyEnabled": true,
     // Formatting
     "python.formatting.provider": "black",

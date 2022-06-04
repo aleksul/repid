@@ -169,7 +169,7 @@ class RedisMessaging:
                 pipe.lrem(qnc(message.queue, message.priority, dead=True), mnc(message, short=True))
             await pipe.execute()
 
-    async def maintenance(self):
+    async def maintenance(self) -> None:
         """This method is called periodically to clean up the processing queue."""
         now = unix_time()
         async for id_, score in self.conn.zscan_iter(ProcessingQueue):
@@ -181,7 +181,7 @@ class RedisMessaging:
                 await self.conn.zrem(ProcessingQueue, id_)
                 continue
             # TODO: check code
-            message: AnyMessageT = Serializer.decode(msg)  # type: ignore[assignment]
+            message: AnyMessageT = Serializer.decode(msg)
             if now - score > message.timeout:
                 await self.requeue(message, unmark_processing=True)
 
@@ -194,7 +194,7 @@ class RedisBucketing:
     async def get_bucket(self, id_: str) -> Optional[AnyBucketT]:
         data = await self.connection.get(id_)
         if data is not None:
-            return Serializer.decode(data)  # type: ignore[return-value]
+            return Serializer.decode(data)
         return None
 
     async def store_bucket(self, bucket: AnyBucketT) -> None:

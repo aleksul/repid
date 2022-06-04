@@ -1,13 +1,11 @@
 import asyncio
 import inspect
 from functools import partial
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Tuple
 
 import anyio
 
-from repid.asyncify import asyncify
-
-available_functions = (
+AVAILABLE_FUNCTIONS = (
     "consume",
     "enqueue",
     "queue_declare",
@@ -30,7 +28,7 @@ class Middleware:
     def add_event(cls, fn: Callable) -> None:
         name = fn.__name__
         # check if name is valid
-        if name.startswith(("before_", "after_")) and name.endswith(available_functions):
+        if name.startswith(("before_", "after_")) and name.endswith(AVAILABLE_FUNCTIONS):
             # add event to the dictionary
             if name not in cls._events:
                 cls._events[name] = []
@@ -49,7 +47,11 @@ class Middleware:
             for fn in cls._events[name]:
                 argspec = inspect.getfullargspec(fn)
                 if not asyncio.iscoroutinefunction(fn):
-                    fn = asyncify(fn)
+
+                    async def wrapper(*args: Tuple, **kwargs: Dict) -> Any:
+                        return await anyio.to_thread.run_sync(partial(fn, *args, **kwargs))
+
+                    fn = wrapper
                 kwargs = {
                     key: value
                     for key, value in kwargs.items()

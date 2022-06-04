@@ -3,7 +3,7 @@ import traceback
 from types import TracebackType
 from typing import Any, Callable, Dict, Optional, Tuple, Type
 
-from repid.middlewares import Middleware, available_functions
+from repid.middlewares import AVAILABLE_FUNCTIONS, Middleware
 
 
 class MiddlewareWrapperContextManager:
@@ -68,7 +68,7 @@ class InjectMiddleware:
     def __call__(self, *args: Tuple, **kwargs: Dict) -> Any:
         inst = self.cls(*args, **kwargs)
         for key, attr in inspect.getmembers(inst, predicate=inspect.ismethod):
-            if callable(attr) and attr.__name__ in available_functions:
+            if callable(attr) and attr.__name__ in AVAILABLE_FUNCTIONS:
                 wrapped = MiddlewareWrapper(attr)
                 setattr(inst, key, wrapped)
         return inst

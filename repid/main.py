@@ -1,7 +1,7 @@
 import logging
 from typing import Optional, Union
 
-from repid import _default_connection  # noqa: F401
+from repid import DEFAULT_CONNECTION  # noqa: F401
 from repid.connections.connection import Connection
 
 logging.getLogger("repid").addHandler(logging.NullHandler())
@@ -18,7 +18,7 @@ class Repid:
         args_bucketing: Union[str, bool, None] = False,
         result_bucketing: Union[str, bool, None] = False,
     ):
-        global _default_connection
+        global DEFAULT_CONNECTION
 
         args_dsn: Optional[str] = None
         if args_bucketing is True:
@@ -42,8 +42,8 @@ class Repid:
             connections[name] = self.__get_connection_from_string(
                 conn, bucketing=True if name != "messager" else False
             )
-        _default_connection = Connection(**connections)
-        self.__conn = _default_connection
+        DEFAULT_CONNECTION = Connection(**connections)
+        self.__conn = DEFAULT_CONNECTION
 
     def __get_connection_from_string(self, connection: str, bucketing: bool = False):
         if connection.startswith("redis") or connection.startswith("rediss"):

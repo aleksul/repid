@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING, Optional
 
-from repid import _default_connection
+from repid import DEFAULT_CONNECTION
 from repid.utils import VALID_NAME
 
 if TYPE_CHECKING:
@@ -22,7 +22,7 @@ class Queue:
                 "followed by letters, digits, dashes or underscores."
             )
 
-        self.__conn: Connection = _connection or _default_connection  # type: ignore[assignment]
+        self.__conn: Connection = _connection or DEFAULT_CONNECTION  # type: ignore[assignment]
         if self.__conn is None:
             raise ValueError("No connection provided.")
 

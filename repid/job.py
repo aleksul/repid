@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from functools import cached_property
 from typing import TYPE_CHECKING, Optional, Union
 
-from repid import _default_connection
+from repid import DEFAULT_CONNECTION
 from repid.connections.connection import Connection
 from repid.data import Bucket, DeferredMessage, Message, PrioritiesT, ResultBucket
 from repid.queue import Queue
@@ -44,7 +44,7 @@ class Job:
         id_: Optional[str] = None,
         _connection: Optional[Connection] = None,
     ):
-        self.__conn: Connection = _connection or _default_connection  # type: ignore[assignment]
+        self.__conn: Connection = _connection or DEFAULT_CONNECTION  # type: ignore[assignment]
 
         if self.__conn is None:
             raise ValueError("No connection provided.")

@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Callable, Dict, Optional
 
 import anyio
 
-from repid import _default_connection
+from repid import DEFAULT_CONNECTION
 from repid.actor import Actor
 
 if TYPE_CHECKING:
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 class Worker:
     def __init__(self, limit: int = 16, _connection: Optional[Connection] = None):
-        self.__conn = _connection or _default_connection
+        self.__conn = _connection or DEFAULT_CONNECTION
         self.actors: Dict[str, Actor] = dict()
         self.limiter = anyio.CapacityLimiter(limit)
 

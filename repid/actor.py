@@ -3,8 +3,8 @@ import functools
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Optional
 
-from repid.job import JobResult
 from repid.data import ResultBucket
+from repid.job import JobResult
 from repid.utils import VALID_NAME, unix_time
 
 

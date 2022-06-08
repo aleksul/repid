@@ -71,7 +71,10 @@ flake8-bandit = "^3.0.0"
 # test
 pytest = "^6.2.5"
 pytest-cov = "^3.0.0"
-pytest-docker = { git = "https://github.com/aleksul/pytest-docker.git", rev = "83ece5405aabcefa958b493f5e2996aaff6d6e1d" }
+pytest-sugar = "^0.9.4"
+pytest-icdiff = "^0.5"
+pytest-docker-tools = "^3.1.3"
+hypothesis = "^6.46.11"
 dirty-equals = "^0.2.1"
 time-machine = "^2.6.0"
 # pre-commit

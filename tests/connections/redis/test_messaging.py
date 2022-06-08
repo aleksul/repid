@@ -1,6 +1,5 @@
-import time
-import uuid
-
+import hypothesis
+import hypothesis.strategies
 import pytest
 from redis.asyncio import Redis
 
@@ -15,18 +14,12 @@ def redis_messaging(redis: Redis) -> RedisMessaging:
     return RedisMessaging(redis)
 
 
-def message_fabric() -> Message:
-    return Message(
-        id_=uuid.uuid4().hex,
-        topic="test_actor",
-        queue="test",
-        timestamp=int(time.time()),
-    )
+MESSAGE = hypothesis.strategies.builds(Message)
 
 
-async def test_enqueue(redis_messaging: RedisMessaging):
-    message = message_fabric()
-
-    await redis_messaging.enqueue(message)
-    consumed = await redis_messaging.consume(queue_name=message.queue)
-    assert consumed == message
+@hypothesis.given(msg=MESSAGE)
+@hypothesis.settings(suppress_health_check=(hypothesis.HealthCheck.function_scoped_fixture,))
+async def test_enqueue(redis_messaging: RedisMessaging, msg: Message):
+    await redis_messaging.enqueue(msg)
+    consumed = await redis_messaging.consume(queue_name=msg.queue)
+    assert consumed == msg

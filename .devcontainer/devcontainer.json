@@ -1,0 +1,35 @@
+{
+	"name": "Repid Devcontainer",
+	"build": {
+		"dockerfile": "Dockerfile",
+		"context": "..",
+		"args": {
+			"VARIANT": "3.10-bullseye"
+		}
+	},
+	"workspaceFolder": "/workspace",
+	"customizations": {
+		"vscode": {
+			"settings": {
+				"python.defaultInterpreterPath": "/usr/local/bin/python",
+				"python.formatting.blackPath": "/usr/local/py-utils/bin/black",
+				"python.linting.flake8Path": "/usr/local/py-utils/bin/flake8",
+				"python.linting.mypyPath": "/usr/local/py-utils/bin/mypy",
+				"python.testing.pytestPath": "/usr/local/py-utils/bin/pytest",
+				"python.venvPath": "${workspaceFolder}/.venv"
+			},
+			"extensions": [
+				"ms-python.python",
+				"ms-python.vscode-pylance",
+				"matangover.mypy",
+				"njpwerner.autodocstring",
+				"ryanluker.vscode-coverage-gutters"
+			]
+		}
+	},
+	"postCreateCommand": "poetry install --all-extras",
+	"remoteUser": "vscode",
+	"features": {
+		"docker-from-docker": "latest"
+	}
+}

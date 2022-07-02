@@ -12,10 +12,6 @@
 		"vscode": {
 			"settings": {
 				"python.defaultInterpreterPath": "/usr/local/bin/python",
-				"python.formatting.blackPath": "/usr/local/py-utils/bin/black",
-				"python.linting.flake8Path": "/usr/local/py-utils/bin/flake8",
-				"python.linting.mypyPath": "/usr/local/py-utils/bin/mypy",
-				"python.testing.pytestPath": "/usr/local/py-utils/bin/pytest",
 				"python.venvPath": "${workspaceFolder}/.venv"
 			},
 			"extensions": [

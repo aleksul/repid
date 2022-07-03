@@ -7,7 +7,7 @@ from repid import DEFAULT_CONNECTION
 from repid.actor import Actor
 
 if TYPE_CHECKING:
-    from repid.connections.connection import Connection
+    from repid.connection import Connection
 
 
 class Worker:

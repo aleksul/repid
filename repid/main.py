@@ -2,7 +2,7 @@ import logging
 from typing import Optional, Union
 
 from repid import DEFAULT_CONNECTION  # noqa: F401
-from repid.connections.connection import Connection
+from repid.connection import Connection
 
 logging.getLogger("repid").addHandler(logging.NullHandler())
 

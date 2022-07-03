@@ -4,7 +4,7 @@ from repid import DEFAULT_CONNECTION
 from repid.utils import VALID_NAME
 
 if TYPE_CHECKING:
-    from repid.connections.connection import Connection
+    from repid.connection import Connection
 
 
 class Queue:

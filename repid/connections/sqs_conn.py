@@ -1,2 +1,0 @@
-class SQSMessaging:
-    raise NotImplementedError

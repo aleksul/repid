@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING, Optional
 
-from repid import DEFAULT_CONNECTION
+from repid.main import DEFAULT_CONNECTION
 from repid.utils import VALID_NAME
 
 if TYPE_CHECKING:
@@ -22,26 +22,17 @@ class Queue:
                 "followed by letters, digits, dashes or underscores."
             )
 
-        self.__conn: Connection = _connection or DEFAULT_CONNECTION  # type: ignore[assignment]
+        self.__conn = _connection or DEFAULT_CONNECTION.get()
         if self.__conn is None:
             raise ValueError("No connection provided.")
 
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        msg = await self.__conn.messager.consume(queue_name=self.name)
-        if msg is None:
-            raise StopAsyncIteration
-        return msg
-
-    async def declare(self):
+    async def declare(self) -> None:
         await self.__conn.messager.queue_declare(self.name)
 
-    async def flush(self):
+    async def flush(self) -> None:
         await self.__conn.messager.queue_flush(self.name)
 
-    async def delete(self):
+    async def delete(self) -> None:
         await self.__conn.messager.queue_delete(self.name)
 
     def __str__(self) -> str:

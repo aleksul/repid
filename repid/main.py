@@ -1,79 +1,27 @@
 import logging
-from typing import Optional, Union
+from contextvars import ContextVar
+from typing import Optional
 
-from repid import DEFAULT_CONNECTION  # noqa: F401
 from repid.connection import Connection
+from repid.connections import _get_bucketing_from_string, _get_messaging_from_string
 
 logging.getLogger("repid").addHandler(logging.NullHandler())
 
+DEFAULT_CONNECTION: ContextVar[Connection] = ContextVar("DEFAULT_CONNECTION")
+
 
 class Repid:
-    """Main class. Mostly useful for producer.
-    Helps enqueueing new jobs, get existing jobs and queues, as well as pop jobs.
-    """
-
     def __init__(
         self,
         dsn: str,
-        args_bucketing: Union[str, bool, None] = False,
-        result_bucketing: Union[str, bool, None] = False,
+        dsn_args: Optional[str] = None,
+        dsn_result: Optional[str] = None,
     ):
         global DEFAULT_CONNECTION
 
-        args_dsn: Optional[str] = None
-        if args_bucketing is True:
-            args_dsn = dsn
-
-        result_dsn: Optional[str] = None
-        if result_bucketing is True:
-            result_dsn = dsn
-
-        dsns = dict(
-            messager=dsn,
-            args_bucketer=args_dsn,
-            result_bucketer=result_dsn,
+        self.__conn = Connection(
+            messager=_get_messaging_from_string(dsn),
+            args_bucketer=None if dsn_args is None else _get_bucketing_from_string(dsn_args),
+            results_bucketer=None if dsn_result is None else _get_bucketing_from_string(dsn_result),
         )
-
-        connections = dict()
-
-        for name, conn in dsns.items():
-            if conn is None:
-                continue
-            connections[name] = self.__get_connection_from_string(
-                conn, bucketing=True if name != "messager" else False
-            )
-        DEFAULT_CONNECTION = Connection(**connections)
-        self.__conn = DEFAULT_CONNECTION
-
-    def __get_connection_from_string(self, connection: str, bucketing: bool = False):
-        if connection.startswith("redis") or connection.startswith("rediss"):
-            if not bucketing:
-                from repid.connections.redis_conn import RedisMessaging
-
-                return RedisMessaging(connection)
-            else:
-                from repid.connections.redis_conn import RedisBucketing
-
-                return RedisBucketing(connection)
-        elif connection.startswith("kafka"):
-            if bucketing:
-                raise ValueError("Kafka only serves as a message broker.")
-
-            from repid.connections.kafka_conn import KafkaMessaging
-
-            return KafkaMessaging(connection)
-        elif connection.startswith("amqp") or connection.startswith("amqps"):
-            if bucketing:
-                raise ValueError("AMQP only serves as a message broker.")
-
-            from repid.connections.amqp_conn import AMQPMessaging
-
-            return AMQPMessaging(connection)
-        elif connection.startswith("sqs"):
-            if bucketing:
-                raise ValueError("SQS only serves as a message broker.")
-
-            from repid.connections.sqs_conn import SQSMessaging
-
-            return SQSMessaging(connection)
-        raise ValueError(f"Unknown connection type: {connection = }")
+        DEFAULT_CONNECTION.set(self.__conn)

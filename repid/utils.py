@@ -43,7 +43,7 @@ def next_exec_time(msg: Union[DeferredByMessage, DeferredCronMessage]) -> int:
 
 
 def get_priorities_order(priorities_distribution: List[float]) -> List[PrioritiesT]:
-    rand = random.random()
+    rand = random.random()  # noqa: S311
     if rand <= priorities_distribution[0]:
         return [PrioritiesT.HIGH, PrioritiesT.MEDIUM, PrioritiesT.LOW]
     elif rand <= priorities_distribution[0] + priorities_distribution[1]:

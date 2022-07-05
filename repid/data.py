@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, Optional, Union
+from typing import Any, Dict, Optional, Tuple, Union
 
 import msgspec
 
@@ -10,7 +10,7 @@ class PrioritiesT(Enum):
     LOW = "lo"
 
 
-class StructWithParams(msgspec.Struct, tag=True, omit_defaults=True):
+class StructWithParams(msgspec.Struct, tag=True, array_like=True):
     pass
 
 
@@ -21,10 +21,13 @@ class Timestamp(msgspec.Struct):
 
 class Message(StructWithParams, Timestamp):
     id_: str
-    topic: str
+    topic: str  # the same as actor's & job's name
     queue: str = "default"
     priority: PrioritiesT = PrioritiesT.MEDIUM
     retries_left: int = 1
+    bucket: Union[str, "ArgsBucket", None] = None  # bucket_id or bucket itself
+    result_id: Optional[str] = None
+    result_ttl: Optional[int] = None
     timeout: int = 600
 
 
@@ -45,20 +48,25 @@ AnyMessageT = Union[Message, DeferredMessage, DeferredByMessage, DeferredCronMes
 
 class Bucket(StructWithParams, Timestamp):
     id_: str
-    data: Any
+
+
+class ArgsBucket(Bucket):
+    args: Optional[Tuple] = None
+    kwargs: Optional[Dict] = None
 
 
 class ResultBucket(Bucket):
+    data: Any
     success: bool
     started_when: int
     finished_when: int
     exception: Optional[str] = None
 
 
-AnyBucketT = Union[Bucket, ResultBucket]
+AnyBucketT = Union[ArgsBucket, ResultBucket]
 
 AnySerializableT = Union[
-    Message, DeferredMessage, DeferredByMessage, DeferredCronMessage, Bucket, ResultBucket
+    Message, DeferredMessage, DeferredByMessage, DeferredCronMessage, ArgsBucket, ResultBucket
 ]
 
 

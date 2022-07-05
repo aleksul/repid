@@ -17,8 +17,13 @@ def redis_messaging(redis: Redis) -> RedisMessaging:
 MESSAGE = hypothesis.strategies.builds(Message)
 
 
-@hypothesis.given(msg=MESSAGE)
-@hypothesis.settings(suppress_health_check=(hypothesis.HealthCheck.function_scoped_fixture,))
+@pytest.fixture()
+def msg() -> Message:
+    return Message(timestamp=0, topic="test", id_="1234")
+
+
+# @hypothesis.given(msg=MESSAGE)
+# @hypothesis.settings(suppress_health_check=(hypothesis.HealthCheck.function_scoped_fixture,))
 async def test_enqueue(redis_messaging: RedisMessaging, msg: Message):
     await redis_messaging.enqueue(msg)
     consumed = await redis_messaging.consume(queue_name=msg.queue)

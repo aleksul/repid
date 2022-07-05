@@ -48,8 +48,8 @@ class RedisMessaging:
     queue_type = "FIFO"
     priorities_distribution = "10/3/1"
 
-    def __init__(self, connection: Redis):
-        self.conn = connection
+    def __init__(self, dsn: str):
+        self.conn = Redis.from_url(dsn)
         self.consume_script = self.conn.register_script(
             script=(Path(__file__).parent / "redis_scripts" / "consume.lua").read_text()
         )

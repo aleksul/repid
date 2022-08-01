@@ -19,7 +19,7 @@ repos:
         language_version: python3
 
   - repo: https://github.com/pycqa/flake8
-    rev: 4.0.1
+    rev: 5.0.2
     hooks:
       - id: flake8
         args:

@@ -23,7 +23,7 @@
 			]
 		}
 	},
-	"postCreateCommand": "poetry install --all-extras",
+	"postCreateCommand": "pdm install -d -G :all",
 	"remoteUser": "vscode",
 	"features": {
 		"docker-from-docker": "latest"

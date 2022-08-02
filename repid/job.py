@@ -106,6 +106,9 @@ class Job:
 
         self.created = unix_time()
 
+    async def enqueue(self) -> None:
+        await self.__conn.messager.enqueue(self._to_message())
+
     @cached_property
     def is_deferred(self) -> bool:
         return (
@@ -119,9 +122,6 @@ class Job:
         if self.ttl is not None:
             return unix_time() > self.created + self.ttl
         return False
-
-    async def enqueue(self) -> None:
-        await self.__conn.messager.enqueue(self._to_message())
 
     @property
     async def data(self) -> Optional[ArgsBucket]:

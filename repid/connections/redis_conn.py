@@ -1,5 +1,7 @@
+import random
+import re
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Iterable, List, Literal, Optional, Union
 
 from redis.asyncio.client import Redis
 
@@ -13,15 +15,29 @@ from repid.data import (
     Serializer,
 )
 from repid.middlewares.wrapper import InjectMiddleware
-from repid.utils import (
-    PrioritiesT,
-    get_priorities_order,
-    next_exec_time,
-    parse_priorities_distribution,
-    unix_time,
-)
+from repid.utils import PrioritiesT, next_exec_time, unix_time
 
 ProcessingQueue = "processing"  # sorted set
+
+VALID_PRIORITIES = re.compile(r"[0-9]+\/[0-9]+\/[0-9]+")
+
+
+def get_priorities_order(priorities_distribution: List[float]) -> List[PrioritiesT]:
+    rand = random.random()  # noqa: S311
+    if rand <= priorities_distribution[0]:
+        return [PrioritiesT.HIGH, PrioritiesT.MEDIUM, PrioritiesT.LOW]
+    elif rand <= priorities_distribution[0] + priorities_distribution[1]:
+        return [PrioritiesT.MEDIUM, PrioritiesT.HIGH, PrioritiesT.LOW]
+    else:
+        return [PrioritiesT.LOW, PrioritiesT.HIGH, PrioritiesT.MEDIUM]
+
+
+def parse_priorities_distribution(priorities_distribution: str) -> List[float]:
+    if not VALID_PRIORITIES.fullmatch(priorities_distribution):
+        raise ValueError(f"Invalid priorities distribution: {priorities_distribution}")
+    pr_dist = [int(x) for x in priorities_distribution.split("/")]
+    pr_dist_sum = sum(pr_dist)
+    return [x / pr_dist_sum for x in pr_dist]
 
 
 def qnc(  # queue name constructor
@@ -45,7 +61,7 @@ def mnc(message: AnyMessageT, short: bool = False) -> str:  # message name const
 @InjectMiddleware
 class RedisMessaging:
     supports_delayed_messages = True
-    queue_type = "FIFO"
+    queue_type: Literal["FIFO", "LIFO", "SIMPLE"] = "FIFO"
     priorities_distribution = "10/3/1"
 
     def __init__(self, dsn: str):
@@ -79,7 +95,7 @@ class RedisMessaging:
         return False
 
     async def consume(
-        self, queue_name: str, topics: Optional[List[str]] = None
+        self, queue_name: str, topics: Optional[Iterable[str]] = None
     ) -> Optional[AnyMessageT]:
         for priority in get_priorities_order(self._priorities):
             # TODO: topics
@@ -99,9 +115,9 @@ class RedisMessaging:
     async def enqueue(self, message: AnyMessageT) -> None:
         async with self.conn.pipeline(transaction=True) as pipe:
             pipe.set(mnc(message), Serializer.encode(message), nx=True)
-            if type(message) is Message:
+            if not isinstance(message, DeferredMessage):
                 pipe.lpush(qnc(message.queue, message.priority), mnc(message, short=True))
-            elif isinstance(message, DeferredMessage):
+            else:
                 pipe.zadd(
                     qnc(message.queue, message.priority, delayed=True),
                     {message.delay_until: mnc(message, short=True)},
@@ -201,7 +217,6 @@ class RedisBucketing:
         await self.connection.set(
             bucket.id_,
             Serializer.encode(bucket),
-            nx=True,
             exat=bucket.timestamp + bucket.ttl if bucket.ttl is not None else None,
         )
 

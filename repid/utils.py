@@ -17,8 +17,6 @@ from repid.data import DeferredByMessage, DeferredCronMessage
 
 VALID_ID = re.compile(r"[a-zA-Z0-9_-]*")
 VALID_NAME = re.compile(r"[a-zA-Z_][a-zA-Z0-9_-]*")  # valid actor and queue names
-VALID_PRIORITIES = re.compile(r"[0-9]+\/[0-9]+\/[0-9]+")
-
 
 def unix_time() -> int:
     return int(time.time())
@@ -40,21 +38,3 @@ def next_exec_time(msg: Union[DeferredByMessage, DeferredCronMessage]) -> int:
         return msg.timestamp + time_offset
     elif isinstance(msg, DeferredCronMessage):
         return int(croniter(msg.cron, time.time()).get_next(ret_type=float))
-
-
-def get_priorities_order(priorities_distribution: List[float]) -> List[PrioritiesT]:
-    rand = random.random()  # noqa: S311
-    if rand <= priorities_distribution[0]:
-        return [PrioritiesT.HIGH, PrioritiesT.MEDIUM, PrioritiesT.LOW]
-    elif rand <= priorities_distribution[0] + priorities_distribution[1]:
-        return [PrioritiesT.MEDIUM, PrioritiesT.HIGH, PrioritiesT.LOW]
-    else:
-        return [PrioritiesT.LOW, PrioritiesT.HIGH, PrioritiesT.MEDIUM]
-
-
-def parse_priorities_distribution(priorities_distribution: str) -> List[float]:
-    if not VALID_PRIORITIES.fullmatch(priorities_distribution):
-        raise ValueError(f"Invalid priorities distribution: {priorities_distribution}")
-    pr_dist = [int(x) for x in priorities_distribution.split("/")]
-    pr_dist_sum = sum(pr_dist)
-    return [x / pr_dist_sum for x in pr_dist]

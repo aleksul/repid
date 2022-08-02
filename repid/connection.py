@@ -7,7 +7,6 @@ from repid.data import AnyBucketT, AnyMessageT
 class Messaging(Protocol):
     supports_delayed_messages: bool
     queue_type: Literal["FIFO", "LIFO", "SIMPLE"]
-    priorities_distribution: str
 
     def __init__(self, dsn: str) -> None:
         ...

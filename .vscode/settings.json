@@ -5,8 +5,10 @@
         "**/.pytest_cache": true,
         ".coverage": true,
         "coverage.xml": true,
-        ".tox": true,
         ".mypy_cache": true,
+        "repid/py.typed": true,
+        ".hypothesis": true,
+        ".venv": true,
     },
     // Testing
     "python.testing.pytestEnabled": true,
@@ -18,12 +20,8 @@
     "python.linting.enabled": true,
     "python.linting.lintOnSave": true,
     "python.linting.flake8Enabled": true,
-    "python.linting.mypyEnabled": true,
-    "python.linting.flake8Args": [
-        "--max-line-length=100",
-        "--per-file-ignores=repid/__init__.py:F401",
-        "--ignore=S101 tests/",
-    ],
+    "python.linting.mypyEnabled": false,
+    "mypy.runUsingActiveInterpreter": true,
     // Formatting
     "python.formatting.provider": "black",
     "editor.formatOnSave": true,
@@ -37,4 +35,5 @@
     "coverage-gutters.coverageFileNames": [
         "coverage.xml",
     ],
+    "python.languageServer": "Pylance"
 }

@@ -3,9 +3,17 @@
     "tasks": [
         {
             "label": "Check coverage",
-            "command": "poetry run pytest -q --cov-report=xml --cov=repid",
             "type": "shell",
-            "group": "test"
+            "command": "pdm",
+            "args": [
+                "run",
+                "pytest",
+                "-vv",
+                "--disable-warnings",
+                "--cov-report=xml",
+                "--cov=repid",
+            ],
+            "group": "test",
         }
     ]
 }

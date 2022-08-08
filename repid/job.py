@@ -58,7 +58,7 @@ class Job:
 
         if not VALID_NAME.fullmatch(name):
             raise ValueError(
-                "Job name must start with a letter or an underscore"
+                "Job name must start with a letter or an underscore "
                 "followed by letters, digits, dashes or underscores."
             )
         self.name = name

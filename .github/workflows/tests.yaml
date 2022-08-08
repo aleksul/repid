@@ -12,7 +12,7 @@ on:
 jobs:
   tests:
     name: Tests (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
 
     strategy:
       matrix:
@@ -37,10 +37,10 @@ jobs:
           key: ${{ runner.os }}-pdm-${{ hashFiles('pdm.lock') }}
 
       - name: Install dependencies
-        run: pdm install --no-lock -d -G :all
+        run: pdm install --no-lock -G :all
 
       - name: Run tests
-        run: pdm run pytest tests/ --color=yes -rA
+        run: pdm run pytest tests/ -vv --hypothesis-verbosity=normal --color=yes --disable-warnings --cov-report=xml --cov=repid
 
       - name: Upload code coverage
         if: matrix.python-version == '3.8'

@@ -6,7 +6,7 @@ from typing import List, Union
 from redis.asyncio.client import Redis
 
 from repid.data import AnyBucketT, PrioritiesT
-from repid.middlewares.wrapper import InjectMiddleware
+from repid.middlewares import InjectMiddleware
 from repid.serializer import BucketSerializer
 
 # from repid.utils import unix_time

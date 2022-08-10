@@ -1,11 +1,11 @@
 from dataclasses import dataclass
-from typing import ClassVar, FrozenSet, Protocol, Union
+from typing import FrozenSet, Protocol, Union
 
 from repid.data import AnyBucketT, Message
 
 
 class Messaging(Protocol):
-    supports_delayed_messages: ClassVar[bool]
+    supports_delayed_messages: bool
 
     def __init__(self, dsn: str) -> None:
         ...

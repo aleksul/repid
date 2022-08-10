@@ -60,5 +60,25 @@ async def test_middleware_double_call(dummy_recursive_connection):
     assert counter == 2
     await Queue("test_another_queue_name").delete()
     assert counter == 4
-    with pytest.raises(Exception, match="This should not be called"):
-        await Queue("test_queue_name").flush()
+    await Queue("test_queue_name").flush()
+    assert counter == 4
+
+
+async def test_error_in_middleware(caplog, dummy_recursive_connection):
+    Repid("test://test")
+
+    class TestMiddleware:
+        async def before_queue_flush(self, queue_name: str):
+            raise Exception("Some random exception")
+
+    Middleware.add_middleware(TestMiddleware())
+    Repid("test://test")
+    await Queue("test_queue_name").flush()
+    assert any(
+        map(
+            lambda x: x.startswith(
+                "ERROR    repid.middlewares:__init__.py:61 Event before_queue_flush"
+            ),
+            caplog.text.splitlines(),
+        )
+    )

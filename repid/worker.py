@@ -12,6 +12,8 @@ from repid.data.messages import ArgsBucketMetadata, SimpleArgsBucket
 from repid.main import DEFAULT_CONNECTION
 from repid.utils import unix_time
 
+logger = logging.getLogger(__name__)
+
 
 class Worker:
     __slots__ = (
@@ -63,14 +65,14 @@ class Worker:
                 raise ConnectionError("No args bucketer provided.")
             bucket = await self.__conn.args_bucketer.get_bucket(message.args_bucket.id_)
             if bucket is None:
-                logging.error(f"No bucket found for id = {message.args_bucket.id_}.")
+                logger.error(f"No bucket found for id = {message.args_bucket.id_}.")
             if isinstance(bucket, ArgsBucket):
                 return bucket
         return None
 
     async def __set_message_result(self, result: ResultBucket) -> None:
         if self.__conn.results_bucketer is None:
-            logging.error("No results bucketer provided for returned data.")
+            logger.error("No results bucketer provided for returned data.")
             return
         await self.__conn.results_bucketer.store_bucket(result)
 

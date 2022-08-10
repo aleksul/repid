@@ -1,12 +1,13 @@
 import asyncio
 import logging
-from asyncio.log import logger
 from functools import partial
 from inspect import getfullargspec, getmembers, isfunction, ismethod
 from itertools import product
-from typing import Any, Callable, Coroutine, Dict, List, Tuple, Type
+from typing import Any, Callable, Coroutine, Dict, List, Type
 
 import anyio
+
+logger = logging.getLogger(__name__)
 
 AVAILABLE_FUNCTIONS = (
     "consume",
@@ -34,20 +35,35 @@ class Middleware:
     def add_event(cls, fn: Callable) -> None:
         name = fn.__name__
         if name in POSSIBLE_EVENT_NAMES:
-            logging.debug(f"Subscribed function with {name = } to middleware signals.")
+            logger.debug(f"Subscribed function with {name = } to middleware signals.")
 
-            # Wrap sync function to make it a coroutine
-            if not asyncio.iscoroutinefunction(fn):
+            is_coroutine = asyncio.iscoroutinefunction(fn)
+            argspec = getfullargspec(fn)
 
-                async def wrapper(*args: Tuple, **kwargs: Dict) -> Any:
-                    return await anyio.to_thread.run_sync(partial(fn, *args, **kwargs))
+            async def wrapper(**kwargs: Dict) -> Any:
+                nonlocal fn, is_coroutine, argspec
+                # leave only those kwargs that are in the function signature
+                kwargs = {
+                    key: value
+                    for key, value in kwargs.items()
+                    if key in argspec.args
+                    or (key in argspec.defaults if argspec.defaults is not None else False)
+                }
+                # try to call the function
+                try:
+                    # wrap the function in a coroutine if it is not already
+                    if is_coroutine:
+                        return await fn(**kwargs)
+                    else:
+                        return await anyio.to_thread.run_sync(partial(fn, **kwargs))
+                # ignore the exception and pass it to the logger
+                except Exception as e:
+                    logger.error(f"Event {fn.__name__} ({fn}) raised exception: {type(e)}: {e}")
 
-                fn = wrapper
-
-            # add event to the dictionary
+            # add wrapped event to the dictionary
             if name not in cls._events:
                 cls._events[name] = []
-            cls._events[name].append(fn)
+            cls._events[name].append(wrapper)
 
     @classmethod
     def add_middleware(cls, middleware: Type[Any]) -> None:
@@ -61,14 +77,7 @@ class Middleware:
     async def emit_signal(cls, name: str, kwargs: Dict) -> None:
         if name not in cls._events:
             return
-        logging.debug(f"Emitting signal with {name = }.")
+        logger.debug(f"Emitting signal with {name = }.")
         async with anyio.create_task_group() as tg:
             for fn in cls._events[name]:
-                argspec = getfullargspec(fn)
-                kwargs = {  # only leave those kwargs that are in the function signature
-                    key: value
-                    for key, value in kwargs.items()
-                    if key in argspec.args
-                    or (key in argspec.defaults if argspec.defaults is not None else False)
-                }
                 tg.start_soon(partial(fn, **kwargs))

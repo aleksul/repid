@@ -5,7 +5,7 @@ from typing import Union
 from repid.connection import Connection
 from repid.connections import _get_bucketing_from_string, _get_messaging_from_string
 
-logging.getLogger("repid").addHandler(logging.NullHandler())
+logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 DEFAULT_CONNECTION: ContextVar[Connection] = ContextVar("DEFAULT_CONNECTION")
 

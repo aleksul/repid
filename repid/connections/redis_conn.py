@@ -1,3 +1,4 @@
+import logging
 import random
 import re
 from typing import List, Union
@@ -212,12 +213,14 @@ class RedisBucketing:
         self.conn = Redis.from_url(dsn)
 
     async def get_bucket(self, id_: str) -> Union[AnyBucketT, None]:
+        logging.debug(f"Getting bucket with {id_ = }.")
         data = await self.conn.get(id_)
         if data is not None:
             return BucketSerializer.decode(data)
         return None
 
     async def store_bucket(self, bucket: AnyBucketT) -> None:
+        logging.debug(f"Storing {bucket = }.")
         await self.conn.set(
             bucket.id_,
             BucketSerializer.encode(bucket),
@@ -225,6 +228,7 @@ class RedisBucketing:
         )
 
     async def delete_bucket(self, id_: str) -> None:
+        logging.debug(f"Deleting bucket with {id_ = }.")
         await self.conn.delete(id_)
 
 

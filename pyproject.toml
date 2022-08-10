@@ -22,6 +22,9 @@ cron = ["croniter<2.0.0,>=1.3.4"]
 [tool.pdm]
 version = { source = "scm" }
 
+[tool.pdm.build]
+includes = ["repid"]
+
 [tool.pdm.dev-dependencies]
 format = ["black>=22.6.0", "isort>=5.10.1"]
 lint = [
@@ -68,9 +71,6 @@ warn_unused_ignores = true
 show_error_codes = true
 exclude = "^tests/"
 
-[tool.pyright]
-ignore = ["repid/data.py"]
-
 [tool.flake8]
 max-line-length = 100
 per-file-ignores = "__init__.py:F401"
@@ -78,9 +78,6 @@ ignore = "S101 tests/, W503, PT013"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-
-[tool.pdm.build]
-package-dir = "repid"
 
 [build-system]
 requires = ["pdm-pep517>=1.0.0"]

@@ -1,5 +1,28 @@
+import pytest
+
 from repid.connection import Bucketing, Messaging
-from repid.middlewares import AVAILABLE_FUNCTIONS
+from repid.connections import CONNECTIONS
+from repid.main import Repid
+from repid.middlewares import AVAILABLE_FUNCTIONS, Middleware
+from repid.middlewares.wrapper import InjectMiddleware
+from repid.queue import Queue
+
+
+@pytest.fixture()
+def dummy_recursive_connection():
+    @InjectMiddleware
+    class DummyConnection:
+        def __init__(self, dsn: str) -> None:
+            pass
+
+        async def queue_flush(self, queue_name: str) -> None:
+            pass
+
+        async def queue_delete(self, queue_name: str) -> None:
+            await self.queue_flush(queue_name)
+
+    CONNECTIONS["test://"] = DummyConnection
+    return DummyConnection
 
 
 def test_available_functions():
@@ -8,3 +31,34 @@ def test_available_functions():
             continue
         if callable(getattr(Messaging, name, None) or getattr(Bucketing, name, None)):
             assert name in AVAILABLE_FUNCTIONS
+
+
+async def test_middleware_double_call(dummy_recursive_connection):
+    Repid("test://test")
+
+    counter = 0
+
+    class TestMiddleware:
+        async def before_queue_flush(self, queue_name: str):
+            raise Exception("This should not be called")
+
+        async def after_queue_flush(self):
+            raise Exception("This should not be called")
+
+        @staticmethod
+        async def before_queue_delete(queue_name: str):
+            nonlocal counter
+            counter += 1
+
+        async def after_queue_delete(self):
+            nonlocal counter
+            counter += 1
+
+    Middleware.add_middleware(TestMiddleware())
+    Repid("test://test")
+    await Queue("test_queue_name").delete()
+    assert counter == 2
+    await Queue("test_another_queue_name").delete()
+    assert counter == 4
+    with pytest.raises(Exception, match="This should not be called"):
+        await Queue("test_queue_name").flush()

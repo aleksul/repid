@@ -23,7 +23,7 @@
 			]
 		}
 	},
-	"postCreateCommand": "pdm install -d -G :all",
+	"postCreateCommand": "pdm install -d -G :all && pdm run pre-commit install",
 	"remoteUser": "vscode",
 	"features": {
 		"docker-from-docker": "latest"

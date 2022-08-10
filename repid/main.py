@@ -4,6 +4,7 @@ from typing import Union
 
 from repid.connection import Connection
 from repid.connections import _get_bucketing_from_string, _get_messaging_from_string
+from repid.middlewares import Middleware
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
@@ -25,3 +26,4 @@ class Repid:
             results_bucketer=None if dsn_result is None else _get_bucketing_from_string(dsn_result),
         )
         DEFAULT_CONNECTION.set(self.__conn)
+        self.middleware = Middleware()

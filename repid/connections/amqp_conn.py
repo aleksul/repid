@@ -7,7 +7,7 @@ import anyio
 from yarl import URL
 
 from repid.data import Message
-from repid.middlewares.wrapper import InjectMiddleware
+from repid.middlewares import InjectMiddleware
 from repid.serializer import MessageSerializer
 
 logger = logging.getLogger(__name__)

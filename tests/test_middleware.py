@@ -1,11 +1,9 @@
 import pytest
 
+from repid import Queue, Repid
 from repid.connection import Bucketing, Messaging
 from repid.connections import CONNECTIONS
-from repid.main import Repid
-from repid.middlewares import AVAILABLE_FUNCTIONS, Middleware
-from repid.middlewares.wrapper import InjectMiddleware
-from repid.queue import Queue
+from repid.middlewares import AVAILABLE_FUNCTIONS, InjectMiddleware
 
 
 @pytest.fixture()
@@ -34,7 +32,7 @@ def test_available_functions():
 
 
 async def test_middleware_double_call(dummy_recursive_connection):
-    Repid("test://test")
+    r = Repid("test://test")
 
     counter = 0
 
@@ -54,7 +52,7 @@ async def test_middleware_double_call(dummy_recursive_connection):
             nonlocal counter
             counter += 1
 
-    Middleware.add_middleware(TestMiddleware())
+    r.middleware.add_middleware(TestMiddleware())
     Repid("test://test")
     await Queue("test_queue_name").delete()
     assert counter == 2
@@ -65,19 +63,23 @@ async def test_middleware_double_call(dummy_recursive_connection):
 
 
 async def test_error_in_middleware(caplog, dummy_recursive_connection):
-    Repid("test://test")
+    r = Repid("test://test")
 
     class TestMiddleware:
         async def before_queue_flush(self, queue_name: str):
             raise Exception("Some random exception")
 
-    Middleware.add_middleware(TestMiddleware())
+    r.middleware.add_middleware(TestMiddleware())
     Repid("test://test")
     await Queue("test_queue_name").flush()
     assert any(
         map(
-            lambda x: x.startswith(
-                "ERROR    repid.middlewares:__init__.py:61 Event before_queue_flush"
+            lambda x: all(
+                (
+                    "ERROR" in x,
+                    "Event before_queue_flush" in x,
+                    "<class 'Exception'>: Some random exception" in x,
+                )
             ),
             caplog.text.splitlines(),
         )

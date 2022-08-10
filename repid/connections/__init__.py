@@ -6,15 +6,15 @@ from .redis_conn import RedisBucketing
 
 # from .kafka_conn import KafkaMessaging
 # from .nats_conn import NatsMessaging
-# from .redis_conn import RedisBucketing, RedisMessaging
+# from .redis_conn import RedisMessaging
 
 CONNECTIONS: Dict[str, Type[Messaging]] = {
-    #    "redis://": RedisMessaging,
-    #    "rediss://": RedisMessaging,
-    #    "kafka://": KafkaMessaging,
-    "amqp://": RabbitMessaging,  # type: ignore[dict-item]
-    "amqps://": RabbitMessaging,  # type: ignore[dict-item]
-    #   "nats://": NatsMessaging,
+    "amqp://": RabbitMessaging,
+    "amqps://": RabbitMessaging,
+    # "redis://": RedisMessaging,
+    # "rediss://": RedisMessaging,
+    # "kafka://": KafkaMessaging,
+    # "nats://": NatsMessaging,
 }
 
 BUCKETINGS: Dict[str, Type[Bucketing]] = {

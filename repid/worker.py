@@ -85,27 +85,29 @@ class Worker:
         actor._TIME_LIMIT.set(message.execution_timeout)
         result = await actor(*args, **kwargs)
 
-        message.tried += 1
-        if result["success"]:
+        # rescheduling (retry)
+        if not result.success and message.tried + 1 < message.retries:
+            message.tried += 1
+            # message.delay_until = None  # TODO: exponential backoff
+            await self.__conn.messager.requeue(message)
+        # rescheduling (deferred)
+        elif message.defer_by is not None or message.cron is not None:
+            message._prepare_reschedule()
+            await self.__conn.messager.requeue(message)
+        # ack
+        elif result.success:
             await self.__conn.messager.ack(message)
-            if message.defer_by is not None or message.cron is not None:
-                message._prepare_reschedule()
-                await self.__conn.messager.enqueue(message)
+        # nack
         else:
             await self.__conn.messager.nack(message)
-            if message.tried < message.retries:
-                message.delay_until = None
-                await self.__conn.messager.enqueue(message)
-            elif message.defer_by is not None or message.cron is not None:
-                message._prepare_reschedule()
-                await self.__conn.messager.enqueue(message)
 
+        # return result
         if message.result_bucket is not None:
             result_with_metadata = dict(
                 id_=message.result_bucket.id_,
                 ttl=message.result_bucket.ttl,
                 timestamp=unix_time(),
-                **result,
+                **result._asdict(),
             )
             await self.__set_message_result(ResultBucket(**result_with_metadata))
 

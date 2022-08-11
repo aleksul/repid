@@ -32,7 +32,7 @@ class RabbitMessaging:
             if self.__channel.is_closed:
                 await self.__channel.reopen()
             return self.__channel
-        self.__channel = await self.__conn.channel()
+        self.__channel = await self.__conn.channel(publisher_confirms=False)
         return self.__channel
 
     async def consume(self, queue_name: str, topics: FrozenSet[str]) -> Message:
@@ -46,6 +46,9 @@ class RabbitMessaging:
             decoded: Message = MessageSerializer.decode(message.body)
             if decoded.topic not in topics:
                 await message.reject(requeue=True)
+                continue
+            if decoded.is_overdue:
+                await message.nack(requeue=False)
                 continue
             if message.delivery_tag is not None:
                 self.__id_to_deleviry_tag[decoded.id_] = message.delivery_tag
@@ -81,7 +84,7 @@ class RabbitMessaging:
             logger.error(f"Can't nack unknown delivery tag for {message.id_ = }.")
             return
         channel = await self._channel
-        await channel.channel.basic_nack(delivery_tag, requeue=False)
+        await channel.channel.basic_nack(delivery_tag, requeue=False)  # will trigger dlx
 
     async def reject(self, message: Message) -> None:
         logger.debug(f"Rejecting {message = }.")
@@ -90,6 +93,29 @@ class RabbitMessaging:
             return
         channel = await self._channel
         await channel.channel.basic_reject(delivery_tag, requeue=True)
+
+    async def requeue(self, message: Message) -> None:
+        logger.debug(f"Requeueing {message = }.")
+        if (delivery_tag := self.__id_to_deleviry_tag.pop(message.id_, None)) is None:
+            logger.error(f"Can't requeue unknown delivery tag for {message.id_ = }.")
+            return
+        channel = await self._channel
+        async with channel.transaction():
+            await channel.channel.basic_ack(delivery_tag)
+            await channel.default_exchange.publish(
+                aiopika.Message(
+                    body=MessageSerializer.encode(message),
+                    priority=message.priority - 1,
+                    expiration=datetime.fromtimestamp(message.delay_until)
+                    if message.delay_until is not None
+                    else None,
+                    message_id=message.id_,
+                    timestamp=message.timestamp,
+                ),
+                routing_key=(
+                    f"{message.queue}{':delayed' if message.delay_until is not None else ''}"
+                ),
+            )
 
     async def queue_declare(self, queue_name: str) -> None:
         logger.debug(f"Declaring queue {queue_name = }.")

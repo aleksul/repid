@@ -1,18 +1,17 @@
 from typing import Dict, Type
 
 from ..connection import Bucketing, Messaging
-from .amqp_conn import RabbitMessaging
-from .redis_conn import RedisBucketing
+from .rabbitmq_messaging import RabbitMessaging
+from .redis import RedisBucketing, RedisMessaging
 
 # from .kafka_conn import KafkaMessaging
 # from .nats_conn import NatsMessaging
-# from .redis_conn import RedisMessaging
 
 CONNECTIONS: Dict[str, Type[Messaging]] = {
     "amqp://": RabbitMessaging,
     "amqps://": RabbitMessaging,
-    # "redis://": RedisMessaging,
-    # "rediss://": RedisMessaging,
+    "redis://": RedisMessaging,
+    "rediss://": RedisMessaging,
     # "kafka://": KafkaMessaging,
     # "nats://": NatsMessaging,
 }

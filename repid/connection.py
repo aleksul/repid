@@ -27,6 +27,11 @@ class Messaging(Protocol):
     async def nack(self, message: Message) -> None:
         """Informs message broker that job execution failed."""
 
+    async def requeue(self, message: Message) -> None:
+        """Re-queues the message with different body. Id must be the same."""
+        await self.ack(message)
+        await self.enqueue(message)
+
     async def queue_declare(self, queue_name: str) -> None:
         """Creates the specified queue."""
 

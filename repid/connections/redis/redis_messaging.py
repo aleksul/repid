@@ -42,10 +42,10 @@ class RedisMessaging:
             create_task(first_run_maintenance())
 
     async def __get_message_name_from_delayed_queue(self, full_queue_name: str) -> Union[str, None]:
-        msg_short_name = None
+        msg_short_name: Union[str, None] = None
         async with self.conn.pipeline(transaction=True) as pipe:
             await pipe.watch(full_queue_name)
-            names: List[str] = await pipe.immediate_execute_command(
+            names: List[bytes] = await pipe.immediate_execute_command(
                 "ZRANGE",
                 full_queue_name,
                 "-inf",  # minimum score
@@ -55,24 +55,26 @@ class RedisMessaging:
                 0,  # offset
                 1,  # count
             )
-            if names and (msg_short_name := names[0]):
+            if names and (msg_short_name := names[0].decode()):
                 pipe.multi()
                 pipe.zrem(full_queue_name, msg_short_name)  # remove message from delayed queue
                 pipe.zadd(  # mark message as processing
-                    self.processing_queue, {str(unix_time()): msg_short_name}
+                    self.processing_queue, {msg_short_name: str(unix_time())}
                 )
                 await pipe.execute()
         return msg_short_name
 
     async def __get_message_name_from_normal_queue(self, full_queue_name: str) -> Union[str, None]:
-        msg_short_name = None
+        msg_short_name: Union[str, None] = None
         async with self.conn.pipeline(transaction=True) as pipe:
             await pipe.watch(full_queue_name)
-            name: str = await pipe.immediate_execute_command("LRANGE", full_queue_name, -1, -1)
-            if name and (msg_short_name := name[0]):
+            names: List[bytes] = await pipe.immediate_execute_command(
+                "LRANGE", full_queue_name, -1, -1
+            )
+            if names and (msg_short_name := names[0].decode()):
                 pipe.multi()
                 pipe.rpop(full_queue_name)
-                pipe.zadd(self.processing_queue, {str(unix_time()): msg_short_name})
+                pipe.zadd(self.processing_queue, {msg_short_name: str(unix_time())})
                 await pipe.execute()
         return msg_short_name
 
@@ -109,7 +111,7 @@ class RedisMessaging:
         else:
             pipe.zadd(
                 qnc(msg.queue, msg.priority, delayed=True),
-                {str(msg.delay_until): mnc(msg, short=True)},
+                {mnc(msg, short=True): str(msg.delay_until)},
             )
 
     def __mark_dead(self, msg: Message, pipe: Pipeline) -> None:

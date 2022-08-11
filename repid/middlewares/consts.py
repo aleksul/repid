@@ -9,6 +9,7 @@ AVAILABLE_FUNCTIONS = (
     "ack",
     "nack",
     "reject",
+    "requeue",
     "get_bucket",
     "store_bucket",
     "delete_bucket",

@@ -1,14 +1,14 @@
 from asyncio import iscoroutinefunction
 from contextvars import ContextVar
 from functools import partial
-from typing import Any, Callable, Dict, Tuple, TypedDict, Union
+from typing import Any, Callable, Dict, NamedTuple, Tuple, Union
 
 import anyio
 
 from repid.utils import VALID_NAME, unix_time
 
 
-class Result(TypedDict):
+class Result(NamedTuple):
     data: Any
     success: bool
     exception: Union[Exception, None]

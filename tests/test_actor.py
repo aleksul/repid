@@ -24,4 +24,4 @@ def test_actor_str():
     def a():
         pass
 
-    assert str(Actor(a)) == f"Actor({a}, name='a', queue='default')"
+    assert str(Actor(a)) == "Actor(a, name='a', queue='default')"

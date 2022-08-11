@@ -82,6 +82,7 @@ class Worker:
         args = getattr(args_bucket, "args", ())
         kwargs = getattr(args_bucket, "kwargs", {})
 
+        actor._TIME_LIMIT.set(message.execution_timeout)
         result = await actor(*args, **kwargs)
 
         message.tried += 1

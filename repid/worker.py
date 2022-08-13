@@ -9,7 +9,7 @@ from repid.actor import Actor
 from repid.connection import Connection
 from repid.data import ArgsBucket, Message, ResultBucket
 from repid.data.messages import ArgsBucketMetadata, SimpleArgsBucket
-from repid.main import DEFAULT_CONNECTION
+from repid.main import Repid
 from repid.utils import unix_time
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ class Worker:
         limit_processed_messages_amount: int = float("inf"),  # type: ignore[assignment]
         _connection: Union[Connection, None] = None,
     ):
-        self.__conn = _connection or DEFAULT_CONNECTION.get()
+        self.__conn = _connection or Repid.get_default_connection()
         self.actors: Dict[str, Actor] = {}
         self.limiter = anyio.CapacityLimiter(limit)
         self.gracefull_shutdown_time = gracefull_shutdown_time

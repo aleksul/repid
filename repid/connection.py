@@ -1,63 +1,71 @@
-from dataclasses import dataclass
-from typing import FrozenSet, Protocol, Union
+from __future__ import annotations
 
-from repid.data import AnyBucketT, Message
+from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from repid.protocols import Messaging, Bucketing
 
-class Messaging(Protocol):
-    supports_delayed_messages: bool
+from repid.connections import rabbitmq, redis
 
-    def __init__(self, dsn: str) -> None:
-        ...
+CONNECTIONS_MAPPING: dict[str, type[Messaging]] = {
+    "amqp://": rabbitmq.RabbitMessaging,
+    "amqps://": rabbitmq.RabbitMessaging,
+    "redis://": redis.RedisMessaging,
+    "rediss://": redis.RedisMessaging,
+    # "kafka://": KafkaMessaging,
+    # "nats://": NatsMessaging,
+}
 
-    async def consume(self, queue_name: str, topics: FrozenSet[str]) -> Message:
-        """Consumes one message from the specified queue.
-        Should respect the topics.
-        Informs the broker that job execution is started."""
-
-    async def enqueue(self, message: Message) -> None:
-        """Appends the message to the queue."""
-
-    async def reject(self, message: Message) -> None:
-        """Infroms message broker that job needs to be rescheduled on another worker."""
-
-    async def ack(self, message: Message) -> None:
-        """Informs message broker that job execution succeed."""
-
-    async def nack(self, message: Message) -> None:
-        """Informs message broker that job execution failed."""
-
-    async def requeue(self, message: Message) -> None:
-        """Re-queues the message with different body. Id must be the same."""
-        await self.ack(message)
-        await self.enqueue(message)
-
-    async def queue_declare(self, queue_name: str) -> None:
-        """Creates the specified queue."""
-
-    async def queue_flush(self, queue_name: str) -> None:
-        """Empties the queue. Doesn't delete the queue itself."""
-
-    async def queue_delete(self, queue_name: str) -> None:
-        """Deletes the queue with all of its messages."""
+BUCKETINGS_MAPPING: dict[str, type[Bucketing]] = {
+    "redis://": redis.RedisBucketing,
+    "rediss://": redis.RedisBucketing,
+}
 
 
-class Bucketing(Protocol):
-    def __init__(self, dsn: str) -> None:
-        ...
-
-    async def get_bucket(self, id_: str) -> Union[AnyBucketT, None]:
-        """Retrivies the bucket."""
-
-    async def store_bucket(self, bucket: AnyBucketT) -> None:
-        """Stores the bucket."""
-
-    async def delete_bucket(self, id_: str) -> None:
-        """Deletes the bucket."""
+def _get_messaging_from_string(dsn: str) -> Messaging:
+    global CONNECTIONS
+    for prefix, conn in CONNECTIONS_MAPPING.items():
+        if dsn.startswith(prefix):
+            return conn(dsn)
+    raise ValueError(f"Unsupported DSN: {dsn}")
 
 
-@dataclass(frozen=True)
+def _get_bucketing_from_string(dsn: str) -> Bucketing:
+    global BUCKETINGS
+    for prefix, bucketing in BUCKETINGS_MAPPING.items():
+        if dsn.startswith(prefix):
+            return bucketing(dsn)
+    raise ValueError(f"Unsupported DSN: {dsn}")
+
+
 class Connection:
-    messager: Messaging
-    args_bucketer: Union[Bucketing, None] = None
-    results_bucketer: Union[Bucketing, None] = None
+    __slots__ = ("messager", "args_bucketer", "results_bucketer")
+
+    def __init__(
+        self,
+        messager: str,
+        args_bucketer: str | None = None,
+        results_bucketer: str | None = None,
+    ) -> None:
+        self.messager: Messaging
+        self.args_bucketer: Bucketing | None
+        self.results_bucketer: Bucketing | None
+
+        object.__setattr__(
+            self,
+            "messager",
+            _get_messaging_from_string(messager),
+        )
+        object.__setattr__(
+            self,
+            "args_bucketer",
+            _get_bucketing_from_string(args_bucketer) if args_bucketer is not None else None,
+        )
+        object.__setattr__(
+            self,
+            "results_bucketer",
+            _get_bucketing_from_string(results_bucketer) if results_bucketer is not None else None,
+        )
+
+    def __setattr__(self, __name: str, __value: Any) -> None:
+        raise NotImplementedError

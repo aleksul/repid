@@ -5,7 +5,6 @@ import uvloop
 
 from repid import Repid
 from repid.connection import Connection
-from repid.main import DEFAULT_CONNECTION
 
 
 @pytest.fixture(scope="session")
@@ -26,5 +25,5 @@ def fake_connection() -> Connection:
         "redis://:test@localhost:6379/0",
         "redis://:test@localhost:6379/1",
     )
-    assert DEFAULT_CONNECTION.get()
+    assert Repid._Repid__default_connection is not None
     return repid._Repid__conn

@@ -49,7 +49,7 @@ def parse_priorities_distribution(priorities_distribution: str) -> List[float]:
 
 def qnc(
     name: str,
-    priority: PrioritiesT = PrioritiesT.MEDIUM,
+    priority: int = PrioritiesT.MEDIUM.value,
     delayed: bool = False,
     dead: bool = False,
 ) -> str:
@@ -57,7 +57,7 @@ def qnc(
 
     Args:
         name (str): name of the queue
-        priority (PrioritiesT, optional): priority of the queue. Defaults to PrioritiesT.MEDIUM.
+        priority (int, optional): priority of the queue. Defaults to PrioritiesT.MEDIUM.
         delayed (bool, optional): True, if the queue is for delayed messages. Defaults to False.
         dead (bool, optional): True, if the queue is dead-letter.
         If set to True, both `priority` and `delayed` are ignored. Defaults to False.
@@ -67,7 +67,7 @@ def qnc(
     """
     if dead:
         return f"q:{name}:dead"
-    return f"q:{name}:{priority.value}:{'d' if delayed else 'n'}"
+    return f"q:{name}:{priority}:{'d' if delayed else 'n'}"
 
 
 def mnc(

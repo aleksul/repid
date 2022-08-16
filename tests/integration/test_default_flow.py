@@ -8,7 +8,7 @@ async def test_simple_job():
     await j.queue.declare()
     await j.enqueue()
 
-    myworker = Worker(limit_processed_messages_amount=1)
+    myworker = Worker(messages_limit=1)
 
     hit = False
 
@@ -26,7 +26,7 @@ async def test_deferred_by_job():
     await j.queue.declare()
     await j.enqueue()
 
-    myworker = Worker(limit_processed_messages_amount=3)
+    myworker = Worker(messages_limit=3)
 
     hit = 0
 

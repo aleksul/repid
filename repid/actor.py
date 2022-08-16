@@ -1,11 +1,15 @@
+import logging
 from asyncio import iscoroutinefunction
 from contextvars import ContextVar
 from functools import partial
 from typing import Any, Callable, Dict, NamedTuple, Tuple, Union
+from uuid import uuid4
 
 import anyio
 
 from repid.utils import VALID_NAME, unix_time
+
+logger = logging.getLogger(__name__)
 
 
 class Result(NamedTuple):
@@ -19,7 +23,7 @@ class Result(NamedTuple):
 class Actor:
     """Decorator class. Wraps async and sync functions.
     Logs start and end time of the function, was its execution successful and its return value.
-    Adds ability to specify actor's name and queue.
+    Allows to specify actor's name and queue.
     """
 
     _TIME_LIMIT: ContextVar[Union[int, None]] = ContextVar("time_limit", default=None)
@@ -51,8 +55,12 @@ class Actor:
         success: bool
         started_when = unix_time()
         exception = None
+        time_limit = self._TIME_LIMIT.get()
+        logger_extra = dict(call_id=uuid4().hex)
+        logger.info(f"Running {str(self)}.", extra=logger_extra)
+        logger.debug(f"Time limit is set to {time_limit}.", extra=logger_extra)
         try:
-            with anyio.fail_after(delay=self._TIME_LIMIT.get()):
+            with anyio.fail_after(delay=time_limit):
                 if iscoroutinefunction(self.fn):
                     result = await self.fn(*args, **kwargs)
                 else:
@@ -60,7 +68,13 @@ class Actor:
         except Exception as exc:
             exception = exc
             success = False
+            logger.error(
+                f"Error occured while running {str(self)}.",
+                extra=logger_extra,
+                exc_info=exc,
+            )
         else:
+            logger.info(f"{str(self)} finished successfully.", extra=logger_extra)
             success = True
 
         return Result(

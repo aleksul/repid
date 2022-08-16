@@ -81,7 +81,7 @@ class Middleware:
 
 async def emit_signal_all(name: str, kwargs: Dict) -> None:
     middlewares = ALL_MIDDLEWARES.get()
-    if middlewares is None:
+    if middlewares is None or all(not bool(m._events) for m in middlewares):
         return
     async with anyio.create_task_group() as tg:
         for middleware in middlewares:

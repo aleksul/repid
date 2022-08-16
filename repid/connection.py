@@ -5,13 +5,14 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from repid.protocols import Messaging, Bucketing
 
-from repid.connections import rabbitmq, redis
+from repid.connections import dummy, rabbitmq, redis
 
 CONNECTIONS_MAPPING: dict[str, type[Messaging]] = {
     "amqp://": rabbitmq.RabbitMessaging,
     "amqps://": rabbitmq.RabbitMessaging,
     "redis://": redis.RedisMessaging,
     "rediss://": redis.RedisMessaging,
+    "dummy://": dummy.DummyMessaging,
     # "kafka://": KafkaMessaging,
     # "nats://": NatsMessaging,
 }
@@ -19,6 +20,7 @@ CONNECTIONS_MAPPING: dict[str, type[Messaging]] = {
 BUCKETINGS_MAPPING: dict[str, type[Bucketing]] = {
     "redis://": redis.RedisBucketing,
     "rediss://": redis.RedisBucketing,
+    "dummy://": dummy.DummyBucketing,
 }
 
 
@@ -66,6 +68,18 @@ class Connection:
             "results_bucketer",
             _get_bucketing_from_string(results_bucketer) if results_bucketer is not None else None,
         )
+
+    @property
+    def ab(self) -> Bucketing:  # args bucketer
+        if self.args_bucketer is None:
+            raise ValueError("Args bucketer is not configured.")
+        return self.args_bucketer
+
+    @property
+    def rb(self) -> Bucketing:  # results bucketer
+        if self.results_bucketer is None:
+            raise ValueError("Results bucketer is not configured.")
+        return self.results_bucketer
 
     def __setattr__(self, __name: str, __value: Any) -> None:
         raise NotImplementedError

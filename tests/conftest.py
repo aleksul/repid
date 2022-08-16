@@ -18,12 +18,8 @@ def event_loop():
     loop.close()
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture()
 def fake_connection() -> Connection:
-    repid = Repid(
-        "amqp://user:testtest@localhost:5672",
-        "redis://:test@localhost:6379/0",
-        "redis://:test@localhost:6379/1",
-    )
+    repid = Repid("dummy://", "dummy://", "dummy://")
     assert Repid._Repid__default_connection is not None
     return repid._Repid__conn

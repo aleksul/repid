@@ -1,7 +1,5 @@
 import logging
-from typing import Union
-
-from redis.asyncio.client import Redis
+from typing import Dict, Union
 
 from repid.data import AnyBucketT
 from repid.middlewares import InjectMiddleware
@@ -11,25 +9,21 @@ logger = logging.getLogger(__name__)
 
 
 @InjectMiddleware
-class RedisBucketing:
-    def __init__(self, dsn: str):
-        self.conn = Redis.from_url(dsn)
+class DummyBucketing:
+    def __init__(self, dsn: str) -> None:
+        self.buckets: Dict[str, bytes] = dict()
 
     async def get_bucket(self, id_: str) -> Union[AnyBucketT, None]:
         logger.debug(f"Getting bucket with id = '{id_}'.")
-        data = await self.conn.get(id_)
-        if data is not None:
-            return BucketSerializer.decode(data)
+        value = self.buckets.get(id_)
+        if value is not None:
+            return BucketSerializer.decode(value)
         return None
 
     async def store_bucket(self, bucket: AnyBucketT) -> None:
         logger.debug(f"Storing bucket with id = '{bucket.id_}'.")
-        await self.conn.set(
-            bucket.id_,
-            BucketSerializer.encode(bucket),
-            exat=bucket.timestamp + bucket.ttl if bucket.ttl is not None else None,
-        )
+        self.buckets[bucket.id_] = BucketSerializer.encode(bucket)
 
     async def delete_bucket(self, id_: str) -> None:
         logger.debug(f"Deleting bucket with id = '{id_}'.")
-        await self.conn.delete(id_)
+        self.buckets.pop(id_, None)

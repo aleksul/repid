@@ -19,37 +19,25 @@ class PrioritiesT(IntEnum):
     HIGH = 3
 
 
-@dataclass()
-class ArgsBucketMetadata:
-    id_: str
-
-
-@dataclass()
-class SimpleArgsBucket:
-    args: Union[Tuple, None]
-    kwargs: Union[Dict, None]
-
-
-@dataclass()
-class ResultBucketMetadata:
-    id_: str
-    ttl: Union[int, None]
-
-
-@dataclass()
+@dataclass(frozen=True)
 class Message:
     id_: str
     topic: str  # the same as actor's & job's name
     queue: str
-    priority: PrioritiesT
+    priority: int
 
     execution_timeout: int
 
     retries: int
     tried: int
 
-    args_bucket: Union[ArgsBucketMetadata, SimpleArgsBucket, None]
-    result_bucket: Union[ResultBucketMetadata, None]
+    # args_bucket
+    args_bucket_id: Union[str, None]
+    simple_args: Union[Tuple, None]
+    simple_kwargs: Union[Dict, None]
+    # result_bucket
+    result_bucket_id: Union[str, None]
+    result_bucket_ttl: Union[int, None]
 
     delay_until: Union[int, None]
     defer_by: Union[int, None]
@@ -57,6 +45,10 @@ class Message:
 
     timestamp: int
     ttl: Union[int, None]
+
+    def __post_init__(self) -> None:
+        if self.is_deferred and self.delay_until is None:
+            object.__setattr__(self, "delay_until", self.next_execution_time)
 
     @property
     def is_deferred(self) -> bool:
@@ -79,6 +71,9 @@ class Message:
         return -1
 
     def _prepare_reschedule(self) -> None:
-        self.tried = 0
-        self.delay_until = self.next_execution_time
-        self.timestamp = unix_time()
+        object.__setattr__(self, "tried", 0)
+        object.__setattr__(self, "delay_until", self.next_execution_time)
+        object.__setattr__(self, "timestamp", unix_time())
+
+    def _increment_retry(self) -> None:
+        object.__setattr__(self, "tried", self.tried + 1)

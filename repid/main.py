@@ -18,14 +18,14 @@ class Repid:
         dsn_args: str | None = None,
         dsn_result: str | None = None,
     ):
-        self.__conn = Connection(
+        self._conn = Connection(
             messager=dsn,
             args_bucketer=dsn_args,
             results_bucketer=dsn_result,
         )
-        self.__class__.__default_connection = self.__conn
+        self.__class__.__default_connection = self._conn
         logging.info("Default connection set.")
-        self.middleware = Middleware()
+        self.middleware = Middleware
 
     @classmethod
     def get_default_connection(cls) -> Connection:

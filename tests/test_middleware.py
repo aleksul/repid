@@ -78,7 +78,6 @@ async def test_error_in_middleware(caplog, dummy_recursive_connection):
                 (
                     "ERROR" in x,
                     "Event before_queue_flush" in x,
-                    "<class 'Exception'>: Some random exception" in x,
                 )
             ),
             caplog.text.splitlines(),

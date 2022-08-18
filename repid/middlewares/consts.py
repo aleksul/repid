@@ -13,6 +13,7 @@ AVAILABLE_FUNCTIONS = (
     "get_bucket",
     "store_bucket",
     "delete_bucket",
+    "actor_run",
 )
 
 POSSIBLE_EVENT_NAMES = set(

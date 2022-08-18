@@ -97,13 +97,19 @@ class Worker:
 
         # return result
         if message.result_bucket_id is not None:
-            result_with_metadata = dict(
+            result_bucket = ResultBucket(
                 id_=message.result_bucket_id,
-                ttl=message.result_bucket_ttl,
+                data=result.data,
+                success=result.success,
+                started_when=result.started_when,
+                finished_when=result.finished_when,
+                exception=f"{type(result.exception)}: {result.exception}"
+                if result.exception is not None
+                else None,
                 timestamp=unix_time(),
-                **result._asdict(),
+                ttl=message.result_bucket_ttl,
             )
-            await self._set_result(ResultBucket(**result_with_metadata))
+            await self._set_result(result_bucket)
 
     async def __process_message_with_cancellation(self, message: Message) -> None:
         try:

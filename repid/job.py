@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from repid.connection import Connection
-from repid.data import Args, ArgsBucket, Message, PrioritiesT, ResultBucket
+from repid.data import ArgsBucket, Message, PrioritiesT, ResultBucket, ResultMetadata
 from repid.main import Repid
 from repid.queue import Queue
 from repid.utils import VALID_ID, VALID_NAME, unix_time
@@ -26,8 +26,8 @@ class Job:
         "created",
         "ttl",
         "args",
-        "result_id",
-        "result_ttl",
+        "use_args_bucketer",
+        "result_metadata",
         "_conn",
     )
 
@@ -43,9 +43,9 @@ class Job:
         timeout: int = 600,
         ttl: int | None = None,
         id_: str | None = None,
-        args: Args | ArgsBucket | None = None,
-        result_id: str | None = None,
-        result_ttl: int | None = 86400,
+        args: ArgsBucket | None = None,
+        use_args_bucketer: bool | None = None,
+        result_metadata: ResultMetadata | None = None,
         _connection: Connection | None = None,
     ):
         self._conn = _connection or Repid.get_default_connection()
@@ -96,21 +96,19 @@ class Job:
             raise ValueError("TTL must be greater than or equal to 1 second.")
         self.ttl = ttl
 
-        if result_id is not None and not VALID_ID.fullmatch(result_id):
-            raise ValueError(
-                "Result id must contain only letters, numbers, dashes and underscores."
-            )
-        self.result_id = result_id
-
-        if result_ttl is not None and result_ttl < 1:
-            raise ValueError("Result TTL must be greater than or equal to 1 second.")
-        self.result_ttl = result_ttl
+        self.result_metadata = result_metadata
 
         self.args = args
+
+        if use_args_bucketer is None:
+            self.use_args_bucketer = self._conn.args_bucketer is not None
+        else:
+            self.use_args_bucketer = use_args_bucketer
+
         self.created = unix_time()
 
     async def enqueue(self, store_args: bool = True) -> Message:
-        if store_args and isinstance(self.args, ArgsBucket):
+        if store_args and self.use_args_bucketer and self.args is not None:
             await self._conn.ab.store_bucket(self.args)
         msg = self._to_message()
         await self._conn.messager.enqueue(msg)
@@ -132,9 +130,9 @@ class Job:
 
     @property
     async def result(self) -> ResultBucket | None:
-        if self.result_id is None:
-            raise ValueError("Result_id is not set.")
-        data = await self._conn.rb.get_bucket(self.result_id)
+        if self.result_metadata is None:
+            raise ValueError("Result metadata is not set.")
+        data = await self._conn.rb.get_bucket(self.result_metadata.id_)
         if isinstance(data, ResultBucket):
             return data
         return None
@@ -144,11 +142,14 @@ class Job:
         simple_args = None
         simple_kwargs = None
         if self.args is not None:
-            if isinstance(self.args, Args):
+            if self.use_args_bucketer:
+                args_id = self.args.id_
+            else:
                 simple_args = self.args.args
                 simple_kwargs = self.args.kwargs
-            else:
-                args_id = self.args.id_
+
+        result_bucket_id = self.result_metadata.id_ if self.result_metadata is not None else None
+        result_bucket_ttl = self.result_metadata.ttl if self.result_metadata is not None else None
 
         msg = Message(
             id_=self.id_ or uuid.uuid4().hex,
@@ -161,8 +162,8 @@ class Job:
             args_bucket_id=args_id,
             simple_args=simple_args,
             simple_kwargs=simple_kwargs,
-            result_bucket_id=self.result_id,
-            result_bucket_ttl=self.result_ttl,
+            result_bucket_id=result_bucket_id,
+            result_bucket_ttl=result_bucket_ttl,
             delay_until=self.deferred_until,
             defer_by=self.deferred_by,
             cron=self.cron,

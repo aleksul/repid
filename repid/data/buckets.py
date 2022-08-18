@@ -1,13 +1,8 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, NamedTuple, Tuple, Union
+from typing import Any, Dict, Tuple, Union
 from uuid import uuid4
 
 from repid.utils import unix_time
-
-
-class Args(NamedTuple):
-    args: Tuple
-    kwargs: Dict
 
 
 @dataclass(frozen=True)

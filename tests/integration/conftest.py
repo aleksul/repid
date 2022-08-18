@@ -32,7 +32,7 @@ def standart_connection(rabbitmq_container, redis_container) -> Connection:
         f"redis://:test@localhost:{redis_container.ports['6379/tcp'][0]}/1",
     )
     assert Repid._Repid__default_connection is not None
-    return repid._Repid__conn
+    return repid._conn
 
 
 @pytest.fixture(scope="session")
@@ -44,7 +44,7 @@ def redis_connection(redis_container) -> Connection:
         f"redis://:test@localhost:{redis_container.ports['6379/tcp'][0]}/4",
     )
     assert Repid._Repid__default_connection is not None
-    return repid._Repid__conn
+    return repid._conn
 
 
 @pytest.fixture(

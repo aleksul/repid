@@ -22,4 +22,4 @@ def event_loop():
 def fake_connection() -> Connection:
     repid = Repid("dummy://", "dummy://", "dummy://")
     assert Repid._Repid__default_connection is not None
-    return repid._Repid__conn
+    return repid._conn

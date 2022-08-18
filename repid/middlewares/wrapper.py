@@ -3,7 +3,7 @@ import traceback
 from types import TracebackType
 from typing import TYPE_CHECKING, Awaitable, Callable, Dict, Tuple, Type, TypeVar, Union
 
-from . import AVAILABLE_FUNCTIONS, emit_signal_all
+from . import AVAILABLE_FUNCTIONS, Middleware
 
 if TYPE_CHECKING:
     from repid.connection import Bucketing, Messaging
@@ -23,7 +23,7 @@ class MiddlewareWrapperContextManager:
         self.signal_kwargs.update(zip(args_names, args))
 
     async def __aenter__(self) -> None:
-        await emit_signal_all(f"before_{self.fn.__name__}", self.signal_kwargs)
+        await Middleware.emit_signal(f"before_{self.fn.__name__}", self.signal_kwargs)
 
     async def __aexit__(
         self,
@@ -32,7 +32,7 @@ class MiddlewareWrapperContextManager:
         exc_tb: Union[TracebackType, None],
     ) -> None:
         if exc_type is None:
-            await emit_signal_all(f"after_{self.fn.__name__}", self.signal_kwargs)
+            await Middleware.emit_signal(f"after_{self.fn.__name__}", self.signal_kwargs)
 
 
 class MiddlewareWrapper:

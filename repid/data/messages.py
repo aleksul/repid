@@ -7,10 +7,10 @@ from repid.utils import unix_time
 
 try:
     from croniter import croniter
-except ImportError:
 
-    class croniter:  # type: ignore[no-redef]
-        raise ImportError("Please install croniter.")
+    CRON_SUPPORT = True
+except ImportError:
+    CRON_SUPPORT = False
 
 
 class PrioritiesT(IntEnum):
@@ -67,6 +67,8 @@ class Message:
             time_offset = self.defer_by * defer_by_times
             return self.timestamp + time_offset
         elif self.cron is not None:
+            if not CRON_SUPPORT:
+                raise ImportError("Croniter is not installed.")
             return int(croniter(self.cron, time.time()).get_next(ret_type=float))
         return -1
 

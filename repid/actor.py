@@ -71,7 +71,7 @@ class Actor:
             logger.error(
                 f"Error occured while running {str(self)}.",
                 extra=logger_extra,
-                exc_info=exc,
+                exc_info=True,
             )
         else:
             logger.info(f"{str(self)} finished successfully.", extra=logger_extra)

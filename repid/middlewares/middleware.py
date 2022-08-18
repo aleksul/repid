@@ -55,8 +55,8 @@ class Middleware:
                     else:
                         return await anyio.to_thread.run_sync(partial(fn, **kwargs))
                 # ignore the exception and pass it to the logger
-                except Exception as e:
-                    logger.error(f"Event {fn.__name__} ({fn}) raised exception: {type(e)}: {e}")
+                except Exception:
+                    logger.error(f"Event {fn.__name__} ({fn}) raised exception.", exc_info=True)
 
             # add wrapped event to the dictionary
             if name not in self._events:

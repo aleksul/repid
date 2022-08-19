@@ -136,8 +136,9 @@ class Worker:
         with anyio.open_signal_receiver(signal.SIGINT, signal.SIGTERM) as signals:
             await signals.__anext__()
             on_event.set()
-            await anyio.sleep(shutdown_time)
-            scope.cancel()
+            with anyio.CancelScope(shield=True):
+                await anyio.sleep(shutdown_time)
+                scope.cancel()
 
     async def __listen_signal_with_stop(
         self,

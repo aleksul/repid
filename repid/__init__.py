@@ -1,3 +1,4 @@
+from .actor import ActorResult
 from .connection import BUCKETINGS_MAPPING, CONNECTIONS_MAPPING, Connection
 from .data import ArgsBucket, PrioritiesT, ResultBucket, ResultMetadata
 from .job import Job

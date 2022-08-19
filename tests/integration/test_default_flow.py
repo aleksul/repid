@@ -1,5 +1,7 @@
 from datetime import timedelta
 
+import anyio
+
 from repid import Job, Worker
 
 
@@ -37,3 +39,15 @@ async def test_deferred_by_job():
 
     await myworker.run()
     assert hit == 3
+
+
+async def test_worker_no_queue():
+    myworker = Worker(gracefull_shutdown_time=1)
+
+    @myworker.actor()
+    async def awesome_job():
+        pass
+
+    async with anyio.create_task_group():
+        with anyio.move_on_after(3):
+            await myworker.run()

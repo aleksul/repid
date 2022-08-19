@@ -103,7 +103,7 @@ class Actor:
                 run_id=run_id,
                 args=args,
                 kwargs=kwargs,
-                result=result,
+                result=actor_result,
             ),
         )
 

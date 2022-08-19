@@ -7,10 +7,9 @@ from typing import Any, Callable
 
 import anyio
 
+from repid import ArgsBucket, Connection, Queue, Repid, ResultBucket
 from repid.actor import Actor
-from repid.connection import Connection
-from repid.data import ArgsBucket, Message, ResultBucket
-from repid.main import Repid
+from repid.data import Message
 from repid.utils import unix_time
 
 logger = logging.getLogger(__name__)
@@ -158,8 +157,15 @@ class Worker:
                 self.gracefull_shutdown_time,
             )
 
+    async def _declare_queues(self, queue_names: set[str]) -> None:
+        async with anyio.create_task_group() as tg:
+            for q in queue_names:
+                my_q = Queue(q)
+                tg.start_soon(my_q.declare)
+
     async def run(self) -> None:
         queue_names = {q.queue for q in self.actors.values()}
+        await self._declare_queues(queue_names)
         topics_by_queue = {
             q: frozenset(t for t in self.topics if self.actors[t].queue == q) for q in queue_names
         }

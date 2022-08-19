@@ -24,7 +24,6 @@ class RabbitMessaging:
         self.__id_to_deleviry_tag: Dict[str, int] = {}
         self.__channel: Union[aiopika.abc.AbstractChannel, None] = None
 
-    @property
     async def _channel(self) -> aiopika.abc.AbstractChannel:
         if not self.__conn.connected.is_set():
             await self.__conn.connect()
@@ -37,7 +36,7 @@ class RabbitMessaging:
 
     async def consume(self, queue_name: str, topics: FrozenSet[str]) -> Message:
         logger.debug(f"Consuming from {queue_name = }; {topics = }.")
-        channel = await self._channel
+        channel = await self._channel()
         queue = await channel.get_queue(queue_name)
         while True:
             message = await queue.get(fail=False)
@@ -56,7 +55,7 @@ class RabbitMessaging:
 
     async def enqueue(self, message: Message) -> None:
         logger.debug(f"Enqueuing {message = }.")
-        channel = await self._channel
+        channel = await self._channel()
         await channel.default_exchange.publish(
             aiopika.Message(
                 body=MessageSerializer.encode(message),
@@ -75,7 +74,7 @@ class RabbitMessaging:
         if (delivery_tag := self.__id_to_deleviry_tag.pop(message.id_, None)) is None:
             logger.error(f"Can't ack unknown delivery tag for {message.id_ = }.")
             return
-        channel = await self._channel
+        channel = await self._channel()
         await channel.channel.basic_ack(delivery_tag)
 
     async def nack(self, message: Message) -> None:
@@ -83,7 +82,7 @@ class RabbitMessaging:
         if (delivery_tag := self.__id_to_deleviry_tag.pop(message.id_, None)) is None:
             logger.error(f"Can't nack unknown delivery tag for {message.id_ = }.")
             return
-        channel = await self._channel
+        channel = await self._channel()
         await channel.channel.basic_nack(delivery_tag, requeue=False)  # will trigger dlx
 
     async def reject(self, message: Message) -> None:
@@ -91,7 +90,7 @@ class RabbitMessaging:
         if (delivery_tag := self.__id_to_deleviry_tag.pop(message.id_, None)) is None:
             logger.error(f"Can't reject unknown delivery tag for {message.id_ = }.")
             return
-        channel = await self._channel
+        channel = await self._channel()
         await channel.channel.basic_reject(delivery_tag, requeue=True)
 
     async def requeue(self, message: Message) -> None:
@@ -99,7 +98,7 @@ class RabbitMessaging:
         if (delivery_tag := self.__id_to_deleviry_tag.pop(message.id_, None)) is None:
             logger.error(f"Can't requeue unknown delivery tag for {message.id_ = }.")
             return
-        channel = await self._channel
+        channel = await self._channel()
         async with channel.transaction():
             await channel.channel.basic_ack(delivery_tag)
             await channel.default_exchange.publish(
@@ -119,7 +118,7 @@ class RabbitMessaging:
 
     async def queue_declare(self, queue_name: str) -> None:
         logger.debug(f"Declaring queue {queue_name = }.")
-        channel = await self._channel
+        channel = await self._channel()
         await channel.declare_queue(
             f"{queue_name}:dead",
             durable=True,
@@ -148,7 +147,7 @@ class RabbitMessaging:
 
     async def queue_flush(self, queue_name: str) -> None:
         logger.debug(f"Flushing queue {queue_name = }.")
-        channel = await self._channel
+        channel = await self._channel()
 
         async def _flush(queue_name: str) -> None:
             queue = await channel.get_queue(queue_name)
@@ -161,7 +160,7 @@ class RabbitMessaging:
 
     async def queue_delete(self, queue_name: str) -> None:
         logger.debug(f"Deleting queue {queue_name = }.")
-        channel = await self._channel
+        channel = await self._channel()
         async with anyio.create_task_group() as tg:
             tg.start_soon(channel.queue_delete, queue_name)
             tg.start_soon(channel.queue_delete, f"{queue_name}:delayed")

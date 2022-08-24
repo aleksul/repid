@@ -1,11 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import signal
 from itertools import cycle
 from typing import Any, Callable
-
-import anyio
 
 from repid import ArgsBucket, Connection, Queue, Repid, ResultBucket
 from repid.actor import Actor
@@ -39,6 +38,15 @@ class Worker:
     @property
     def topics(self) -> frozenset[str]:
         return frozenset(self.actors.keys())
+
+    @property
+    def queues(self) -> frozenset[str]:
+        return frozenset(q.queue for q in self.actors.values())
+
+    @property
+    def topics_by_queue(self) -> dict[str, frozenset[str]]:
+        topics = self.topics
+        return {q: frozenset(t for t in topics if self.actors[t].queue == q) for q in self.queues}
 
     @property
     def messages_processed(self) -> int:
@@ -110,73 +118,65 @@ class Worker:
             )
             await self._set_result(result_bucket)
 
-    async def __process_message_with_cancellation(self, message: Message) -> None:
-        try:
-            await self._process_message(message)
-        except anyio.get_cancelled_exc_class():
-            with anyio.CancelScope(shield=True):
-                await self._conn.messager.reject(message)
-            raise
-        return None
-
-    @staticmethod
-    async def __stop_on_event(
-        scope: anyio.CancelScope,
-        on_event: anyio.Event,
+    async def __process_message_with_cancellation(
+        self, message: Message, cancel_event: asyncio.Event
     ) -> None:
-        await on_event.wait()
-        scope.cancel()
+        await asyncio.wait(  # type: ignore[type-var]
+            {
+                asyncio.create_task(cancel_event.wait()),
+                asyncio.create_task(self._process_message(message)),
+            },
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if cancel_event.is_set():
+            await self._conn.messager.reject(message)
 
     @staticmethod
-    async def __listen_signal(
-        scope: anyio.CancelScope,
-        on_event: anyio.Event,
+    async def _on_signal(
+        stop_consume_event: asyncio.Event,
+        cancel_event: asyncio.Event,
         shutdown_time: float,
     ) -> None:
-        with anyio.open_signal_receiver(signal.SIGINT, signal.SIGTERM) as signals:
-            await signals.__anext__()
-            on_event.set()
-            with anyio.CancelScope(shield=True):
-                await anyio.sleep(shutdown_time)
-                scope.cancel()
-
-    async def __listen_signal_with_stop(
-        self,
-        scope: anyio.CancelScope,
-        on_stop_consume: anyio.Event,
-    ) -> None:
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(
-                self.__stop_on_event,
-                tg.cancel_scope,
-                on_stop_consume,
-            )
-            tg.start_soon(
-                self.__listen_signal,
-                scope,
-                on_stop_consume,
-                self.gracefull_shutdown_time,
-            )
-
-    async def _declare_queues(self, queue_names: set[str]) -> None:
-        async with anyio.create_task_group() as tg:
-            for q in queue_names:
-                my_q = Queue(q)
-                tg.start_soon(my_q.declare)
+        stop_consume_event.set()
+        await asyncio.sleep(shutdown_time)
+        cancel_event.set()
 
     async def run(self) -> None:
-        queue_names = {q.queue for q in self.actors.values()}
-        await self._declare_queues(queue_names)
-        topics_by_queue = {
-            q: frozenset(t for t in self.topics if self.actors[t].queue == q) for q in queue_names
-        }
+        queue_names = self.queues
+        await asyncio.wait(
+            {asyncio.create_task(Queue(q).declare()) for q in queue_names},
+            return_when=asyncio.ALL_COMPLETED,
+        )
+        topics_by_queue = self.topics_by_queue
         queue_iter = cycle(queue_names)
-        stop_consume_event = anyio.Event()
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(self.__listen_signal_with_stop, tg.cancel_scope, stop_consume_event)
-            while not stop_consume_event.is_set() and self.messages_limit > self._processed:
-                queue = next(queue_iter)
-                message = await self._conn.messager.consume(queue, topics_by_queue[queue])
-                tg.start_soon(self.__process_message_with_cancellation, message)
-                self._processed += 1
-            stop_consume_event.set()
+
+        stop_consume_event = asyncio.Event()
+        cancel_event = asyncio.Event()
+        wait_stop_consume = asyncio.create_task(stop_consume_event.wait())
+
+        tasks: set[asyncio.Task] = set()
+        asyncio.get_running_loop().add_signal_handler(
+            signal.SIGINT,
+            lambda: asyncio.ensure_future(
+                self._on_signal(stop_consume_event, cancel_event, self.gracefull_shutdown_time)
+            ),
+        )
+
+        while self.messages_limit > self._processed:
+            queue = next(queue_iter)
+            consume = asyncio.create_task(
+                self._conn.messager.consume(queue, topics_by_queue[queue])
+            )
+            await asyncio.wait(  # type: ignore[type-var]
+                {wait_stop_consume, consume},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if stop_consume_event.is_set():
+                consume.cancel()
+                break
+            message = consume.result()
+            t = asyncio.create_task(self.__process_message_with_cancellation(message, cancel_event))
+            tasks.add(t)
+            t.add_done_callback(tasks.discard)
+            self._processed += 1
+        await asyncio.gather(*tasks)

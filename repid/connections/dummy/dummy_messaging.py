@@ -1,7 +1,6 @@
+import asyncio
 import logging
 from typing import Dict, FrozenSet, List
-
-import anyio
 
 from repid.data import Message
 from repid.middlewares import InjectMiddleware
@@ -25,8 +24,8 @@ class DummyMessaging:
                 if message.topic in topics:
                     queue.remove(data)
                     return message
-                await anyio.sleep(0.1)
-        await anyio.sleep(1.0)
+                await asyncio.sleep(0.1)
+        await asyncio.sleep(1.0)
         return await self.consume(queue_name, topics)
 
     async def enqueue(self, message: Message) -> None:

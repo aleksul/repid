@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from asyncio import iscoroutinefunction
 from contextvars import ContextVar
 from functools import partial
@@ -7,7 +8,7 @@ from typing import Any, Callable, Dict, NamedTuple, Tuple, Union
 from uuid import uuid4
 
 from repid.middlewares import Middleware
-from repid.utils import VALID_NAME, unix_time
+from repid.utils import VALID_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ class Actor:
     async def __call__(self, *args: Tuple, **kwargs: Dict) -> ActorResult:
         result: Any = None
         success: bool
-        started_when = unix_time()
+        started_when = time.perf_counter_ns()
         exception = None
         time_limit = self._TIME_LIMIT.get()
         run_id = uuid4().hex
@@ -93,7 +94,7 @@ class Actor:
             success=success,
             exception=exception,
             started_when=started_when,
-            finished_when=unix_time(),
+            finished_when=time.perf_counter_ns(),
         )
 
         await Middleware.emit_signal(

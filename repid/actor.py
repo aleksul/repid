@@ -1,11 +1,10 @@
+import asyncio
 import logging
 from asyncio import iscoroutinefunction
 from contextvars import ContextVar
 from functools import partial
 from typing import Any, Callable, Dict, NamedTuple, Tuple, Union
 from uuid import uuid4
-
-import anyio
 
 from repid.middlewares import Middleware
 from repid.utils import VALID_NAME, unix_time
@@ -71,11 +70,12 @@ class Actor:
             ),
         )
         try:
-            with anyio.fail_after(delay=time_limit):
-                if iscoroutinefunction(self.fn):
-                    result = await self.fn(*args, **kwargs)
-                else:
-                    result = await anyio.to_thread.run_sync(partial(self.fn, *args, **kwargs))
+            if iscoroutinefunction(self.fn):
+                await asyncio.wait_for(self.fn(*args, **kwargs), timeout=time_limit)
+            else:
+                loop = asyncio.get_running_loop()
+                future = loop.run_in_executor(None, partial(self.fn, *args, **kwargs))
+                await asyncio.wait_for(future, timeout=time_limit)
         except Exception as exc:
             exception = exc
             success = False

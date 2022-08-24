@@ -1,7 +1,6 @@
 import asyncio
 
 import pytest
-import uvloop
 
 from repid import Repid
 from repid.connection import Connection
@@ -9,7 +8,6 @@ from repid.connection import Connection
 
 @pytest.fixture(scope="session")
 def event_loop():
-    uvloop.install()
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:

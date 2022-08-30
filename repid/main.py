@@ -27,6 +27,9 @@ class Repid:
         logging.info("Default connection set.")
         self.middleware = Middleware
 
+    def add_middleware(self, middleware: any) -> None:
+        self.middleware.add_middleware(middleware)
+
     @classmethod
     def get_default_connection(cls) -> Connection:
         conn = cls.__default_connection

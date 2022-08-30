@@ -2,7 +2,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://gist.github.com/aleksul/47ef6993e13a23371762176e7e206b30/raw/f0f2265e4cb22dd2f2886027965d54379fc6a688/repid_dark_logo.svg">
     <source media="(prefers-color-scheme: light)" srcset="https://gist.github.com/aleksul/47ef6993e13a23371762176e7e206b30/raw/f0f2265e4cb22dd2f2886027965d54379fc6a688/repid_light_logo.svg">
-    <img alt="Repid's logo" width="350" align="right">
+    <img alt="Repid's logo" width="350" align="right" src="https://gist.github.com/aleksul/47ef6993e13a23371762176e7e206b30/raw/f0f2265e4cb22dd2f2886027965d54379fc6a688/repid_dark_logo.svg">
   </picture>
 </a>
 
@@ -16,7 +16,7 @@
 
 <br>
 
-**Repid** is a job queuing library for Python with focus on simplicity.
+**Repid** is a job queueing library for Python with focus on simplicity.
 
 <br>
 

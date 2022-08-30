@@ -2,7 +2,7 @@ import asyncio
 import logging
 from functools import partial
 from inspect import getfullargspec, getmembers, isfunction, ismethod
-from typing import Any, Callable, Coroutine, Dict, List, Type
+from typing import Any, Callable, Coroutine, Dict, List
 
 from . import POSSIBLE_EVENT_NAMES
 
@@ -51,7 +51,7 @@ class Middleware:
         cls.events[name].append(wrapper)
 
     @classmethod
-    def add_middleware(cls, middleware: Type[Any]) -> None:
+    def add_middleware(cls, middleware: Any) -> None:
         middleware_name = middleware.__class__.__name__
         for _, fn in getmembers(middleware, predicate=lambda x: isfunction(x) or ismethod(x)):
             logger.debug(f"Adding event {middleware_name}.{fn.__name__} to middleware.")

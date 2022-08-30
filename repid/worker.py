@@ -155,12 +155,13 @@ class Worker:
         wait_stop_consume = asyncio.create_task(stop_consume_event.wait())
 
         tasks: set[asyncio.Task] = set()
-        asyncio.get_running_loop().add_signal_handler(
-            signal.SIGINT,
-            lambda: asyncio.ensure_future(
-                self._on_signal(stop_consume_event, cancel_event, self.gracefull_shutdown_time)
-            ),
+
+        loop = asyncio.get_running_loop()
+        signal_handler = lambda: asyncio.ensure_future(  # noqa: E731
+            self._on_signal(stop_consume_event, cancel_event, self.gracefull_shutdown_time)
         )
+        loop.add_signal_handler(signal.SIGINT, signal_handler)
+        loop.add_signal_handler(signal.SIGTERM, signal_handler)
 
         while self.messages_limit > self._processed:
             queue = next(queue_iter)

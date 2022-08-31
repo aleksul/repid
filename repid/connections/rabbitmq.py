@@ -40,7 +40,8 @@ class RabbitMessaging:
         queue = await channel.get_queue(queue_name)
         while True:
             message = await queue.get(fail=False)
-            if message is None:
+            if message is None:  # means that the queue is empty/non-existent
+                await asyncio.sleep(0.1)
                 continue
             decoded: Message = MessageSerializer.decode(message.body)
             if decoded.topic not in topics:

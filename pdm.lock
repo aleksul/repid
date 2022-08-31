@@ -1,20 +1,20 @@
 [[package]]
 name = "aio-pika"
-version = "7.2.0"
+version = "8.2.0"
 requires_python = ">3.6, <4"
 summary = "Wrapper for the aiormq for asyncio and humans."
 dependencies = [
-    "aiormq~=6.2.3",
+    "aiormq~=6.4.0",
     "yarl",
 ]
 
 [[package]]
 name = "aiormq"
-version = "6.2.3"
-requires_python = ">=3.6"
+version = "6.4.1"
+requires_python = ">=3.7"
 summary = "Pure python AMQP asynchronous client library"
 dependencies = [
-    "pamqp==3.1.0; python_version >= \"3.7\"",
+    "pamqp==3.2.0",
     "yarl",
 ]
 
@@ -376,7 +376,7 @@ dependencies = [
 
 [[package]]
 name = "pamqp"
-version = "3.1.0"
+version = "3.2.0"
 requires_python = ">=3.7"
 summary = "RabbitMQ Focused AMQP low-level library"
 
@@ -628,7 +628,7 @@ summary = "Typing stubs for orjson"
 
 [[package]]
 name = "types-redis"
-version = "4.3.18"
+version = "4.3.19"
 summary = "Typing stubs for redis"
 
 [[package]]
@@ -695,15 +695,15 @@ summary = "Backport of pathlib-compatible object wrapper for zip files"
 
 [metadata]
 lock_version = "4.0"
-content_hash = "sha256:9945709acca56c8926d1e0db2bad1d1690c7a5b47df496d4df28ded38b63f898"
+content_hash = "sha256:f22eea15813684aae3888ba885a1f1a839473f118d3a04dd2a61b0a73c0c605e"
 
 [metadata.files]
-"aio-pika 7.2.0" = [
-    {url = "https://files.pythonhosted.org/packages/15/e9/35cd9e4ad12c5d0bc8d279d00eea8aeb23a413b4c96ad344f2a341fe540f/aio_pika-7.2.0-py3-none-any.whl", hash = "sha256:9b741aa81b3dd3917ec1a4910ab0766e4e568bac498831c6a02f0c96936b2d3c"},
+"aio-pika 8.2.0" = [
+    {url = "https://files.pythonhosted.org/packages/1e/92/c0c8589fdcca0be0f3c9569ce80236264a3fc3ccec3db73b6d73f378cc2f/aio_pika-8.2.0-py3-none-any.whl", hash = "sha256:a53271732f66e60746458dcd467768ce670223838e3e535dc12847d3975cbb0a"},
+    {url = "https://files.pythonhosted.org/packages/90/9f/45e2dadaa7f045f77aaaa4ec647acac0ae49f732dbf9c8cb31f7bae1f1c1/aio-pika-8.2.0.tar.gz", hash = "sha256:250bc2c2198d56adfe9ebd8722c6c85df26409341dd438c3a7277fd9f26d4f36"},
 ]
-"aiormq 6.2.3" = [
-    {url = "https://files.pythonhosted.org/packages/aa/2b/e104ac73ea2679a90a41cb943f17034177179f5c225d5cea83910ac7ad25/aiormq-6.2.3-py3-none-any.whl", hash = "sha256:95f0da57edd55f214a2e6c5b7ac98fa58a7c33911acd0d3315e86926b2dd2605"},
-    {url = "https://files.pythonhosted.org/packages/ed/e9/5d28ab240de260351b509441506a9ca93fc5c2ab081afb0ab7c5f663512d/aiormq-6.2.3.tar.gz", hash = "sha256:db6c1e6e384f1d4dafe19f8df70c6dfc994932b40f4e542690016023ff8e952b"},
+"aiormq 6.4.1" = [
+    {url = "https://files.pythonhosted.org/packages/1e/1a/f5c736977c05a41e8361e8d96abb8587cc0ef98e9b1bff81849a32a0013d/aiormq-6.4.1.tar.gz", hash = "sha256:f453b69bbae9d092d023a1727b82ec02ec0582b65b91cc942a895cfe7791c880"},
 ]
 "async-timeout 4.0.2" = [
     {url = "https://files.pythonhosted.org/packages/54/6e/9678f7b2993537452710ffb1750c62d2c26df438aa621ad5fa9d1507a43a/async-timeout-4.0.2.tar.gz", hash = "sha256:2163e1640ddb52b7a8c80d0a67a08587e5d245cc9c553a74a847056bc2976b15"},
@@ -1099,8 +1099,8 @@ content_hash = "sha256:9945709acca56c8926d1e0db2bad1d1690c7a5b47df496d4df28ded38
     {url = "https://files.pythonhosted.org/packages/05/8e/8de486cbd03baba4deef4142bd643a3e7bbe954a784dc1bb17142572d127/packaging-21.3-py3-none-any.whl", hash = "sha256:ef103e05f519cdc783ae24ea4e2e0f508a9c99b2d4969652eed6a2e1ea5bd522"},
     {url = "https://files.pythonhosted.org/packages/df/9e/d1a7217f69310c1db8fdf8ab396229f55a699ce34a203691794c5d1cad0c/packaging-21.3.tar.gz", hash = "sha256:dd47c42927d89ab911e606518907cc2d3a1f38bbd026385970643f9c5b8ecfeb"},
 ]
-"pamqp 3.1.0" = [
-    {url = "https://files.pythonhosted.org/packages/43/42/1d2cb909afb055fcf2df5285f67eeec6ad16c138b83f1304808af81c31b7/pamqp-3.1.0.tar.gz", hash = "sha256:e4f0886d72c6166637a5513626148bf5a7e818073a558980e9aaed8b4ccf30da"},
+"pamqp 3.2.0" = [
+    {url = "https://files.pythonhosted.org/packages/21/44/c0ba76c2aebb788c97fa36a015955ac3a5fea12323a6b066b530f773dc1c/pamqp-3.2.0.tar.gz", hash = "sha256:43b8545ef2d5b8aa0a41b3461bba0b2759da1fc403a3cb73341b3fce0592033d"},
 ]
 "pathspec 0.9.0" = [
     {url = "https://files.pythonhosted.org/packages/42/ba/a9d64c7bcbc7e3e8e5f93a52721b377e994c22d16196e2b0f1236774353a/pathspec-0.9.0-py2.py3-none-any.whl", hash = "sha256:7d15c4ddb0b5c802d161efc417ec1a2558ea2653c2e8ad9c19098201dc1c993a"},
@@ -1271,9 +1271,9 @@ content_hash = "sha256:9945709acca56c8926d1e0db2bad1d1690c7a5b47df496d4df28ded38
     {url = "https://files.pythonhosted.org/packages/55/84/b34abd2d08381c5113e475908a1d79d27dc9a15f669213cee4ca03d1a891/types_orjson-3.6.2-py3-none-any.whl", hash = "sha256:22ee9a79236b6b0bfb35a0684eded62ad930a88a56797fa3c449b026cf7dbfe4"},
     {url = "https://files.pythonhosted.org/packages/8c/97/3f78cfdf663e5668e8b490d8c84d6de089d2d8dbad935f0dc43555d52a90/types-orjson-3.6.2.tar.gz", hash = "sha256:cf9afcc79a86325c7aff251790338109ed6f6b1bab09d2d4262dd18c85a3c638"},
 ]
-"types-redis 4.3.18" = [
-    {url = "https://files.pythonhosted.org/packages/03/ee/0346392cae3abab44835a1829f5c7e8c653a139e40ffb5b1f3038a7530b7/types_redis-4.3.18-py3-none-any.whl", hash = "sha256:ba4dffd5f804af849ddd5399164abd04fbf87fa5295680d89ccec010c66bb110"},
-    {url = "https://files.pythonhosted.org/packages/2d/a1/3ee68099750b1fa6b3b6396ab9dddab15100c4e96680e8153a12613b5262/types-redis-4.3.18.tar.gz", hash = "sha256:2260532c157d4f64f6e266de67b0aaa1979cfb969e409a16445ec6976c4a1de6"},
+"types-redis 4.3.19" = [
+    {url = "https://files.pythonhosted.org/packages/28/0e/53a2c7747de518ae168c2b59e3eb6f916813e36ae916923c3290179e82e6/types_redis-4.3.19-py3-none-any.whl", hash = "sha256:c74262197487a65e3f02db37d3f0e0f3bb2d5d370f7e6ba390814e865a45e56e"},
+    {url = "https://files.pythonhosted.org/packages/56/15/745fef11530bb9c3c378343e7ca9e983198356987e98bf827cb6cb88fb5a/types-redis-4.3.19.tar.gz", hash = "sha256:c881ffb94bd47dca21ed503328544a56bb315851575eebb27fb371bff735844a"},
 ]
 "typing-extensions 4.3.0" = [
     {url = "https://files.pythonhosted.org/packages/9e/1d/d128169ff58c501059330f1ad96ed62b79114a2eb30b8238af63a2e27f70/typing_extensions-4.3.0.tar.gz", hash = "sha256:e6d2677a32f47fc7eb2795db1dd15c1f34eff616bcaf2cfb5e997f854fa1c4a6"},

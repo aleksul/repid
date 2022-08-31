@@ -161,6 +161,7 @@ class RedisMessaging:
             for priority in get_priorities_order(self._priorities):
                 message = await self.__get_message(queue_name, priority, topics)
                 if message is None:
+                    await sleep(0.1)
                     continue
                 if message.is_overdue:
                     await self.nack(message)

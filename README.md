@@ -1,9 +1,5 @@
 <a href="https://www.instagram.com/p/Cd-ob1NNZ84/">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://gist.github.com/aleksul/47ef6993e13a23371762176e7e206b30/raw/f0f2265e4cb22dd2f2886027965d54379fc6a688/repid_dark_logo.svg">
-    <source media="(prefers-color-scheme: light)" srcset="https://gist.github.com/aleksul/47ef6993e13a23371762176e7e206b30/raw/f0f2265e4cb22dd2f2886027965d54379fc6a688/repid_light_logo.svg">
-    <img alt="Repid's logo" width="350" align="right" src="https://gist.github.com/aleksul/47ef6993e13a23371762176e7e206b30/raw/f0f2265e4cb22dd2f2886027965d54379fc6a688/repid_dark_logo.svg">
-  </picture>
+  <img alt="Repid's logo" width="350" align="right" src="https://gist.github.com/aleksul/2e4686cf9a4f027909fe43dc33039f10/raw/56935b8183682d1e46d68af70fec52cf647ab756/repid_logo.svg">
 </a>
 
 # repid

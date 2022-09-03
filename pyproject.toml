@@ -34,6 +34,9 @@ lint = [
     "flake8-bugbear",
     "flake8-builtins",
     "flake8-pyproject",
+    "flake8-type-checking",
+    "flake8-logging-format",
+    "yesqa",
 ]
 tests = [
     "pytest",

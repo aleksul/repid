@@ -38,8 +38,7 @@ lint = [
 tests = [
     "pytest",
     "pytest-cov",
-    "pytest-sugar",
-    "pytest-icdiff",
+    "pytest-clarity",
     "pytest-docker-tools",
     "pytest-asyncio",
     "pytest-lazy-fixture",

@@ -1,13 +1,18 @@
+from __future__ import annotations
+
 import random
 import re
-from typing import List
+from typing import TYPE_CHECKING
 
-from repid.data import Message, PrioritiesT
+from repid.data import PrioritiesT
+
+if TYPE_CHECKING:
+    from repid.data import Message
 
 VALID_PRIORITIES = re.compile(r"[0-9]+\/[0-9]+\/[0-9]+")
 
 
-def get_priorities_order(priorities_chanses: List[float]) -> List[PrioritiesT]:
+def get_priorities_order(priorities_chanses: list[float]) -> list[PrioritiesT]:
     """Randomizes the order in which priorities should be processed,
     based on the supplied chances.
 
@@ -27,7 +32,7 @@ def get_priorities_order(priorities_chanses: List[float]) -> List[PrioritiesT]:
         return [PrioritiesT.LOW, PrioritiesT.HIGH, PrioritiesT.MEDIUM]
 
 
-def parse_priorities_distribution(priorities_distribution: str) -> List[float]:
+def parse_priorities_distribution(priorities_distribution: str) -> list[float]:
     """Turns priorities distribution string into list of floats.
 
     Args:

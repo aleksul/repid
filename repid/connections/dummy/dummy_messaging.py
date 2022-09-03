@@ -1,12 +1,10 @@
 import asyncio
-import logging
 from typing import Dict, FrozenSet, List
 
 from repid.data import Message
+from repid.logger import logger
 from repid.middlewares import InjectMiddleware
 from repid.serializer import MessageSerializer
-
-logger = logging.getLogger(__name__)
 
 
 @InjectMiddleware

@@ -1,11 +1,9 @@
-import logging
 from typing import Dict, Union
 
 from repid.data import AnyBucketT
+from repid.logger import logger
 from repid.middlewares import InjectMiddleware
 from repid.serializer import BucketSerializer
-
-logger = logging.getLogger(__name__)
 
 
 @InjectMiddleware

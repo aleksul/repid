@@ -1,5 +1,4 @@
 import asyncio
-import logging
 from datetime import datetime
 from typing import Dict, FrozenSet, Union
 
@@ -7,10 +6,9 @@ import aio_pika as aiopika
 from yarl import URL
 
 from repid.data import Message
+from repid.logger import logger
 from repid.middlewares import InjectMiddleware
 from repid.serializer import MessageSerializer
-
-logger = logging.getLogger(__name__)
 
 
 @InjectMiddleware

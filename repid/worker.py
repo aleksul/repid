@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import signal
 from itertools import cycle
 from typing import Any, Callable
@@ -9,9 +8,8 @@ from typing import Any, Callable
 from repid import ArgsBucket, Connection, Queue, Repid, ResultBucket
 from repid.actor import Actor
 from repid.data import Message
+from repid.logger import logger
 from repid.utils import unix_time
-
-logger = logging.getLogger(__name__)
 
 
 class Worker:

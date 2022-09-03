@@ -1,12 +1,11 @@
 import asyncio
-import logging
 from functools import partial
 from inspect import getfullargspec, getmembers, isfunction, ismethod
 from typing import Any, Callable, Coroutine, Dict, List
 
-from . import POSSIBLE_EVENT_NAMES
+from repid.logger import logger
 
-logger = logging.getLogger(__name__)
+from . import POSSIBLE_EVENT_NAMES
 
 
 class Middleware:

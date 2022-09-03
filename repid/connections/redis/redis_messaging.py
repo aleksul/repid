@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import logging
 from asyncio import create_task, sleep
 from random import randint
 from typing import TYPE_CHECKING
 
 from redis.asyncio.client import Pipeline, Redis
 
+from repid.logger import logger
 from repid.middlewares import InjectMiddleware
 from repid.serializer import MessageSerializer
 from repid.utils import unix_time
@@ -15,8 +15,6 @@ from .utils import get_priorities_order, mnc, parse_priorities_distribution, qnc
 
 if TYPE_CHECKING:
     from repid.data import Message, PrioritiesT
-
-logger = logging.getLogger(__name__)
 
 
 @InjectMiddleware

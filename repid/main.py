@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from repid.connection import Connection
+from repid.logger import logger
 from repid.middlewares import Middleware
-
-logger = logging.getLogger(__name__)
-logger.addHandler(logging.NullHandler())
 
 
 class Repid:
@@ -25,7 +22,7 @@ class Repid:
             results_bucketer=dsn_result,
         )
         self.__class__.__default_connection = self._conn
-        logging.info("Default connection set.")
+        logger.info("Default connection set.")
         self.middleware = Middleware
 
     def add_middleware(self, middleware: Any) -> None:

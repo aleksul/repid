@@ -1,5 +1,4 @@
 import asyncio
-import logging
 import time
 from asyncio import iscoroutinefunction
 from contextvars import ContextVar
@@ -7,10 +6,9 @@ from functools import partial
 from typing import Any, Callable, Dict, NamedTuple, Tuple, Union
 from uuid import uuid4
 
+from repid.logger import logger
 from repid.middlewares import Middleware
 from repid.utils import VALID_NAME
-
-logger = logging.getLogger(__name__)
 
 
 class ActorResult(NamedTuple):

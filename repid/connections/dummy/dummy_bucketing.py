@@ -1,4 +1,6 @@
-from typing import TYPE_CHECKING, Dict, Union
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from repid.logger import logger
 from repid.middlewares import InjectMiddleware
@@ -11,9 +13,9 @@ if TYPE_CHECKING:
 @InjectMiddleware
 class DummyBucketing:
     def __init__(self, dsn: str) -> None:
-        self.buckets: Dict[str, bytes] = dict()
+        self.buckets: dict[str, bytes] = dict()
 
-    async def get_bucket(self, id_: str) -> Union[AnyBucketT, None]:
+    async def get_bucket(self, id_: str) -> AnyBucketT | None:
         logger.debug("Getting bucket with id: {id_}.", extra=dict(id_=id_))
         value = self.buckets.get(id_)
         if value is not None:

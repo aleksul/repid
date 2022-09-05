@@ -11,6 +11,7 @@ from typing_extensions import ParamSpec
 
 from repid.logger import logger
 from repid.middlewares import Middleware
+from repid.retry_policy import RetryPolicyT, default_retry_policy
 from repid.utils import VALID_NAME
 
 FnP = ParamSpec("FnP")
@@ -32,6 +33,8 @@ class ActorResult(NamedTuple):
 
 ActorContexVar = ContextVar("RunContext", default=ActorContext())
 
+DEFAULT_RETRY_POLICY = default_retry_policy()
+
 
 class Actor:
     """Decorator class. Wraps async and sync functions.
@@ -39,13 +42,14 @@ class Actor:
     Allows to specify actor's name and queue.
     """
 
-    __slots__ = ("fn", "name", "queue")
+    __slots__ = ("fn", "name", "queue", "retry_policy")
 
     def __init__(
         self,
         fn: Callable[FnP, Awaitable[FnR] | FnR],
         name: str | None = None,
         queue: str = "default",
+        retry_policy: RetryPolicyT = DEFAULT_RETRY_POLICY,
     ):
         self.fn = fn
         self.name = name or fn.__name__
@@ -60,6 +64,7 @@ class Actor:
                 "Queue name must start with a letter or an underscore"
                 "followed by letters, digits, dashes or underscores."
             )
+        self.retry_policy = retry_policy
 
     async def __call__(self, *args: FnP.args, **kwargs: FnP.kwargs) -> ActorResult:
         ctx = ActorContexVar.get()

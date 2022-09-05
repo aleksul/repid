@@ -2,8 +2,8 @@ import pytest
 
 from repid import Queue, Repid
 from repid.connection import CONNECTIONS_MAPPING
+from repid.connections import Bucketing, Messaging
 from repid.middlewares import AVAILABLE_FUNCTIONS, InjectMiddleware
-from repid.protocols import Bucketing, Messaging
 
 
 @pytest.fixture()

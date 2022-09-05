@@ -1,2 +1,2 @@
-from .dummy_bucketing import DummyBucketing
-from .dummy_messaging import DummyMessaging
+from .bucketing import DummyBucketing
+from .messaging import DummyMessaging

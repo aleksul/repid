@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import asyncio
 from datetime import datetime
-from typing import TYPE_CHECKING, Dict, FrozenSet, Union
+from typing import TYPE_CHECKING
 
 import aio_pika as aiopika
 from yarl import URL
@@ -21,8 +23,8 @@ class RabbitMessaging:
     def __init__(self, dsn: str) -> None:
         self.dsn = dsn
         self.__conn = aiopika.RobustConnection(URL(dsn))
-        self.__id_to_deleviry_tag: Dict[str, int] = {}
-        self.__channel: Union[aiopika.abc.AbstractChannel, None] = None
+        self.__id_to_deleviry_tag: dict[str, int] = {}
+        self.__channel: aiopika.abc.AbstractChannel | None = None
 
     async def _channel(self) -> aiopika.abc.AbstractChannel:
         if not self.__conn.connected.is_set():
@@ -34,7 +36,7 @@ class RabbitMessaging:
         self.__channel = await self.__conn.channel(publisher_confirms=False)
         return self.__channel
 
-    async def consume(self, queue_name: str, topics: FrozenSet[str]) -> Message:
+    async def consume(self, queue_name: str, topics: frozenset[str]) -> Message:
         logger.debug(
             "Consuming from queue '{queue_name}'.",
             extra=dict(queue_name=queue_name, topics=topics),

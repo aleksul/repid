@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 import asyncio
-from typing import TYPE_CHECKING, Dict, FrozenSet, List
+from typing import TYPE_CHECKING
 
 from repid.logger import logger
 from repid.middlewares import InjectMiddleware
@@ -14,9 +16,9 @@ class DummyMessaging:
     supports_delayed_messages = True
 
     def __init__(self, dsn: str) -> None:
-        self.queues: Dict[str, List[bytes]] = dict()
+        self.queues: dict[str, list[bytes]] = dict()
 
-    async def consume(self, queue_name: str, topics: FrozenSet[str]) -> Message:
+    async def consume(self, queue_name: str, topics: frozenset[str]) -> Message:
         logger.debug(
             "Consuming from queue '{queue_name}'.",
             extra=dict(queue_name=queue_name, topics=topics),

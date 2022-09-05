@@ -80,6 +80,6 @@ class Message:
         object.__setattr__(self, "delay_until", self.next_execution_time)
         object.__setattr__(self, "timestamp", unix_time())
 
-    def _prepare_retry(self, next_retry: timedelta) -> None:
+    def _prepare_retry(self, next_retry: "timedelta") -> None:
         object.__setattr__(self, "tried", self.tried + 1)
         object.__setattr__(self, "delay_until", next_retry.seconds)

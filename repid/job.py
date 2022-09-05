@@ -110,11 +110,9 @@ class Job:
 
         self.created = unix_time()
 
-    async def enqueue(self, store_args: bool = True, declare_queue: bool = True) -> Message:
+    async def enqueue(self, store_args: bool = True) -> Message:
         if store_args and self.use_args_bucketer and self.args is not None:
             await self._conn._ab.store_bucket(self.args)
-        if declare_queue:
-            await self.queue.declare()
         msg = self._to_message()
         await self._conn.messager.enqueue(msg)
         return msg

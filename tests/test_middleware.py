@@ -53,7 +53,6 @@ async def test_middleware_double_call(dummy_recursive_connection):
             counter += 1
 
     r.middleware.add_middleware(TestMiddleware())
-    Repid("test://test")
     await Queue("test_queue_name").delete()
     assert counter == 2
     await Queue("test_another_queue_name").delete()
@@ -70,14 +69,13 @@ async def test_error_in_middleware(caplog, dummy_recursive_connection):
             raise Exception("Some random exception")
 
     r.middleware.add_middleware(TestMiddleware())
-    Repid("test://test")
     await Queue("test_queue_name").flush()
     assert any(
         map(
             lambda x: all(
                 (
                     "ERROR" in x,
-                    "Event before_queue_flush" in x,
+                    "Event 'before_queue_flush'" in x,
                 )
             ),
             caplog.text.splitlines(),

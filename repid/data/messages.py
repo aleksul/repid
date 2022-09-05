@@ -1,7 +1,7 @@
 import time
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Dict, Tuple, Union
+from typing import TYPE_CHECKING, Dict, Tuple, Union
 
 from repid.utils import unix_time
 
@@ -11,6 +11,9 @@ try:
     CRON_SUPPORT = True
 except ImportError:
     CRON_SUPPORT = False
+
+if TYPE_CHECKING:
+    from datetime import timedelta
 
 
 class PrioritiesT(IntEnum):
@@ -77,5 +80,6 @@ class Message:
         object.__setattr__(self, "delay_until", self.next_execution_time)
         object.__setattr__(self, "timestamp", unix_time())
 
-    def _increment_retry(self) -> None:
+    def _prepare_retry(self, next_retry: "timedelta") -> None:
         object.__setattr__(self, "tried", self.tried + 1)
+        object.__setattr__(self, "delay_until", next_retry.seconds)

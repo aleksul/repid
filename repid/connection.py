@@ -13,8 +13,6 @@ CONNECTIONS_MAPPING: dict[str, type[Messaging]] = {
     "redis://": redis.RedisMessaging,
     "rediss://": redis.RedisMessaging,
     "dummy://": dummy.DummyMessaging,
-    # "kafka://": KafkaMessaging,
-    # "nats://": NatsMessaging,
 }
 
 BUCKETINGS_MAPPING: dict[str, type[Bucketing]] = {
@@ -70,13 +68,13 @@ class Connection:
         )
 
     @property
-    def ab(self) -> Bucketing:  # args bucketer
+    def _ab(self) -> Bucketing:  # args bucketer
         if self.args_bucketer is None:
             raise ValueError("Args bucketer is not configured.")
         return self.args_bucketer
 
     @property
-    def rb(self) -> Bucketing:  # results bucketer
+    def _rb(self) -> Bucketing:  # results bucketer
         if self.results_bucketer is None:
             raise ValueError("Results bucketer is not configured.")
         return self.results_bucketer

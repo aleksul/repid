@@ -34,12 +34,14 @@ lint = [
     "flake8-bugbear",
     "flake8-builtins",
     "flake8-pyproject",
+    "flake8-type-checking",
+    "flake8-logging-format",
+    "yesqa",
 ]
 tests = [
     "pytest",
     "pytest-cov",
-    "pytest-sugar",
-    "pytest-icdiff",
+    "pytest-clarity",
     "pytest-docker-tools",
     "pytest-asyncio",
     "pytest-lazy-fixture",
@@ -70,8 +72,9 @@ exclude = "^tests/"
 
 [tool.flake8]
 max-line-length = 100
-per-file-ignores = "__init__.py:F401"
+per-file-ignores = ["__init__.py:F401", "tests/*:TC"]
 ignore = "W503,PT013"
+enable-extensions = ["TC", "TC1"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

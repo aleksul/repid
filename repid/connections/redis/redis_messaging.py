@@ -154,7 +154,10 @@ class RedisMessaging:
         pipe.zrem(self.processing_queue, mnc(msg, short=True))
 
     async def consume(self, queue_name: str, topics: frozenset[str]) -> Message:
-        logger.debug(f"Consuming from {queue_name = }; {topics = }.")
+        logger.debug(
+            "Consuming from queue '{queue_name}'.",
+            extra=dict(queue_name=queue_name, topics=topics),
+        )
         while True:
             for priority in get_priorities_order(self._priorities):
                 message = await self.__get_message(queue_name, priority, topics)
@@ -167,35 +170,35 @@ class RedisMessaging:
                 return message
 
     async def enqueue(self, message: Message) -> None:
-        logger.debug(f"Enqueuing {message = }.")
+        logger.debug("Enqueueing message with id: {id_}.", extra=dict(id_=message.id_))
         async with self.conn.pipeline(transaction=True) as pipe:
             pipe.set(mnc(message), MessageSerializer.encode(message), nx=True)
             self.__put_in_queue(message, pipe)
             await pipe.execute()
 
     async def ack(self, message: Message) -> None:
-        logger.debug(f"Acking {message = }.")
+        logger.debug("Acking message with id: {id_}.", extra=dict(id_=message.id_))
         async with self.conn.pipeline(transaction=True) as pipe:
             pipe.delete(mnc(message))
             self.__unmark_processing(message, pipe)
             await pipe.execute()
 
     async def nack(self, message: Message) -> None:
-        logger.debug(f"Nacking {message = }.")
+        logger.debug("Nacking message with id: {id_}.", extra=dict(id_=message.id_))
         async with self.conn.pipeline(transaction=True) as pipe:
             self.__mark_dead(message, pipe)
             self.__unmark_processing(message, pipe)
             await pipe.execute()
 
     async def reject(self, message: Message) -> None:
-        logger.debug(f"Rejecting {message = }.")
+        logger.debug("Rejecting message with id: {id_}.", extra=dict(id_=message.id_))
         async with self.conn.pipeline(transaction=True) as pipe:
             self.__put_in_queue(message, pipe, in_front=True)
             self.__unmark_processing(message, pipe)
             await pipe.execute()
 
     async def requeue(self, message: Message) -> None:
-        logger.debug(f"Requeueing {message = }.")
+        logger.debug("Requeueing message with id: {id_}.", extra=dict(id_=message.id_))
         async with self.conn.pipeline(transaction=True) as pipe:
             pipe.set(mnc(message), MessageSerializer.encode(message), xx=True)
             self.__put_in_queue(message, pipe, in_front=True)
@@ -203,11 +206,11 @@ class RedisMessaging:
             await pipe.execute()
 
     async def queue_declare(self, queue_name: str) -> None:
-        logger.debug(f"Declaring queue {queue_name = }.")
+        logger.debug("Declaring queue '{queue_name}'.", extra=dict(queue_name=queue_name))
         return
 
     async def queue_flush(self, queue_name: str) -> None:
-        logger.debug(f"Flushing queue {queue_name = }.")
+        logger.debug("Flushing queue '{queue_name}'.", extra=dict(queue_name=queue_name))
         async with self.conn.pipeline(transaction=True) as pipe:
             async for msg in self.conn.scan_iter(match=f"m:{queue_name}:*"):
                 pipe.delete(msg)
@@ -216,7 +219,7 @@ class RedisMessaging:
             await pipe.execute()
 
     async def queue_delete(self, queue_name: str) -> None:
-        logger.debug(f"Deleting queue {queue_name = }.")
+        logger.debug("Deleting queue '{queue_name}'.", extra=dict(queue_name=queue_name))
         await self.queue_flush(queue_name)
 
     async def maintenance(self) -> None:
@@ -230,10 +233,11 @@ class RedisMessaging:
                     continue
                 message = MessageSerializer.decode(msg)
                 if now - processing_start_time > message.execution_timeout:
-                    logger.warning(f"Message {message.id_} timed out. Rescheduling.")
+                    logger_extra = dict(id_=message.id_)
+                    logger.warning("Message {id_} timed out. Rescheduling.", extra=logger_extra)
                     async with self.conn.pipeline(transaction=True) as pipe:
                         self.__mark_dead(message, pipe)
                         self.__unmark_processing(message, pipe)
                         await pipe.execute()
-                    logger.info(f"Message {message.id_} was rescheduled.")
+                    logger.info("Message {id_} was rescheduled.", extra=logger_extra)
         logger.info("Maintenance done.")

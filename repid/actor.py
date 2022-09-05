@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import time
-from asyncio import iscoroutinefunction
 from contextvars import ContextVar
-from functools import partial
-from typing import Any, Awaitable, Callable, NamedTuple, TypeVar
+from typing import Any, Callable, Coroutine, NamedTuple, TypeVar
 
 from typing_extensions import ParamSpec
 
+from repid.asyncify import asyncify
 from repid.logger import logger
 from repid.middlewares import Middleware
 from repid.retry_policy import RetryPolicyT, default_retry_policy
@@ -24,14 +23,14 @@ class ActorContext(NamedTuple):
 
 
 class ActorResult(NamedTuple):
-    data: FnR  # must be encodable
+    data: Any  # must be encodable
     success: bool
     exception: Exception | None
     started_when: int
     finished_when: int
 
 
-ActorContexVar = ContextVar("RunContext", default=ActorContext())
+ActorContexVar = ContextVar("ActorContexVar", default=ActorContext())
 
 DEFAULT_RETRY_POLICY = default_retry_policy()
 
@@ -42,16 +41,19 @@ class Actor:
     Allows to specify actor's name and queue.
     """
 
-    __slots__ = ("fn", "name", "queue", "retry_policy")
+    __slots__ = ("fn", "asyncified", "name", "queue", "retry_policy")
 
     def __init__(
         self,
-        fn: Callable[FnP, Awaitable[FnR] | FnR],
+        fn: Callable[FnP, Coroutine[Any, Any, FnR]] | Callable[FnP, FnR],
         name: str | None = None,
         queue: str = "default",
         retry_policy: RetryPolicyT = DEFAULT_RETRY_POLICY,
+        run_in_process: bool = False,
     ):
+
         self.fn = fn
+        self.asyncified = asyncify(fn, run_in_process)
         self.name = name or fn.__name__
         if not VALID_NAME.fullmatch(self.name):
             raise ValueError(
@@ -91,12 +93,10 @@ class Actor:
         started_when = time.perf_counter_ns()
 
         try:
-            if iscoroutinefunction(self.fn):
-                future = self.fn(*args, **kwargs)
-            else:
-                loop = asyncio.get_running_loop()
-                future = loop.run_in_executor(None, partial(self.fn, *args, **kwargs))
-            result = await asyncio.wait_for(future, timeout=ctx.time_limit)
+            result = await asyncio.wait_for(
+                self.asyncified(*args, **kwargs),
+                timeout=ctx.time_limit,
+            )
         except Exception as exc:
             exception = exc
             success = False

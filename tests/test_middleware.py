@@ -75,7 +75,7 @@ async def test_error_in_middleware(caplog, dummy_recursive_connection):
             lambda x: all(
                 (
                     "ERROR" in x,
-                    "Event before_queue_flush" in x,
+                    "Event 'before_queue_flush'" in x,
                 )
             ),
             caplog.text.splitlines(),

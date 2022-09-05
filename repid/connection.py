@@ -2,23 +2,30 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-if TYPE_CHECKING:
-    from repid.protocols import Messaging, Bucketing
+from repid.connections import (
+    DummyBucketing,
+    DummyMessaging,
+    RabbitMessaging,
+    RedisBucketing,
+    RedisMessaging,
+)
 
-from repid.connections import dummy, rabbitmq, redis
+if TYPE_CHECKING:
+    from repid.connections import Bucketing, Messaging
+
 
 CONNECTIONS_MAPPING: dict[str, type[Messaging]] = {
-    "amqp://": rabbitmq.RabbitMessaging,
-    "amqps://": rabbitmq.RabbitMessaging,
-    "redis://": redis.RedisMessaging,
-    "rediss://": redis.RedisMessaging,
-    "dummy://": dummy.DummyMessaging,
+    "amqp://": RabbitMessaging,
+    "amqps://": RabbitMessaging,
+    "redis://": RedisMessaging,
+    "rediss://": RedisMessaging,
+    "dummy://": DummyMessaging,
 }
 
 BUCKETINGS_MAPPING: dict[str, type[Bucketing]] = {
-    "redis://": redis.RedisBucketing,
-    "rediss://": redis.RedisBucketing,
-    "dummy://": dummy.DummyBucketing,
+    "redis://": RedisBucketing,
+    "rediss://": RedisBucketing,
+    "dummy://": DummyBucketing,
 }
 
 

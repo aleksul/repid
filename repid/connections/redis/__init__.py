@@ -1,2 +1,2 @@
-from .redis_bucketing import RedisBucketing
-from .redis_messaging import RedisMessaging
+from .bucketing import RedisBucketing
+from .messaging import RedisMessaging

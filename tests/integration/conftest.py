@@ -4,7 +4,7 @@ from pytest_lazyfixture import lazy_fixture
 
 from repid import Repid
 from repid.connection import Connection
-from repid.connections.redis.redis_messaging import RedisMessaging
+from repid.connections import RedisMessaging
 
 redis_container = container(
     image="redis:7.0-alpine",

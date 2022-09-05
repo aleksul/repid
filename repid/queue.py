@@ -1,8 +1,12 @@
-from typing import Union
+from __future__ import annotations
 
-from repid.connection import Connection
+from typing import TYPE_CHECKING
+
 from repid.main import Repid
 from repid.utils import VALID_NAME
+
+if TYPE_CHECKING:
+    from repid.connection import Connection
 
 
 class Queue:
@@ -11,7 +15,7 @@ class Queue:
     def __init__(
         self,
         name: str = "default",
-        _connection: Union[Connection, None] = None,
+        _connection: Connection | None = None,
     ) -> None:
         self.name = name
         if not VALID_NAME.fullmatch(name):

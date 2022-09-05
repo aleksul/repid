@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
 
-from repid.connection import Connection
 from repid.data import ArgsBucket, Message, PrioritiesT, ResultBucket, ResultMetadata
 from repid.main import Repid
 from repid.queue import Queue
 from repid.utils import VALID_ID, VALID_NAME, unix_time
+
+if TYPE_CHECKING:
+    from repid.connection import Connection
 
 
 class Job:

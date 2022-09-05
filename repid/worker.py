@@ -3,13 +3,15 @@ from __future__ import annotations
 import asyncio
 import signal
 from itertools import cycle
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from repid import ArgsBucket, Connection, Queue, Repid, ResultBucket
-from repid.actor import Actor
-from repid.data import Message
+from repid.actor import Actor, ActorContext, ActorContexVar
 from repid.logger import logger
 from repid.utils import unix_time
+
+if TYPE_CHECKING:
+    from repid.data import Message
 
 
 class Worker:
@@ -62,11 +64,14 @@ class Worker:
         if message.simple_args or message.simple_kwargs:
             return (message.simple_args or (), message.simple_kwargs or {})
         elif message.args_bucket_id:
+            logger_extra = dict(id_=message.args_bucket_id)
             if self._conn.args_bucketer is None:
-                raise ConnectionError("No args bucketer provided.")
+                logger.error("No args bucketer provided.", extra=logger_extra)
+                return ((), {})
             bucket = await self._conn.args_bucketer.get_bucket(message.args_bucket_id)
             if bucket is None:
-                logger.error(f"No bucket found for id = {message.args_bucket_id}.")
+                logger.error("No bucket found for id: {id_}.", extra=logger_extra)
+                return ((), {})
             if isinstance(bucket, ArgsBucket):
                 return (bucket.args or (), bucket.kwargs or {})
         return ((), {})
@@ -81,7 +86,12 @@ class Worker:
         actor = self.actors[message.topic]
         args, kwargs = await self._get_message_args(message)
 
-        actor._TIME_LIMIT.set(message.execution_timeout)
+        ActorContexVar.set(
+            ActorContext(
+                message_id=message.id_,
+                time_limit=message.execution_timeout,
+            )
+        )
         result = await actor(*args, **kwargs)
 
         # rescheduling (retry)

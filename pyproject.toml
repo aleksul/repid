@@ -72,8 +72,9 @@ exclude = "^tests/"
 
 [tool.flake8]
 max-line-length = 100
-per-file-ignores = "__init__.py:F401"
+per-file-ignores = ["__init__.py:F401", "tests/*:TC"]
 ignore = "W503,PT013"
+enable-extensions = ["TC", "TC1"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

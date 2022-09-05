@@ -18,14 +18,14 @@ class RedisBucketing:
         self.conn = Redis.from_url(dsn)
 
     async def get_bucket(self, id_: str) -> AnyBucketT | None:
-        logger.debug(f"Getting bucket with id = '{id_}'.")
+        logger.debug("Getting bucket with id: {id_}.", extra=dict(id_=id_))
         data = await self.conn.get(id_)
         if data is not None:
             return BucketSerializer.decode(data)
         return None
 
     async def store_bucket(self, bucket: AnyBucketT) -> None:
-        logger.debug(f"Storing bucket with id = '{bucket.id_}'.")
+        logger.debug("Storing bucket with id: {id_}.", extra=dict(id_=bucket.id_))
         await self.conn.set(
             bucket.id_,
             BucketSerializer.encode(bucket),
@@ -33,5 +33,5 @@ class RedisBucketing:
         )
 
     async def delete_bucket(self, id_: str) -> None:
-        logger.debug(f"Deleting bucket with id = '{id_}'.")
+        logger.debug("Deleting bucket with id: {id_}.", extra=dict(id_=id_))
         await self.conn.delete(id_)

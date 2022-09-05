@@ -1,10 +1,12 @@
 import asyncio
-from typing import Dict, FrozenSet, List
+from typing import TYPE_CHECKING, Dict, FrozenSet, List
 
-from repid.data import Message
 from repid.logger import logger
 from repid.middlewares import InjectMiddleware
 from repid.serializer import MessageSerializer
+
+if TYPE_CHECKING:
+    from repid.data import Message
 
 
 @InjectMiddleware
@@ -15,7 +17,10 @@ class DummyMessaging:
         self.queues: Dict[str, List[bytes]] = dict()
 
     async def consume(self, queue_name: str, topics: FrozenSet[str]) -> Message:
-        logger.debug(f"Consuming from {queue_name = }; {topics = }.")
+        logger.debug(
+            "Consuming from queue '{queue_name}'.",
+            extra=dict(queue_name=queue_name, topics=topics),
+        )
         for queue in self.queues.values():
             for data in queue:
                 message = MessageSerializer.decode(data)
@@ -27,35 +32,35 @@ class DummyMessaging:
         return await self.consume(queue_name, topics)
 
     async def enqueue(self, message: Message) -> None:
-        logger.debug(f"Enqueuing {message = }.")
+        logger.debug("Enqueueing message with id: {id_}.", extra=dict(id_=message.id_))
         data = MessageSerializer.encode(message)
         self.queues[message.queue].append(data)
 
     async def reject(self, message: Message) -> None:
-        logger.debug(f"Rejecting {message = }.")
+        logger.debug("Rejecting message with id: {id_}.", extra=dict(id_=message.id_))
         data = MessageSerializer.encode(message)
         self.queues[message.queue].insert(0, data)
 
     async def ack(self, message: Message) -> None:
-        logger.debug(f"Acking {message = }.")
+        logger.debug("Acking message with id: {id_}.", extra=dict(id_=message.id_))
 
     async def nack(self, message: Message) -> None:
-        logger.debug(f"Nacking {message = }.")
+        logger.debug("Nacking message with id: {id_}.", extra=dict(id_=message.id_))
 
     async def requeue(self, message: Message) -> None:
-        logger.debug(f"Requeueing {message = }.")
+        logger.debug("Requeueing message with id: {id_}.", extra=dict(id_=message.id_))
         data = MessageSerializer.encode(message)
         self.queues[message.queue].insert(0, data)
 
     async def queue_declare(self, queue_name: str) -> None:
-        logger.debug(f"Declaring queue {queue_name = }.")
+        logger.debug("Declaring queue '{queue_name}'.", extra=dict(queue_name=queue_name))
         if queue_name not in self.queues:
             self.queues[queue_name] = []
 
     async def queue_flush(self, queue_name: str) -> None:
-        logger.debug(f"Flushing queue {queue_name = }.")
+        logger.debug("Flushing queue '{queue_name}'.", extra=dict(queue_name=queue_name))
         self.queues[queue_name].clear()
 
     async def queue_delete(self, queue_name: str) -> None:
-        logger.debug(f"Deleting queue {queue_name = }.")
+        logger.debug("Deleting queue '{queue_name}'.", extra=dict(queue_name=queue_name))
         self.queues.pop(queue_name, None)

@@ -1,22 +1,36 @@
+from __future__ import annotations
+
 import asyncio
 import time
 from asyncio import iscoroutinefunction
 from contextvars import ContextVar
 from functools import partial
-from typing import Any, Callable, Dict, NamedTuple, Tuple, Union
-from uuid import uuid4
+from typing import Any, Awaitable, Callable, NamedTuple, TypeVar
+
+from typing_extensions import ParamSpec
 
 from repid.logger import logger
 from repid.middlewares import Middleware
 from repid.utils import VALID_NAME
 
+FnP = ParamSpec("FnP")
+FnR = TypeVar("FnR")
+
+
+class ActorContext(NamedTuple):
+    message_id: str | None = None
+    time_limit: int | None = None
+
 
 class ActorResult(NamedTuple):
-    data: Any  # must be encodable
+    data: FnR  # must be encodable
     success: bool
-    exception: Union[Exception, None]
+    exception: Exception | None
     started_when: int
     finished_when: int
+
+
+ActorContexVar = ContextVar("RunContext", default=ActorContext())
 
 
 class Actor:
@@ -25,14 +39,12 @@ class Actor:
     Allows to specify actor's name and queue.
     """
 
-    _TIME_LIMIT: ContextVar[Union[int, None]] = ContextVar("time_limit", default=None)
-
     __slots__ = ("fn", "name", "queue")
 
     def __init__(
         self,
-        fn: Callable,
-        name: Union[str, None] = None,
+        fn: Callable[FnP, Awaitable[FnR] | FnR],
+        name: str | None = None,
         queue: str = "default",
     ):
         self.fn = fn
@@ -49,42 +61,49 @@ class Actor:
                 "followed by letters, digits, dashes or underscores."
             )
 
-    async def __call__(self, *args: Tuple, **kwargs: Dict) -> ActorResult:
-        result: Any = None
-        success: bool
-        started_when = time.perf_counter_ns()
-        exception = None
-        time_limit = self._TIME_LIMIT.get()
-        run_id = uuid4().hex
-        logger_extra = dict(run_id=run_id)
-        logger.info(f"Running {str(self)}.", extra=logger_extra)
-        logger.debug(f"Time limit is set to {time_limit}.", extra=logger_extra)
+    async def __call__(self, *args: FnP.args, **kwargs: FnP.kwargs) -> ActorResult:
+        ctx = ActorContexVar.get()
+
         await Middleware.emit_signal(
             "before_actor_run",
             dict(
                 actor=self,
-                run_id=run_id,
+                message_id=ctx.message_id,
                 args=args,
                 kwargs=kwargs,
             ),
         )
+
+        logger_extra = dict(actor=str(self), message_id=ctx.message_id, time_limit=ctx.time_limit)
+
+        result: Any = None
+        success: bool
+        exception = None
+
+        logger.info("Running {actor} on message {message_id}.", extra=logger_extra)
+        logger.debug("Time limit is set to {time_limit}.", extra=logger_extra)
+
+        started_when = time.perf_counter_ns()
+
         try:
             if iscoroutinefunction(self.fn):
-                await asyncio.wait_for(self.fn(*args, **kwargs), timeout=time_limit)
+                future = self.fn(*args, **kwargs)
             else:
                 loop = asyncio.get_running_loop()
                 future = loop.run_in_executor(None, partial(self.fn, *args, **kwargs))
-                await asyncio.wait_for(future, timeout=time_limit)
+            result = await asyncio.wait_for(future, timeout=ctx.time_limit)
         except Exception as exc:
             exception = exc
             success = False
-            logger.error(
-                f"Error occured while running {str(self)}.",
+            logger.exception(
+                "Error inside of {actor} on message {message_id}.",
                 extra=logger_extra,
-                exc_info=True,
             )
         else:
-            logger.info(f"{str(self)} finished successfully.", extra=logger_extra)
+            logger.info(
+                "{actor} finished successfully on message {message_id}.",
+                extra=logger_extra,
+            )
             success = True
 
         actor_result = ActorResult(
@@ -99,7 +118,7 @@ class Actor:
             "after_actor_run",
             dict(
                 actor=self,
-                run_id=run_id,
+                message_id=ctx.message_id,
                 args=args,
                 kwargs=kwargs,
                 result=actor_result,

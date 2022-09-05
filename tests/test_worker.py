@@ -24,8 +24,9 @@ async def test_worker_sigint(fake_connection):
 
 async def test_worker_long_task_reject(fake_connection):
     myworker = Worker(gracefull_shutdown_time=1)
-    await Job("awesome_job").enqueue()
-
+    j = Job("awesome_job")
+    await j.queue.declare()
+    await j.enqueue()
     hit = False
     never_hit = False
 
@@ -50,7 +51,9 @@ async def test_worker_long_task_reject(fake_connection):
 
 async def test_worker_short_task_finishes(fake_connection):
     myworker = Worker(gracefull_shutdown_time=2)
-    await Job("awesome_job").enqueue()
+    j = Job("awesome_job")
+    await j.queue.declare()
+    await j.enqueue()
 
     hit = False
 

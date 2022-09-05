@@ -96,8 +96,7 @@ class Worker:
 
         # rescheduling (retry)
         if not result.success and message.tried + 1 < message.retries:
-            message._increment_retry()
-            # message.delay_until = None  # TODO: exponential backoff
+            message._prepare_retry(actor.retry_policy(message.tried))
             await self._conn.messager.requeue(message)
         # rescheduling (deferred)
         elif message.defer_by is not None or message.cron is not None:

@@ -2,7 +2,10 @@
 name = "repid"
 description = "Async queue for Python."
 authors = [{ name = "aleksul", email = "me@aleksul.space" }]
-dependencies = ["orjson>=3.7.11,<4.0.0", "typing-extensions>=4.3.0,<5.0.0"]
+dependencies = [
+    "orjson>=3.7.11,<4.0.0",
+    "typing-extensions>=4.3.0,<5.0.0; python_version < \"3.10\"",
+]
 requires-python = ">=3.8"
 readme = "README.md"
 dynamic = ["version"]
@@ -72,7 +75,7 @@ exclude = "^tests/"
 
 [tool.flake8]
 max-line-length = 100
-per-file-ignores = ["__init__.py:F401", "tests/*:TC"]
+per-file-ignores = ["__init__.py:F401", "tests/*:TC", "protocols.py:B008"]
 ignore = "W503,PT013"
 enable-extensions = ["TC", "TC1"]
 

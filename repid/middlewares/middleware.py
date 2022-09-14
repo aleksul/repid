@@ -1,18 +1,20 @@
-import asyncio
-from functools import partial
-from inspect import getfullargspec, getmembers, isfunction, ismethod
-from typing import Any, Callable, Coroutine, Dict, List
+from __future__ import annotations
 
+import asyncio
+from inspect import getfullargspec, getmembers, isfunction, ismethod
+from typing import Any, Callable, Coroutine
+
+from repid.asyncify import asyncify
 from repid.logger import logger
 
 from . import POSSIBLE_EVENT_NAMES
 
 
 class Middleware:
-    events: Dict[str, List[Callable[..., Coroutine]]] = {}
+    def __init__(self) -> None:
+        self.events: dict[str, list[Callable[..., Coroutine]]] = {}
 
-    @classmethod
-    def add_event(cls, fn: Callable) -> None:
+    def add_event(self, fn: Callable) -> None:
         name = fn.__name__
 
         if name not in POSSIBLE_EVENT_NAMES:
@@ -22,11 +24,10 @@ class Middleware:
 
         logger.debug("Subscribed function '{fn_name}' to middleware signals.", extra=logger_extra)
 
-        is_coroutine = asyncio.iscoroutinefunction(fn)
+        asyncified = asyncify(fn)
         argspec = getfullargspec(fn)
 
-        async def wrapper(**kwargs: Dict[str, Any]) -> Any:
-            nonlocal fn, is_coroutine, argspec
+        async def wrapper(**kwargs: dict[str, Any]) -> Any:
             # leave only those kwargs that are in the function signature
             kwargs = {
                 key: value
@@ -36,23 +37,17 @@ class Middleware:
             }
             # try to call the function
             try:
-                # wrap the function in a coroutine if it is not already
-                if is_coroutine:
-                    return await fn(**kwargs)
-                else:
-                    loop = asyncio.get_running_loop()
-                    return await loop.run_in_executor(None, partial(fn, **kwargs))
+                return await asyncified(**kwargs)
             # ignore the exception and pass it to the logger
             except Exception:
                 logger.exception("Event '{fn_name}' ({fn}) raised exception.", extra=logger_extra)
 
         # add wrapped event to the dictionary
-        if name not in cls.events:
-            cls.events[name] = []
-        cls.events[name].append(wrapper)
+        if name not in self.events:
+            self.events[name] = []
+        self.events[name].append(wrapper)
 
-    @classmethod
-    def add_middleware(cls, middleware: Any) -> None:
+    def add_middleware(self, middleware: Any) -> None:
         for _, fn in getmembers(middleware, predicate=lambda x: isfunction(x) or ismethod(x)):
             logger.debug(
                 "Adding event {middleware_name}.{fn_name} to middleware.",
@@ -61,13 +56,12 @@ class Middleware:
                     fn_name=fn.__name__,
                 ),
             )
-            cls.add_event(fn)
+            self.add_event(fn)
 
-    @classmethod
-    async def emit_signal(cls, name: str, kwargs: Dict[str, Any]) -> None:
-        if name not in cls.events:
+    async def emit_signal(self, name: str, kwargs: dict[str, Any]) -> None:
+        if name not in self.events:
             return
         logger_extra = dict(signal_name=name)
         logger.debug("Emitting signal '{signal_name}'.", extra=logger_extra)
-        await asyncio.gather(*[fn(**kwargs) for fn in cls.events[name]])
+        await asyncio.gather(*[fn(**kwargs) for fn in self.events[name]])
         logger.debug("Done emitting signal '{signal_name}'.", extra=logger_extra)

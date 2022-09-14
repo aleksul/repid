@@ -1,40 +1,40 @@
 from __future__ import annotations
 
+import sys
 from asyncio import create_task
 from contextvars import ContextVar
-from functools import wraps
+from functools import update_wrapper
 from inspect import signature
-from typing import Awaitable, Callable, TypeVar
+from typing import Any, Awaitable, Callable, Generic, TypeVar
 
-from typing_extensions import ParamSpec
-
-from . import Middleware
+if sys.version_info >= (3, 10):
+    from typing import ParamSpec
+else:
+    from typing_extensions import ParamSpec
 
 IsInsideMiddleware = ContextVar("IsInsideMiddleware", default=False)
 FnR = TypeVar("FnR")
 FnP = ParamSpec("FnP")
 
 
-def MiddlewareWrapper(
-    fn: Callable[FnP, Awaitable[FnR]],
-    name: str | None = None,
-) -> Callable[FnP, Awaitable[FnR]]:
-    name = name or fn.__name__
-    parameters = signature(fn).parameters.keys()
+class MiddlewareWrapper(Generic[FnP, FnR]):
+    def __init__(self, fn: Callable[FnP, Awaitable[FnR]], name: str | None = None) -> None:
+        update_wrapper(self, fn)
+        self.fn = fn
+        self.name = name or fn.__name__
+        self.parameters = signature(fn).parameters.keys()
+        self._repid_signal_emitter: Callable[[str, dict[str, Any]], Awaitable] | None = None
 
-    async def call_set_context(*args: FnP.args, **kwargs: FnP.kwargs) -> FnR:
+    async def call_set_context(self, *args: FnP.args, **kwargs: FnP.kwargs) -> FnR:
         IsInsideMiddleware.set(True)
-        return await fn(*args, **kwargs)
+        return await self.fn(*args, **kwargs)
 
-    @wraps(fn)
-    async def inner(*args: FnP.args, **kwargs: FnP.kwargs) -> FnR:
-        if IsInsideMiddleware.get():
-            return await fn(*args, **kwargs)
+    async def __call__(self, *args: FnP.args, **kwargs: FnP.kwargs) -> FnR:
+        if IsInsideMiddleware.get() or self._repid_signal_emitter is None:
+            return await self.fn(*args, **kwargs)
         signal_kwargs = kwargs.copy()
-        signal_kwargs.update(zip(parameters, args))
-        await Middleware.emit_signal(f"before_{name}", signal_kwargs)
-        result = await create_task(call_set_context(*args, **kwargs))
-        await Middleware.emit_signal(f"after_{name}", signal_kwargs)
+        signal_kwargs.update(zip(self.parameters, args))
+        await self._repid_signal_emitter(f"before_{self.name}", signal_kwargs)
+        result = await create_task(self.call_set_context(*args, **kwargs))
+        await self._repid_signal_emitter(f"after_{self.name}", signal_kwargs)
         return result
-
-    return inner

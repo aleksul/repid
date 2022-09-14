@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from repid import ArgsBucket, Connection, Queue, Repid, ResultBucket
 from repid.actor import Actor, ActorContext, ActorContexVar
 from repid.logger import logger
+from repid.main import DEFAULT_CONNECTION
 from repid.utils import unix_time
 
 if TYPE_CHECKING:
@@ -29,7 +30,7 @@ class Worker:
         messages_limit: int = float("inf"),  # type: ignore[assignment]
         _connection: Connection | None = None,
     ):
-        self._conn = _connection or Repid.get_default_connection()
+        self._conn = _connection or DEFAULT_CONNECTION.get()
         self.actors: dict[str, Actor] = {}
         self.gracefull_shutdown_time = gracefull_shutdown_time
         self._processed = 0
@@ -92,7 +93,29 @@ class Worker:
                 time_limit=message.execution_timeout,
             )
         )
+
+        await self._conn.middleware.emit_signal(
+            "before_actor_run",
+            dict(
+                actor=actor,
+                message_id=message.id_,
+                args=args,
+                kwargs=kwargs,
+            ),
+        )
+
         result = await actor(*args, **kwargs)
+
+        await self._conn.middleware.emit_signal(
+            "after_actor_run",
+            dict(
+                actor=actor,
+                message_id=message.id_,
+                args=args,
+                kwargs=kwargs,
+                result=result,
+            ),
+        )
 
         # rescheduling (retry)
         if not result.success and message.tried + 1 < message.retries:

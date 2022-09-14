@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 import time
 from contextvars import ContextVar
 from typing import Any, Callable, Coroutine, NamedTuple, TypeVar
 
-from typing_extensions import ParamSpec
-
 from repid.asyncify import asyncify
 from repid.logger import logger
-from repid.middlewares import Middleware
 from repid.retry_policy import RetryPolicyT, default_retry_policy
 from repid.utils import VALID_NAME
+
+if sys.version_info >= (3, 10):
+    from typing import ParamSpec
+else:
+    from typing_extensions import ParamSpec
 
 FnP = ParamSpec("FnP")
 FnR = TypeVar("FnR")
@@ -71,16 +74,6 @@ class Actor:
     async def __call__(self, *args: FnP.args, **kwargs: FnP.kwargs) -> ActorResult:
         ctx = ActorContexVar.get()
 
-        await Middleware.emit_signal(
-            "before_actor_run",
-            dict(
-                actor=self,
-                message_id=ctx.message_id,
-                args=args,
-                kwargs=kwargs,
-            ),
-        )
-
         logger_extra = dict(actor=str(self), message_id=ctx.message_id, time_limit=ctx.time_limit)
 
         result: Any = None
@@ -111,26 +104,13 @@ class Actor:
             )
             success = True
 
-        actor_result = ActorResult(
+        return ActorResult(
             data=result,
             success=success,
             exception=exception,
             started_when=started_when,
             finished_when=time.perf_counter_ns(),
         )
-
-        await Middleware.emit_signal(
-            "after_actor_run",
-            dict(
-                actor=self,
-                message_id=ctx.message_id,
-                args=args,
-                kwargs=kwargs,
-                result=actor_result,
-            ),
-        )
-
-        return actor_result
 
     def __str__(self) -> str:
         return f"Actor({self.fn.__name__}, name='{self.name}', queue='{self.queue}')"

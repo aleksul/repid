@@ -1,11 +1,11 @@
-from __future__ import annotations
-
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Dict, Union
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, root_validator
+import orjson
 
+from repid.data._const import SLOTS_DATACLASS
 from repid.utils import VALID_ID
 
 try:
@@ -16,45 +16,68 @@ except ImportError:
     CRON_SUPPORT = False
 
 
-class RetriesProperties(BaseModel):
+@dataclass(frozen=True, **SLOTS_DATACLASS)
+class RetriesProperties:
     max_amount: int = 1
     already_tried: int = 0
 
+    def __post_init__(self) -> None:
+        if self.max_amount < 1:
+            raise ValueError("Incorrect max_amount.")
 
-class ResultProperties(BaseModel):
-    id_: str = Field(default_factory=lambda: uuid4().hex, regex=str(VALID_ID))
-    ttl: timedelta | None = None
+        if self.already_tried < 0:
+            raise ValueError("Incorrect already_tried.")
 
 
-class DelayProperties(BaseModel):
-    delay_until: datetime | None = None
-    defer_by: timedelta | None = None
-    cron: str | None = None
-    next_execution_time: datetime | None = None
+@dataclass(frozen=True, **SLOTS_DATACLASS)
+class ResultProperties:
+    id_: str = field(default_factory=lambda: uuid4().hex)
+    ttl: Union[timedelta, None] = None
 
-    @root_validator
-    def check_defer_by_with_cron(cls, values: dict[str, Any]) -> dict[str, Any]:
-        defer_by = values.get("defer_by")
-        cron = values.get("cron")
-        if defer_by is not None and cron is not None:
+    def __post_init__(self) -> None:
+        if not VALID_ID.fullmatch(self.id_):
+            raise ValueError("Incorrect id.")
+
+
+@dataclass(frozen=True, **SLOTS_DATACLASS)
+class DelayProperties:
+    delay_until: Union[datetime, None] = None
+    defer_by: Union[timedelta, None] = None
+    cron: Union[str, None] = None
+    next_execution_time: Union[datetime, None] = None
+
+    def __post_init__(self) -> None:
+        if self.defer_by is not None and self.cron is not None:
             raise ValueError("Can't set defer_by and cron alongside.")
-        return values
 
 
-class Parameters(BaseModel):
-    execution_timeout: timedelta = Field(default_factory=lambda: timedelta(minutes=10))
-    result: ResultProperties | None = None
-    retries: RetriesProperties | None = None
-    delay: DelayProperties | None = None
-    timestamp: datetime = Field(default_factory=datetime.now)
-    ttl: timedelta | None = None
+@dataclass(frozen=True, **SLOTS_DATACLASS)
+class Parameters:
+    execution_timeout: timedelta = field(default_factory=lambda: timedelta(minutes=10))
+    result: Union[ResultProperties, None] = None
+    retries: Union[RetriesProperties, None] = None
+    delay: Union[DelayProperties, None] = None
+    timestamp: datetime = field(default_factory=datetime.now)
+    ttl: Union[timedelta, None] = None
 
     def encode(self) -> str:
-        return self.json(exclude_defaults=True)
+        return orjson.dumps(self).decode()
 
     @classmethod
-    def decode(cls, data: str) -> Parameters:
-        return cls.parse_raw(data)
+    def decode(cls, data: str) -> "Parameters":
+        loaded: Dict[str, Any] = orjson.loads(data)
+
+        for key, value in loaded.items():
+            if value is None:
+                continue
+            if key == "result":
+                loaded[key] = ResultProperties(**orjson.loads(value))
+            elif key == "retries":
+                loaded[key] = RetriesProperties(**orjson.loads(value))
+            elif key == "delay":
+                loaded[key] = DelayProperties(**orjson.loads(value))
+
+        return cls(**loaded)
 
     @property
     def is_overdue(self) -> bool:

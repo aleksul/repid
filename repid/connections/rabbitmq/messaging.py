@@ -1,167 +1,248 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, AsyncIterator
+from uuid import uuid4
 
-import aio_pika as aiopika
-from yarl import URL
+import aiormq
+from aiormq.abc import Basic
 
+from repid.connections.rabbitmq.protocols import MessageContent
+from repid.connections.rabbitmq.utils import durable_message_decider, qnc, wait_until
+from repid.data._key import RoutingKey
+from repid.data._message import Message
+from repid.data._parameters import Parameters
+from repid.data.priorities import PrioritiesT
 from repid.logger import logger
 from repid.middlewares import InjectMiddleware
-from repid.serializer import MessageSerializer
 
 if TYPE_CHECKING:
-    from repid.data import Message
+    from repid.connections.rabbitmq.protocols import (
+        DurableMessageDeciderT,
+        QueueNameConstructorT,
+    )
+    from repid.data.protocols import MessageT, ParametersT, RoutingKeyT
 
 
 @InjectMiddleware
 class RabbitMessaging:
-    supports_delayed_messages = True
-    queues_durable = True
+    ROUTING_KEY_CLASS: type[RoutingKeyT] = RoutingKey
+    PARAMETERS_CLASS: type[ParametersT] = Parameters
 
-    def __init__(self, dsn: str) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        queue_name_constructor: QueueNameConstructorT = qnc,
+        is_durable_decider: DurableMessageDeciderT = durable_message_decider,
+    ) -> None:
         self.dsn = dsn
-        self.__conn = aiopika.RobustConnection(URL(dsn))
-        self.__id_to_deleviry_tag: dict[str, int] = {}
-        self.__channel: aiopika.abc.AbstractChannel | None = None
+        self.qnc = queue_name_constructor
+        self.idd = is_durable_decider
+        self.__connection: aiormq.abc.AbstractConnection | None = None
+        self.__channel: aiormq.abc.AbstractChannel | None = None
+        self.__id_to_delivery_tag: dict[str, int] = dict()
 
-    async def _channel(self) -> aiopika.abc.AbstractChannel:
-        if not self.__conn.connected.is_set():
-            await self.__conn.connect()
-        if self.__channel is not None:
-            if self.__channel.is_closed:
-                await self.__channel.reopen()
+    async def _channel(self) -> aiormq.abc.AbstractChannel:
+        if self.__connection is None:
+            self.__connection = aiormq.Connection(self.dsn)
+        if self.__channel is None:
+            self.__channel = await self.__connection.channel(publisher_confirms=False)
+        if self.__channel.is_closed:
+            await self.__channel.open()
             return self.__channel
-        self.__channel = await self.__conn.channel(publisher_confirms=False)
         return self.__channel
 
-    async def consume(self, queue_name: str, topics: frozenset[str]) -> Message:
+    async def consume(
+        self,
+        queue_name: str,
+        topics: frozenset[str] | None = None,
+    ) -> AsyncIterator[tuple[RoutingKeyT, str, ParametersT]]:
         logger.debug(
             "Consuming from queue '{queue_name}'.",
             extra=dict(queue_name=queue_name, topics=topics),
         )
-        channel = await self._channel()
-        queue = await channel.get_queue(queue_name)
-        while True:
-            message = await queue.get(fail=False)
-            if message is None:  # means that the queue is empty/non-existent
-                await asyncio.sleep(0.1)
-                continue
-            decoded: Message = MessageSerializer.decode(message.body)
-            if decoded.topic not in topics:
-                await message.reject(requeue=True)
-                continue
-            if decoded.is_overdue:
-                await message.nack(requeue=False)
-                continue
-            if message.delivery_tag is not None:
-                self.__id_to_deleviry_tag[decoded.id_] = message.delivery_tag
-            return decoded
+        _queue: asyncio.Queue[MessageT] = asyncio.Queue()
 
-    async def enqueue(self, message: Message) -> None:
-        logger.debug("Enqueueing message with id: {id_}.", extra=dict(id_=message.id_))
         channel = await self._channel()
-        await channel.default_exchange.publish(
-            aiopika.Message(
-                body=MessageSerializer.encode(message),
-                priority=message.priority - 1,
-                expiration=datetime.fromtimestamp(message.delay_until)
-                if message.delay_until is not None
-                else None,
-                message_id=message.id_,
-                timestamp=message.timestamp,
-            ),
-            routing_key=f"{message.queue}{':delayed' if message.delay_until is not None else ''}",
+
+        async def on_message(message: aiormq.abc.DeliveredMessage) -> None:
+            if message.header.properties.message_id is None:
+                message.header.properties.message_id = uuid4().hex
+            msg_id = message.header.properties.message_id
+
+            if message.delivery_tag is None:
+                logger.error(
+                    "Can't process message (id: {id_}) with unknown delivery tag.",
+                    extra=dict(id_=msg_id),
+                )
+                return
+
+            msg_topic: str | None = None
+            msg_queue: str = "default"
+
+            if message.header.properties.headers is not None:
+                msg_topic = message.header.properties.headers.get("topic", None)
+                msg_queue = message.header.properties.headers.get("queue", "default")
+
+            if msg_topic is None:
+                await channel.basic_reject(message.delivery_tag)
+                return
+
+            if topics and msg_topic not in topics:
+                await channel.basic_reject(message.delivery_tag)
+                return
+
+            decoded: MessageContent = json.loads(message.body)
+            params = self.PARAMETERS_CLASS.decode(decoded["parameters"])
+
+            if params.is_overdue:
+                await channel.basic_nack(message.delivery_tag, requeue=False)
+
+            self.__id_to_delivery_tag[msg_id] = message.delivery_tag
+
+            await _queue.put(
+                Message(
+                    self.ROUTING_KEY_CLASS(
+                        id_=msg_id,
+                        topic=msg_topic,
+                        queue=msg_queue,
+                        priority=message.header.properties.priority or PrioritiesT.MEDIUM.value,
+                    ),
+                    decoded["payload"],
+                    params,
+                )
+            )
+
+        await channel.basic_consume(
+            queue=queue_name,
+            consumer_callback=on_message,
+            no_ack=True,
         )
 
-    async def ack(self, message: Message) -> None:
-        logger_extra = dict(id_=message.id_)
-        logger.debug("Acking message with id: {id_}.", extra=logger_extra)
-        if (delivery_tag := self.__id_to_deleviry_tag.pop(message.id_, None)) is None:
-            logger.error(
-                "Can't ack unknown delivery tag for message with id: {id_}.",
-                extra=logger_extra,
-            )
-            return
-        channel = await self._channel()
-        await channel.channel.basic_ack(delivery_tag)
+        while True:
+            msg = await _queue.get()
+            yield (msg.key, msg.payload, msg.parameters)
 
-    async def nack(self, message: Message) -> None:
-        logger_extra = dict(id_=message.id_)
-        logger.debug("Nacking message with id: {id_}.", extra=logger_extra)
-        if (delivery_tag := self.__id_to_deleviry_tag.pop(message.id_, None)) is None:
-            logger.error(
-                "Can't nack unknown delivery tag for message with id: {id_}.",
-                extra=logger_extra,
-            )
-            return
+    async def enqueue(
+        self,
+        key: RoutingKeyT,
+        payload: str = "",
+        params: ParametersT | None = None,
+    ) -> None:
+        logger.debug("Enqueueing message with id: {id_}.", extra=dict(id_=key.id_))
         channel = await self._channel()
-        await channel.channel.basic_nack(delivery_tag, requeue=False)  # will trigger dlx
 
-    async def reject(self, message: Message) -> None:
-        logger_extra = dict(id_=message.id_)
-        logger.debug("Rejecting message with id: {id_}.", extra=logger_extra)
-        if (delivery_tag := self.__id_to_deleviry_tag.pop(message.id_, None)) is None:
-            logger.error(
-                "Can't reject unknown delivery tag for message with id: {id_}.",
-                extra=logger_extra,
-            )
-            return
-        channel = await self._channel()
-        await channel.channel.basic_reject(delivery_tag, requeue=True)
+        body = MessageContent(
+            payload=payload,
+            parameters=params.encode() if params is not None else "",
+        )
 
-    async def requeue(self, message: Message) -> None:
-        logger_extra = dict(id_=message.id_)
-        logger.debug("Requeueing message with id: {id_}.", extra=logger_extra)
-        if (delivery_tag := self.__id_to_deleviry_tag.pop(message.id_, None)) is None:
+        exp: str | None = None
+        if (delayed := wait_until(params)) is not None:
+            millis = int(
+                (delayed - datetime.now()).total_seconds() * 1000
+            )  # milliseconds as an integer
+            if millis > 0:
+                exp = str(millis)
+
+        confirmation = await channel.basic_publish(
+            body=json.dumps(body).encode(),
+            routing_key=self.qnc(key.queue, delayed=exp is not None),
+            properties=aiormq.spec.Basic.Properties(
+                message_id=key.id_,
+                priority=key.priority,
+                expiration=exp,
+                delivery_mode=2 if self.idd(key) else 1,
+                timestamp=params.timestamp if params is not None else None,
+                headers=dict(queue=key.queue, topic=key.topic),
+            ),
+            mandatory=True,
+        )
+        if not isinstance(confirmation, Basic.Ack):
+            raise ConnectionError("Message wasn't published.")
+
+    async def ack(self, key: RoutingKeyT) -> None:
+        logger_extra = dict(routing_key=key)
+        logger.debug("Acking message ({routing_key}).", extra=logger_extra)
+        if (delivery_tag := self.__id_to_delivery_tag.pop(key.id_, None)) is None:
             logger.error(
-                "Can't requeue unknown delivery tag for message with id: {id_}.",
+                "Can't ack unknown delivery tag for message ({routing_key}).",
                 extra=logger_extra,
             )
             return
         channel = await self._channel()
-        async with channel.transaction():
-            await channel.channel.basic_ack(delivery_tag)
-            await channel.default_exchange.publish(
-                aiopika.Message(
-                    body=MessageSerializer.encode(message),
-                    priority=message.priority - 1,
-                    expiration=datetime.fromtimestamp(message.delay_until)
-                    if message.delay_until is not None
-                    else None,
-                    message_id=message.id_,
-                    timestamp=message.timestamp,
-                ),
-                routing_key=(
-                    f"{message.queue}{':delayed' if message.delay_until is not None else ''}"
-                ),
+        await channel.basic_ack(delivery_tag)
+
+    async def nack(self, key: RoutingKeyT) -> None:
+        logger_extra = dict(routing_key=key)
+        logger.debug("Nacking message ({routing_key}).", extra=logger_extra)
+        if (delivery_tag := self.__id_to_delivery_tag.pop(key.id_, None)) is None:
+            logger.error(
+                "Can't nack unknown delivery tag for message ({routing_key}).",
+                extra=logger_extra,
             )
+            return
+        channel = await self._channel()
+        await channel.basic_nack(delivery_tag, requeue=False)  # will trigger dlx
+
+    async def reject(self, key: RoutingKeyT) -> None:
+        logger_extra = dict(routing_key=key)
+        logger.debug("Rejecting message ({routing_key}).", extra=logger_extra)
+        if (delivery_tag := self.__id_to_delivery_tag.pop(key.id_, None)) is None:
+            logger.error(
+                "Can't reject unknown delivery tag for message ({routing_key}).",
+                extra=logger_extra,
+            )
+            return
+        channel = await self._channel()
+        await channel.basic_reject(delivery_tag, requeue=True)
+
+    async def requeue(
+        self,
+        key: RoutingKeyT,
+        payload: str = "",
+        params: ParametersT | None = None,
+    ) -> None:
+        logger_extra = dict(routing_key=key)
+        logger.debug("Requeueing message ({routing_key}).", extra=logger_extra)
+        channel = await self._channel()
+        await channel.tx_select()
+        try:
+            await self.ack(key)
+            await self.enqueue(key, payload, params)
+        except Exception:
+            logger.exception("Unsuccessful message requeue.")
+            await channel.tx_rollback()
+        else:
+            await channel.tx_commit()
 
     async def queue_declare(self, queue_name: str) -> None:
         logger.debug("Declaring queue '{queue_name}'.", extra=dict(queue_name=queue_name))
         channel = await self._channel()
-        await channel.declare_queue(
+        await channel.queue_declare(
             f"{queue_name}:dead",
             durable=True,
             arguments={
-                "x-max-priority": 3,
+                "x-max-priority": 9,
             },
         )
-        await channel.declare_queue(
+        await channel.queue_declare(
             queue_name,
-            durable=self.queues_durable,
+            durable=True,
             arguments={
-                "x-max-priority": 3,
+                "x-max-priority": 9,
                 "x-dead-letter-exchange": "",
                 "x-dead-letter-routing-key": f"{queue_name}:dead",
             },
         )
-        await channel.declare_queue(
+        await channel.queue_declare(
             f"{queue_name}:delayed",
-            durable=self.queues_durable,
+            durable=True,
             arguments={
-                "x-max-priority": 3,
+                "x-max-priority": 9,
                 "x-dead-letter-exchange": "",
                 "x-dead-letter-routing-key": queue_name,
             },
@@ -171,15 +252,11 @@ class RabbitMessaging:
         logger.debug("Flushing queue '{queue_name}'.", extra=dict(queue_name=queue_name))
         channel = await self._channel()
 
-        async def _flush(queue_name: str) -> None:
-            queue = await channel.get_queue(queue_name)
-            await queue.purge()
-
         await asyncio.gather(
             *[
-                _flush(queue_name),
-                _flush(f"{queue_name}:delayed"),
-                _flush(f"{queue_name}:dead"),
+                channel.queue_purge(queue_name),
+                channel.queue_purge(f"{queue_name}:delayed"),
+                channel.queue_purge(f"{queue_name}:dead"),
             ]
         )
 

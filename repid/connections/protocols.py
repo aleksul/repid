@@ -1,75 +1,48 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, AsyncIterator, Protocol
 
 if TYPE_CHECKING:
-    from repid.data import Message
+    from repid.data.protocols import BucketT, ParametersT, RoutingKeyT
 
-
-class RoutingKey(Protocol):
-    id_: str
-    queue: str
-    topic: str
-    priority: int
-
-
-class RetriesProperties(Protocol):
-    max_amount: int = 1
-    already_tried: int = 0
-
-
-class ResultProperties(Protocol):
-    id_: str
-    ttl: float | None = None
-
-
-class DelayProperties(Protocol):
-    delay_until: float | None = None
-    defer_by: float | None = None
-    cron: str | None = None
-
-
-class Payload(Protocol):
-    execution_timeout: float = 600.0  # sec
-    args: bytes | str | None = None  # bytes => encoded data, str => id of the bucket
-    result: ResultProperties | None = None
-    retries: RetriesProperties | None = None
-    delay: DelayProperties | None = None
-
-
-class AdditionalParameters(Protocol):
-    timestamp: float
-    ttl: float | None = None
-    next_execution_time: float | None = None
+EncodedPayloadT = str
 
 
 class Messaging(Protocol):
-    async def consume(self, queue_name: str, topics: frozenset[str]) -> Message:
-        """Consumes one message from the specified queue.
-        Should respect the topics.
+    async def consume(
+        self,
+        queue_name: str,
+        topics: frozenset[str] | None = None,
+    ) -> AsyncIterator[tuple[RoutingKeyT, EncodedPayloadT, ParametersT]]:
+        """Consumes messages from the specified queue.
+        If topics are specified, each message will be checked for compliance with one of the topics.
+        Otherwise every message from the queue can be consumed.
         Informs the broker that job execution is started."""
 
     async def enqueue(
         self,
-        key: RoutingKey,
-        payload: bytes | None,
-        params: AdditionalParameters,
+        key: RoutingKeyT,
+        payload: EncodedPayloadT = "",
+        params: ParametersT | None = None,
     ) -> None:
         """Appends the message to the queue."""
 
-    async def reject(self, key: RoutingKey) -> None:
+    async def reject(self, key: RoutingKeyT) -> None:
         """Infroms message broker that job needs to be rescheduled on another worker."""
 
-    async def ack(self, key: RoutingKey) -> None:
+    async def ack(self, key: RoutingKeyT) -> None:
         """Informs message broker that job execution succeed."""
 
-    async def nack(self, key: RoutingKey) -> None:
+    async def nack(self, key: RoutingKeyT) -> None:
         """Informs message broker that job execution failed."""
 
     async def requeue(
-        self, key: RoutingKey, payload: bytes | None, params: AdditionalParameters
+        self,
+        key: RoutingKeyT,
+        payload: EncodedPayloadT = "",
+        params: ParametersT | None = None,
     ) -> None:
-        """Re-queues the message with different body. Id must be the same."""
+        """Re-queues the message with payload/parameters. Routing key must stay the same."""
 
     async def queue_declare(self, queue_name: str) -> None:
         """Creates the specified queue."""
@@ -82,10 +55,10 @@ class Messaging(Protocol):
 
 
 class Bucketing(Protocol):
-    async def get_bucket(self, id_: str) -> bytes | None:
+    async def get_bucket(self, id_: str) -> BucketT | None:
         """Retrivies the bucket."""
 
-    async def store_bucket(self, id_: str, payload: bytes, *, ttl: float | None = None) -> None:
+    async def store_bucket(self, id_: str, payload: BucketT) -> None:
         """Stores the bucket."""
 
     async def delete_bucket(self, id_: str) -> None:

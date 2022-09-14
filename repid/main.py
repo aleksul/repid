@@ -1,36 +1,18 @@
 from __future__ import annotations
 
-from typing import Any
+from contextvars import ContextVar
+from typing import TYPE_CHECKING
 
-from repid.connection import Connection
-from repid.logger import logger
-from repid.middlewares import Middleware
+if TYPE_CHECKING:
+    from repid.connection import Connection
+
+DEFAULT_CONNECTION: ContextVar[Connection] = ContextVar("DEFAULT_CONNECTION")
 
 
 class Repid:
-    __default_connection: Connection | None = None
+    def __init__(self, connection: Connection):
+        self._conn = connection
+        self.add_middleware = self._conn.middleware.add_middleware
 
-    def __init__(
-        self,
-        dsn: str,
-        dsn_args: str | None = None,
-        dsn_result: str | None = None,
-    ):
-        self._conn = Connection(
-            messager=dsn,
-            args_bucketer=dsn_args,
-            results_bucketer=dsn_result,
-        )
-        self.__class__.__default_connection = self._conn
-        logger.info("Default connection set.")
-        self.middleware = Middleware
-
-    def add_middleware(self, middleware: Any) -> None:
-        self.middleware.add_middleware(middleware)
-
-    @classmethod
-    def get_default_connection(cls) -> Connection:
-        conn = cls.__default_connection
-        if conn is None:
-            raise ConnectionError("Default connection is not specified.")
-        return conn
+    async def __aenter__(self) -> None:
+        DEFAULT_CONNECTION.set(self._conn)

@@ -6,7 +6,7 @@ import time
 from contextvars import ContextVar
 from typing import Any, Callable, Coroutine, NamedTuple, TypeVar
 
-from repid.asyncify import asyncify
+from repid._asyncify import asyncify
 from repid.logger import logger
 from repid.retry_policy import RetryPolicyT, default_retry_policy
 from repid.utils import VALID_NAME

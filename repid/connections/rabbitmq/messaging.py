@@ -9,8 +9,12 @@ from uuid import uuid4
 import aiormq
 from aiormq.abc import Basic
 
-from repid.connections.rabbitmq.protocols import MessageContent
-from repid.connections.rabbitmq.utils import durable_message_decider, qnc, wait_until
+from repid.connections.rabbitmq.utils import (
+    MessageContent,
+    durable_message_decider,
+    qnc,
+    wait_until,
+)
 from repid.data._key import RoutingKey
 from repid.data._message import Message
 from repid.data._parameters import Parameters

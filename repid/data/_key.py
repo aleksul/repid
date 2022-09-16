@@ -1,12 +1,11 @@
 from dataclasses import dataclass, field
 from uuid import uuid4
 
-from repid.data._const import SLOTS_DATACLASS
 from repid.data.priorities import PrioritiesT
-from repid.utils import VALID_ID, VALID_NAME
+from repid.utils import FROZEN_DATACLASS, SLOTS_DATACLASS, VALID_ID, VALID_NAME
 
 
-@dataclass(frozen=True, **SLOTS_DATACLASS)
+@dataclass(**FROZEN_DATACLASS, **SLOTS_DATACLASS)
 class RoutingKey:
     topic: str
     queue: str = "default"
@@ -22,3 +21,6 @@ class RoutingKey:
 
         if not VALID_NAME.fullmatch(self.queue):
             raise ValueError("Incorrect queue name.")
+
+        if self.priority < 0:
+            raise ValueError("Invalid priority.")

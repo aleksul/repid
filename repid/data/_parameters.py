@@ -5,8 +5,7 @@ from uuid import uuid4
 
 import orjson
 
-from repid.data._const import SLOTS_DATACLASS
-from repid.utils import VALID_ID
+from repid.utils import FROZEN_DATACLASS, SLOTS_DATACLASS
 
 try:
     from croniter import croniter
@@ -16,42 +15,27 @@ except ImportError:
     CRON_SUPPORT = False
 
 
-@dataclass(frozen=True, **SLOTS_DATACLASS)
+@dataclass(**FROZEN_DATACLASS, **SLOTS_DATACLASS)
 class RetriesProperties:
     max_amount: int = 1
     already_tried: int = 0
 
-    def __post_init__(self) -> None:
-        if self.max_amount < 1:
-            raise ValueError("Incorrect max_amount.")
 
-        if self.already_tried < 0:
-            raise ValueError("Incorrect already_tried.")
-
-
-@dataclass(frozen=True, **SLOTS_DATACLASS)
+@dataclass(**FROZEN_DATACLASS, **SLOTS_DATACLASS)
 class ResultProperties:
     id_: str = field(default_factory=lambda: uuid4().hex)
     ttl: Union[timedelta, None] = None
 
-    def __post_init__(self) -> None:
-        if not VALID_ID.fullmatch(self.id_):
-            raise ValueError("Incorrect id.")
 
-
-@dataclass(frozen=True, **SLOTS_DATACLASS)
+@dataclass(**FROZEN_DATACLASS, **SLOTS_DATACLASS)
 class DelayProperties:
     delay_until: Union[datetime, None] = None
     defer_by: Union[timedelta, None] = None
     cron: Union[str, None] = None
     next_execution_time: Union[datetime, None] = None
 
-    def __post_init__(self) -> None:
-        if self.defer_by is not None and self.cron is not None:
-            raise ValueError("Can't set defer_by and cron alongside.")
 
-
-@dataclass(frozen=True, **SLOTS_DATACLASS)
+@dataclass(**FROZEN_DATACLASS, **SLOTS_DATACLASS)
 class Parameters:
     execution_timeout: timedelta = field(default_factory=lambda: timedelta(minutes=10))
     result: Union[ResultProperties, None] = None
@@ -86,7 +70,7 @@ class Parameters:
         return datetime.now() > self.timestamp + self.ttl
 
     @property
-    def compute_next_execution_time(self) -> datetime | None:
+    def compute_next_execution_time(self) -> Union[datetime, None]:
         if self.delay is None:
             return None
         if self.delay.defer_by is not None:

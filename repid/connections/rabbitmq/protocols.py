@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Protocol, TypedDict
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from repid.data.protocols import RoutingKeyT
@@ -12,8 +12,3 @@ class QueueNameConstructorT(Protocol):
 class DurableMessageDeciderT(Protocol):
     def __call__(self, key: RoutingKeyT) -> bool:
         ...
-
-
-class MessageContent(TypedDict):
-    payload: str
-    parameters: str

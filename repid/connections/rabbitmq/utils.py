@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -26,3 +26,8 @@ def wait_until(params: ParametersT | None = None) -> datetime | None:
     if params is None or params.delay is None:
         return None
     return params.delay.next_execution_time or params.compute_next_execution_time
+
+
+class MessageContent(TypedDict):
+    payload: str
+    parameters: str

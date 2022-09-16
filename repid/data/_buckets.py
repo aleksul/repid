@@ -5,10 +5,10 @@ from typing import Union
 
 import orjson
 
-from repid.data._const import SLOTS_DATACLASS
+from repid.utils import FROZEN_DATACLASS, SLOTS_DATACLASS
 
 
-@dataclass(frozen=True, **SLOTS_DATACLASS)
+@dataclass(**FROZEN_DATACLASS, **SLOTS_DATACLASS)
 class ArgsBucket:
     args: str
 
@@ -29,7 +29,7 @@ class ArgsBucket:
         return datetime.now() > self.timestamp + self.ttl
 
 
-@dataclass(frozen=True, **SLOTS_DATACLASS)
+@dataclass(**FROZEN_DATACLASS, **SLOTS_DATACLASS)
 class ResultBucket:
     data: str
 

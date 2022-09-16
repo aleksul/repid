@@ -1,13 +1,13 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from repid.data._const import SLOTS_DATACLASS
+from repid.utils import FROZEN_DATACLASS, SLOTS_DATACLASS
 
 if TYPE_CHECKING:
     from repid.data.protocols import ParametersT, RoutingKeyT
 
 
-@dataclass(frozen=True, **SLOTS_DATACLASS)
+@dataclass(**FROZEN_DATACLASS, **SLOTS_DATACLASS)
 class Message:
     key: RoutingKeyT
     payload: str

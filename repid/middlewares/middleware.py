@@ -4,7 +4,7 @@ import asyncio
 from inspect import getfullargspec, getmembers, isfunction, ismethod
 from typing import Any, Callable, Coroutine
 
-from repid.asyncify import asyncify
+from repid._asyncify import asyncify
 from repid.logger import logger
 
 from . import POSSIBLE_EVENT_NAMES

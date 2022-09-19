@@ -27,13 +27,13 @@ class Queue:
         self._conn = _connection or DEFAULT_CONNECTION.get()
 
     async def declare(self) -> None:
-        await self._conn.messager.queue_declare(self.name)
+        await self._conn.message_broker.queue_declare(self.name)
 
     async def flush(self) -> None:
-        await self._conn.messager.queue_flush(self.name)
+        await self._conn.message_broker.queue_flush(self.name)
 
     async def delete(self) -> None:
-        await self._conn.messager.queue_delete(self.name)
+        await self._conn.message_broker.queue_delete(self.name)
 
     def __str__(self) -> str:
         return f"Queue({self.name})"

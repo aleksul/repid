@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, AsyncGenerator
 
 if TYPE_CHECKING:
     from repid.connection import Connection
@@ -14,5 +15,13 @@ class Repid:
         self._conn = connection
         self.add_middleware = self._conn.middleware.add_middleware
 
-    async def __aenter__(self) -> None:
-        DEFAULT_CONNECTION.set(self._conn)
+    @asynccontextmanager
+    async def connect(self, disconnect: bool = True) -> AsyncGenerator[Connection, None]:
+        contextvar_token = DEFAULT_CONNECTION.set(self._conn)
+        await self._conn.connect()
+        try:
+            yield self._conn
+        finally:
+            DEFAULT_CONNECTION.reset(contextvar_token)
+            if disconnect:
+                await self._conn.disconnect()

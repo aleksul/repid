@@ -18,10 +18,10 @@ FnP = ParamSpec("FnP")
 
 
 class MiddlewareWrapper(Generic[FnP, FnR]):
-    def __init__(self, fn: Callable[FnP, Awaitable[FnR]], name: str | None = None) -> None:
+    def __init__(self, fn: Callable[FnP, Awaitable[FnR]]) -> None:
         update_wrapper(self, fn)
         self.fn = fn
-        self.name = name or fn.__name__
+        self.name = fn.__name__
         self.parameters = signature(fn).parameters.keys()
         self._repid_signal_emitter: Callable[[str, dict[str, Any]], Awaitable] | None = None
 
@@ -36,5 +36,6 @@ class MiddlewareWrapper(Generic[FnP, FnR]):
         signal_kwargs.update(zip(self.parameters, args))
         await self._repid_signal_emitter(f"before_{self.name}", signal_kwargs)
         result = await create_task(self.call_set_context(*args, **kwargs))
+        signal_kwargs.update(dict(returns=result))
         await self._repid_signal_emitter(f"after_{self.name}", signal_kwargs)
         return result

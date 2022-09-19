@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from time import perf_counter_ns
-from typing import Union
+from typing import Any, Dict, Union
 
 import orjson
 
@@ -10,17 +9,33 @@ from repid.utils import FROZEN_DATACLASS, SLOTS_DATACLASS
 
 @dataclass(**FROZEN_DATACLASS, **SLOTS_DATACLASS)
 class ArgsBucket:
-    args: str
+    data: str
 
     timestamp: datetime = field(default_factory=datetime.now)
     ttl: Union[timedelta, None] = None
 
+    @staticmethod
+    def __orjson_default(obj: Any) -> str:
+        if isinstance(obj, timedelta):
+            return str(obj.total_seconds())
+        raise TypeError
+
     def encode(self) -> str:
-        return orjson.dumps(self).decode()
+        return orjson.dumps(self, default=self.__orjson_default).decode()
 
     @classmethod
     def decode(cls, data: str) -> "ArgsBucket":
-        return cls(**orjson.loads(data))
+        loaded: Dict[str, Any] = orjson.loads(data)
+
+        for key, value in loaded.items():
+            if value is None:
+                continue
+            if key == "timestamp":
+                loaded[key] = datetime.fromisoformat(value)
+            elif key == "ttl":
+                loaded[key] = timedelta(seconds=float(value))
+
+        return cls(**loaded)
 
     @property
     def is_overdue(self) -> bool:
@@ -33,8 +48,9 @@ class ArgsBucket:
 class ResultBucket:
     data: str
 
+    # perf_counter_ns
     started_when: int
-    finished_when: int = field(default_factory=perf_counter_ns)
+    finished_when: int
 
     success: bool = True
     exception: Union[str, None] = None
@@ -42,12 +58,28 @@ class ResultBucket:
     timestamp: datetime = field(default_factory=datetime.now)
     ttl: Union[timedelta, None] = None
 
+    @staticmethod
+    def __orjson_default(obj: Any) -> str:
+        if isinstance(obj, timedelta):
+            return str(obj.total_seconds())
+        raise TypeError
+
     def encode(self) -> str:
-        return orjson.dumps(self).decode()
+        return orjson.dumps(self, default=self.__orjson_default).decode()
 
     @classmethod
     def decode(cls, data: str) -> "ResultBucket":
-        return cls(**orjson.loads(data))
+        loaded: Dict[str, Any] = orjson.loads(data)
+
+        for key, value in loaded.items():
+            if value is None:
+                continue
+            if key == "timestamp":
+                loaded[key] = datetime.fromisoformat(value)
+            elif key == "ttl":
+                loaded[key] = timedelta(seconds=float(value))
+
+        return cls(**loaded)
 
     @property
     def is_overdue(self) -> bool:

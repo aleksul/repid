@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import Protocol, TypeVar, Union
+from typing import ClassVar, Protocol, Type, TypeVar, Union, runtime_checkable
 from uuid import uuid4
 
 from repid.data.priorities import PrioritiesT
@@ -86,6 +86,10 @@ class DelayPropertiesT(Protocol):
 
 
 class ParametersT(SerializableT, TimedT, Protocol):
+    RETRIES_CLASS: ClassVar[Type[RetriesPropertiesT]]
+    RESULT_CLASS: ClassVar[Type[ResultPropertiesT]]
+    DELAY_CLASS: ClassVar[Type[DelayPropertiesT]]
+
     execution_timeout: timedelta
 
     # why property? See mypy docs
@@ -95,11 +99,11 @@ class ParametersT(SerializableT, TimedT, Protocol):
         ...
 
     @property
-    def retries(self) -> Union[RetriesPropertiesT, None]:
+    def retries(self) -> RetriesPropertiesT:
         ...
 
     @property
-    def delay(self) -> Union[DelayPropertiesT, None]:
+    def delay(self) -> DelayPropertiesT:
         ...
 
     def __init__(
@@ -118,11 +122,43 @@ class ParametersT(SerializableT, TimedT, Protocol):
     def compute_next_execution_time(self) -> Union[datetime, None]:
         """Computes unix timestamp of the next execution time."""
 
+    def _prepare_reschedule(self) -> "ParametersT":
+        ...
+
+    def _prepare_retry(self, next_retry: timedelta) -> "ParametersT":
+        ...
+
 
 class BucketT(SerializableT, TimedT, Protocol):
+    data: str
+
     def __init__(
         self,
         *,
+        data: str = "",
+        timestamp: Union[datetime, None] = None,
+        ttl: Union[timedelta, None] = None,
+    ) -> None:
+        ...
+
+
+@runtime_checkable
+class ResultBucketT(BucketT, Protocol):
+    # perf_counter_ns
+    started_when: int
+    finished_when: int
+
+    success: bool = True
+    exception: Union[str, None] = None
+
+    def __init__(
+        self,
+        *,
+        data: str = "",
+        started_when: int = -1,
+        finished_when: int = -1,
+        success: bool = True,
+        exception: Union[str, None] = None,
         timestamp: Union[datetime, None] = None,
         ttl: Union[timedelta, None] = None,
     ) -> None:

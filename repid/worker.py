@@ -2,209 +2,108 @@ from __future__ import annotations
 
 import asyncio
 import signal
-from itertools import cycle
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Callable
 
-from repid import ArgsBucket, Connection, Queue, Repid, ResultBucket
-from repid.actor import Actor, ActorContext, ActorContexVar
-from repid.logger import logger
+from repid._runner import _Runner
 from repid.main import DEFAULT_CONNECTION
-from repid.utils import unix_time
+from repid.queue import Queue
 
 if TYPE_CHECKING:
-    from repid.data import Message
+    from repid.actor import ActorData
+    from repid.connection import Connection
+    from repid.router import Router
 
 
 class Worker:
-    __slots__ = (
-        "_conn",
-        "actors",
-        "gracefull_shutdown_time",
-        "messages_limit",
-        "_processed",
-    )
-
     def __init__(
         self,
+        routers: list[Router] | None = None,
         gracefull_shutdown_time: float = 25.0,
         messages_limit: int = float("inf"),  # type: ignore[assignment]
+        tasks_limit: int = 1000,
         _connection: Connection | None = None,
     ):
         self._conn = _connection or DEFAULT_CONNECTION.get()
-        self.actors: dict[str, Actor] = {}
+
+        self.actors: dict[str, ActorData] = {}
+        self._queues_to_routes: dict[str, set[str]] = {}
+
+        if routers is not None:
+            for router in routers:
+                self.include_router(router)
+
+        self.tasks_limit = tasks_limit
         self.gracefull_shutdown_time = gracefull_shutdown_time
-        self._processed = 0
         self.messages_limit = messages_limit
 
-    @property
-    def topics(self) -> frozenset[str]:
-        return frozenset(self.actors.keys())
+    def include_router(self, router: Router) -> None:
+        self.actors.update(router.actors)
+        queues = self._queues_to_routes.keys()
+        for queue_name, topics in router.topics_by_queue.items():
+            if queue_name in queues:
+                self._queues_to_routes[queue_name].update(topics)
+            else:
+                self._queues_to_routes[queue_name] = set(topics)
 
-    @property
-    def queues(self) -> frozenset[str]:
-        return frozenset(q.queue for q in self.actors.values())
-
-    @property
-    def topics_by_queue(self) -> dict[str, frozenset[str]]:
-        topics = self.topics
-        return {q: frozenset(t for t in topics if self.actors[t].queue == q) for q in self.queues}
-
-    @property
-    def messages_processed(self) -> int:
-        return self._processed
-
-    def actor(self, name: str | None = None, queue: str = "default") -> Callable:
-        def decorator(fn: Callable) -> Callable:
-            a = Actor(fn, name=name, queue=queue)
-            self.actors[a.name] = a
-            return fn
-
-        return decorator
-
-    async def _get_message_args(self, message: Message) -> tuple[tuple, dict[str, Any]]:
-        if message.simple_args or message.simple_kwargs:
-            return (message.simple_args or (), message.simple_kwargs or {})
-        elif message.args_bucket_id:
-            logger_extra = dict(id_=message.args_bucket_id)
-            if self._conn.args_bucketer is None:
-                logger.error("No args bucketer provided.", extra=logger_extra)
-                return ((), {})
-            bucket = await self._conn.args_bucketer.get_bucket(message.args_bucket_id)
-            if bucket is None:
-                logger.error("No bucket found for id: {id_}.", extra=logger_extra)
-                return ((), {})
-            if isinstance(bucket, ArgsBucket):
-                return (bucket.args or (), bucket.kwargs or {})
-        return ((), {})
-
-    async def _set_result(self, result: ResultBucket) -> None:
-        if self._conn.results_bucketer is None:
-            logger.error("No results bucketer provided for returned data.")
-            return
-        await self._conn.results_bucketer.store_bucket(result)
-
-    async def _process_message(self, message: Message) -> None:
-        actor = self.actors[message.topic]
-        args, kwargs = await self._get_message_args(message)
-
-        ActorContexVar.set(
-            ActorContext(
-                message_id=message.id_,
-                time_limit=message.execution_timeout,
-            )
-        )
-
-        await self._conn.middleware.emit_signal(
-            "before_actor_run",
-            dict(
-                actor=actor,
-                message_id=message.id_,
-                args=args,
-                kwargs=kwargs,
-            ),
-        )
-
-        result = await actor(*args, **kwargs)
-
-        await self._conn.middleware.emit_signal(
-            "after_actor_run",
-            dict(
-                actor=actor,
-                message_id=message.id_,
-                args=args,
-                kwargs=kwargs,
-                result=result,
-            ),
-        )
-
-        # rescheduling (retry)
-        if not result.success and message.tried + 1 < message.retries:
-            message._prepare_retry(actor.retry_policy(message.tried))
-            await self._conn.messager.requeue(message)
-        # rescheduling (deferred)
-        elif message.defer_by is not None or message.cron is not None:
-            message._prepare_reschedule()
-            await self._conn.messager.requeue(message)
-        # ack
-        elif result.success:
-            await self._conn.messager.ack(message)
-        # nack
-        else:
-            await self._conn.messager.nack(message)
-
-        # return result
-        if message.result_bucket_id is not None:
-            result_bucket = ResultBucket(
-                id_=message.result_bucket_id,
-                data=result.data,
-                success=result.success,
-                started_when=result.started_when,
-                finished_when=result.finished_when,
-                exception=f"{type(result.exception)}: {result.exception}"
-                if result.exception is not None
-                else None,
-                timestamp=unix_time(),
-                ttl=message.result_bucket_ttl,
-            )
-            await self._set_result(result_bucket)
-
-    async def __process_message_with_cancellation(
-        self, message: Message, cancel_event: asyncio.Event
-    ) -> None:
-        await asyncio.wait(  # type: ignore[type-var]
-            {
-                asyncio.create_task(cancel_event.wait()),
-                asyncio.create_task(self._process_message(message)),
-            },
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        if cancel_event.is_set():
-            await self._conn.messager.reject(message)
-
-    async def run(self) -> None:
-        queue_names = self.queues
-        await asyncio.wait(
-            {asyncio.create_task(Queue(q).declare()) for q in queue_names},
-            return_when=asyncio.ALL_COMPLETED,
-        )
-        topics_by_queue = self.topics_by_queue
-        queue_iter = cycle(queue_names)
-
-        stop_consume_event = asyncio.Event()
-        cancel_event = asyncio.Event()
-        wait_stop_consume = asyncio.create_task(stop_consume_event.wait())
-
-        tasks: set[asyncio.Task] = set()
-
-        loop = asyncio.get_running_loop()
-
+    def _signal_handler_constructor(self, runner: _Runner) -> Callable[[], None]:
         def signal_handler() -> None:
-            stop_consume_event.set()
+            runner.stop_consume_event.set()
 
             async def wait_before_cancel() -> None:
                 await asyncio.sleep(self.gracefull_shutdown_time)
-                cancel_event.set()
+                runner.cancel_event.set()
 
-            tasks.add(asyncio.create_task(wait_before_cancel()))
+            t = asyncio.create_task(wait_before_cancel())
+            runner.tasks.add(t)
+            t.add_done_callback(runner.tasks.discard)
+            loop = asyncio.get_running_loop()
+            loop.remove_signal_handler(signal.SIGINT)
+            loop.remove_signal_handler(signal.SIGTERM)
 
+        return signal_handler
+
+    async def run(self) -> _Runner:
+        runner = _Runner(
+            max_tasks=self.messages_limit,
+            tasks_concurrency_limit=self.tasks_limit,
+            _connection=self._conn,
+        )
+
+        if not self.actors:
+            return runner
+
+        await asyncio.wait(
+            {
+                asyncio.create_task(Queue(queue_name).declare())
+                for queue_name in self._queues_to_routes
+            },
+            return_when=asyncio.ALL_COMPLETED,
+        )
+
+        loop = asyncio.get_running_loop()
+        signal_handler = self._signal_handler_constructor(runner)
         loop.add_signal_handler(signal.SIGINT, signal_handler)
         loop.add_signal_handler(signal.SIGTERM, signal_handler)
 
-        while self.messages_limit > self._processed:
-            queue = next(queue_iter)
-            consume = asyncio.create_task(
-                self._conn.messager.consume(queue, topics_by_queue[queue])
+        queue_consume_tasks: set[asyncio.Task] = set()
+
+        for queue_name in self._queues_to_routes:
+            t = asyncio.create_task(
+                runner(
+                    queue_name,
+                    self._queues_to_routes[queue_name],
+                    self.actors,
+                )
             )
-            await asyncio.wait(  # type: ignore[type-var]
-                {wait_stop_consume, consume},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if stop_consume_event.is_set():
-                consume.cancel()
-                break
-            message = consume.result()
-            t = asyncio.create_task(self.__process_message_with_cancellation(message, cancel_event))
-            tasks.add(t)
-            t.add_done_callback(tasks.discard)
-            self._processed += 1
-        await asyncio.gather(*tasks)
+            queue_consume_tasks.add(t)
+
+        if queue_consume_tasks:
+            await asyncio.wait({*queue_consume_tasks}, return_when=asyncio.ALL_COMPLETED)
+
+        if runner.tasks:
+            await asyncio.wait(runner.tasks, return_when=asyncio.ALL_COMPLETED)
+
+        runner.stop_consume_event.set()
+        runner.cancel_event.set()
+
+        return runner

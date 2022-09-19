@@ -9,6 +9,6 @@ if TYPE_CHECKING:
 
 @dataclass(**FROZEN_DATACLASS, **SLOTS_DATACLASS)
 class Message:
-    key: RoutingKeyT
+    key: "RoutingKeyT"
     payload: str
-    parameters: ParametersT
+    parameters: "ParametersT"

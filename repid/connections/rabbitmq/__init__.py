@@ -1,1 +1,1 @@
-from .messaging import RabbitMessaging
+from .message_broker import RabbitBroker

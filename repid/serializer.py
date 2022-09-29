@@ -1,34 +1,21 @@
-from orjson import dumps, loads
+from typing import Any, Protocol
 
-from repid.data import AnyBucketT, ArgsBucket, Message, ResultBucket
+import orjson
 
-
-class MessageSerializer:
-    @classmethod
-    def encode(cls, obj: Message) -> bytes:
-        return dumps(obj)
-
-    @classmethod
-    def decode(cls, data: bytes) -> Message:
-        return Message(**loads(data))
+PYDANTIC_IMPORTED = True
+try:
+    import pydantic
+except ImportError:
+    PYDANTIC_IMPORTED = False
 
 
-class BucketSerializer:
-    @staticmethod
-    def encode(obj: AnyBucketT) -> bytes:
-        return dumps(obj)
+class SerializerT(Protocol):
+    def __call__(self, data: Any) -> str:
+        ...
 
-    @staticmethod
-    def decode(data: bytes) -> AnyBucketT:
-        decoded = loads(data)
-        if not isinstance(decoded, dict):
-            raise ValueError(f"Can't decode data to Bucket: {data!r}.")
-        try:
-            return ArgsBucket(**decoded)
-        except TypeError:
-            pass
-        try:
-            return ResultBucket(**decoded)
-        except TypeError:
-            pass
-        raise ValueError(f"Can't decode data to Bucket: {data!r}.")
+
+def default_serializer(data: Any) -> str:
+    if PYDANTIC_IMPORTED:
+        if isinstance(data, pydantic.BaseModel):
+            return data.json()
+    return orjson.dumps(data).decode()

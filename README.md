@@ -28,12 +28,13 @@ Producer:
 
 ```python
 import asyncio
-from repid import Repid, Job
+from repid import Repid, Connection, RabbitBroker, Job
 
-Repid("amqp://user:password@localhost:5672")
+myrepid = Repid(Connection(RabbitBroker("amqp://user:password@localhost:5672")))
 
 async def main():
-  await Job(name="awesome_job").enqueue()
+  async with myrepid.connect():
+    await Job(name="awesome_job").enqueue()
 
 asyncio.run(main())
 ```
@@ -42,18 +43,23 @@ Consumer:
 
 ```python
 import asyncio
-from repid import Repid, Worker, Job
+from repid import Repid, Router, Connection, RabbitBroker, Worker, Job
 
-Repid("amqp://user:password@localhost:5672")
+myrepid = Repid(Connection(RabbitBroker("amqp://user:password@localhost:5672")))
 
-myworker = Worker()
+r = Router()
 
-@myworker.actor()
+@r.actor
 async def awesome_job() -> None:
   print("Hello async jobs!")
   await do_some_async_stuff()
 
-asyncio.run(myworker.run())
+async def main():
+  async with myrepid.connect():
+    w = Worker(routers=[r])
+    await w.run()
+
+asyncio.run(main())
 ```
 
 Check out [user guide] to learn more!

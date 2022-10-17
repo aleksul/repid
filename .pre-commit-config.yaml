@@ -1,3 +1,7 @@
+ci:
+  skip:
+    - mypy
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.3.0
@@ -29,3 +33,13 @@ repos:
           - flake8-type-checking
           - flake8-logging-format
           - yesqa
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        language: python
+        pass_filenames: false
+        entry: pdm run mypy .
+        types: [python]
+        require_serial: true

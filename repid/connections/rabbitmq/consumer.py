@@ -80,7 +80,7 @@ class _RabbitConsumer(ConsumerT):
                     "while finishing consumer.",
                     extra=dict(routing_key=key),
                 )
-        await asyncio.gather(*rejects, return_exceptions=True)
+        await asyncio.gather(*rejects)
 
     async def on_new_message(self, message: aiormq.abc.DeliveredMessage) -> None:
         # get or set message id

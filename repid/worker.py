@@ -11,6 +11,7 @@ from repid.queue import Queue
 if TYPE_CHECKING:
     from repid.actor import ActorData
     from repid.connection import Connection
+    from repid.connections.abc import ConsumerT
     from repid.router import Router
 
 
@@ -74,7 +75,7 @@ class Worker:
 
         await asyncio.wait(
             {
-                asyncio.create_task(Queue(queue_name).declare())
+                asyncio.create_task(Queue(queue_name, _connection=self._conn).declare())
                 for queue_name in self._queues_to_routes
             },
             return_when=asyncio.ALL_COMPLETED,
@@ -97,11 +98,20 @@ class Worker:
             )
             queue_consume_tasks.add(t)
 
+        consumers: set[ConsumerT] = set()
         if queue_consume_tasks:
-            await asyncio.wait({*queue_consume_tasks}, return_when=asyncio.ALL_COMPLETED)
+            consumer_futures, _ = await asyncio.wait(
+                queue_consume_tasks, return_when=asyncio.ALL_COMPLETED
+            )
+            for ft in consumer_futures:
+                if ft.exception() is None:
+                    consumers.add(ft.result())
 
         if runner.tasks:
             await asyncio.wait(runner.tasks, return_when=asyncio.ALL_COMPLETED)
+
+        if consumers:
+            await asyncio.wait({c.finish() for c in consumers}, return_when=asyncio.ALL_COMPLETED)
 
         runner.stop_consume_event.set()
         runner.cancel_event.set()

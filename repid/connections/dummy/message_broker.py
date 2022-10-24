@@ -1,73 +1,20 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
-from datetime import datetime
 from typing import TYPE_CHECKING, Iterable
 
-from repid.connections.abc import ConsumerT, MessageBrokerT
+from repid.connections.abc import MessageBrokerT
+from repid.connections.dummy.consumer import _DummyConsumer
 from repid.connections.dummy.utils import DummyQueue, wait_until
 from repid.data._message import Message
 from repid.logger import logger
-from repid.middlewares import InjectMiddleware
 
 if TYPE_CHECKING:
+    from datetime import datetime
 
-    from repid.data.protocols import MessageT, ParametersT, RoutingKeyT
-
-
-class _DummyConsumer(ConsumerT):
-    def __init__(self, broker: DummyMessageBroker, queue_name: str, topics: Iterable[str] | None):
-        self.broker = broker
-        self.queue_name = queue_name
-        self._queue = broker.queues[queue_name]
-        self.topics = topics
-
-        self._started = False
-
-    async def start(self) -> None:
-        await asyncio.sleep(0.1)
-        self._started = True
-        await asyncio.sleep(0.1)
-
-    async def stop(self) -> None:
-        await asyncio.sleep(0.1)
-        self._started = False
-        await asyncio.sleep(0.1)
-
-    async def __update_delayed(self) -> None:
-        await asyncio.sleep(0.1)
-        now = datetime.now()
-        for time_, msgs in self._queue.delayed.items():
-            if time_ > now:
-                self._queue.delayed.pop(time_)
-                for msg in msgs:
-                    self._queue.simple.put_nowait(msg)
-        await asyncio.sleep(0.1)
-
-    async def __anext__(self) -> tuple[RoutingKeyT, str, ParametersT]:
-        await asyncio.sleep(0.1)
-        if not self._started:
-            raise RuntimeError("Consumer wasn't started.")
-        msg: MessageT
-        while True:
-            await self.__update_delayed()
-            with suppress(asyncio.TimeoutError):
-                msg = await asyncio.wait_for(self._queue.simple.get(), timeout=1.0)
-                if msg.parameters.is_overdue:
-                    self._queue.dead.append(msg)
-                elif self.topics and msg.key.topic not in self.topics:
-                    self._queue.simple.put_nowait(msg)
-                else:
-                    break
-            await asyncio.sleep(0.1)
-        self._queue.processing.add(msg)
-
-        await asyncio.sleep(0.1)
-        return (msg.key, msg.payload, msg.parameters)
+    from repid.data.protocols import ParametersT, RoutingKeyT
 
 
-@InjectMiddleware
 class DummyMessageBroker(MessageBrokerT):
     def __init__(self) -> None:
         self.queues: dict[str, DummyQueue] = {}
@@ -89,7 +36,9 @@ class DummyMessageBroker(MessageBrokerT):
             "Consuming from queue '{queue_name}'.",
             extra=dict(queue_name=queue_name, topics=topics),
         )
-        return _DummyConsumer(self, queue_name, topics)
+        consumer = _DummyConsumer(self, queue_name, topics)
+        consumer._signal_emitter = self._signal_emitter
+        return consumer
 
     async def enqueue(
         self,

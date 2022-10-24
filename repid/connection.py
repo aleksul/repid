@@ -1,9 +1,8 @@
 import asyncio
-import inspect
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Union
 
-from repid.middlewares import Middleware, MiddlewareWrapper
+from repid.middlewares import Middleware
 
 if TYPE_CHECKING:
     from repid.connections import BucketBrokerT, MessageBrokerT
@@ -28,9 +27,7 @@ class Connection:
         for proto in [self.message_broker, self.args_bucket_broker, self.results_bucket_broker]:
             if proto is None:
                 continue
-            for _, attr in inspect.getmembers(proto):
-                if isinstance(attr, MiddlewareWrapper):
-                    attr._repid_signal_emitter = self.middleware.emit_signal
+            proto._signal_emitter = self.middleware.emit_signal
 
     async def connect(self) -> None:
         await asyncio.gather(

@@ -6,13 +6,12 @@ from typing import TYPE_CHECKING
 from repid.connections.abc import BucketBrokerT
 from repid.data._buckets import ResultBucket
 from repid.logger import logger
-from repid.middlewares.injector import InjectMiddleware
 
 if TYPE_CHECKING:
     from repid.data.protocols import BucketT
 
 
-class _DummyBucketBroker(BucketBrokerT):
+class DummyBucketBroker(BucketBrokerT):
     def __init__(self) -> None:
         self.__storage: dict[str, BucketT] = {}
 
@@ -42,11 +41,5 @@ class _DummyBucketBroker(BucketBrokerT):
         await asyncio.sleep(0.1)
 
 
-@InjectMiddleware
-class DummyBucketBroker(_DummyBucketBroker):
-    pass
-
-
-@InjectMiddleware
-class DummyResultBucketBroker(_DummyBucketBroker):
+class DummyResultBucketBroker(DummyBucketBroker):
     BUCKET_CLASS = ResultBucket

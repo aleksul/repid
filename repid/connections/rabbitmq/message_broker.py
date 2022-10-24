@@ -191,7 +191,6 @@ class RabbitBroker(MessageBrokerT):
                 channel.queue_purge(f"{queue_name}:delayed"),
                 channel.queue_purge(f"{queue_name}:dead"),
             ],
-            return_exceptions=True,
         )
 
     async def queue_delete(self, queue_name: str) -> None:
@@ -203,5 +202,4 @@ class RabbitBroker(MessageBrokerT):
                 channel.queue_delete(f"{queue_name}:delayed"),
                 channel.queue_delete(f"{queue_name}:dead"),
             ],
-            return_exceptions=True,
         )

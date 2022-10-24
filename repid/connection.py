@@ -39,8 +39,7 @@ class Connection:
                     self.results_bucket_broker,
                 ]
                 if proto is not None
-            ],
-            return_exceptions=True
+            ]
         )
 
     async def disconnect(self) -> None:
@@ -53,8 +52,7 @@ class Connection:
                     self.results_bucket_broker,
                 ]
                 if proto is not None
-            ],
-            return_exceptions=True
+            ]
         )
 
     @property

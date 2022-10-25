@@ -11,19 +11,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Setup PDM
-        uses: pdm-project/setup-pdm@v2
-        with:
-          python-version: "3.8"
-
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Cache dependencies
-        uses: actions/cache@v3
+      - name: Setup PDM
+        uses: pdm-project/setup-pdm@v3
         with:
-          path: .venv
-          key: ${{ runner.os }}-pdm-${{ hashFiles('pdm.lock') }}
+          python-version: "3.8"
+          cache: true
 
       - name: Install dependencies
         run: pdm install --no-lock -G :all

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import TYPE_CHECKING, Callable, NamedTuple, TypeVar
+from typing import TYPE_CHECKING, Callable, NamedTuple, TypeVar, overload
 
 from repid._asyncify import asyncify
 from repid.actor import ActorData
@@ -42,6 +42,32 @@ class Router:
     def topics_by_queue(self) -> dict[str, frozenset[str]]:
         topics = self.topics
         return {q: frozenset(t for t in topics if self.actors[t].queue == q) for q in self.queues}
+
+    @overload
+    def actor(
+        self,
+        fn: None = None,
+        /,
+        name: str | None = None,
+        queue: str | None = None,
+        retry_policy: RetryPolicyT | None = None,
+        run_in_process: bool | None = None,
+        converter: type[ConverterT] | None = None,
+    ) -> Callable[[YourFunc], YourFunc]:
+        ...
+
+    @overload
+    def actor(
+        self,
+        fn: YourFunc,
+        /,
+        name: str | None = None,
+        queue: str | None = None,
+        retry_policy: RetryPolicyT | None = None,
+        run_in_process: bool | None = None,
+        converter: type[ConverterT] | None = None,
+    ) -> YourFunc:
+        ...
 
     def actor(
         self,

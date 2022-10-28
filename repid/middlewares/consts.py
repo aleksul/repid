@@ -1,6 +1,6 @@
 from itertools import product
 
-AVAILABLE_FUNCTIONS = (
+WRAPPED = (
     "consume",
     "enqueue",
     "queue_declare",
@@ -16,6 +16,4 @@ AVAILABLE_FUNCTIONS = (
     "actor_run",
 )
 
-POSSIBLE_EVENT_NAMES = set(
-    map(lambda i: i[0] + i[1], product(("before_", "after_"), AVAILABLE_FUNCTIONS))
-)
+SUBSCRIBERS_NAMES = set(map(lambda i: i[0] + i[1], product(("before_", "after_"), WRAPPED)))

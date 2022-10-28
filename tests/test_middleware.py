@@ -8,7 +8,7 @@ import pytest
 from repid import Connection, Queue, Repid
 from repid.connections.abc import BucketBrokerT, MessageBrokerT
 from repid.main import DEFAULT_CONNECTION
-from repid.middlewares import AVAILABLE_FUNCTIONS
+from repid.middlewares import WRAPPED
 
 if TYPE_CHECKING:
     from repid.connections.abc import ConsumerT
@@ -78,7 +78,7 @@ def test_available_functions():
         if name.endswith("connect"):
             continue
         if isfunction(getattr(MessageBrokerT, name, None) or getattr(BucketBrokerT, name, None)):
-            assert name in AVAILABLE_FUNCTIONS
+            assert name in WRAPPED
 
 
 async def test_middleware_double_call(dummy_recursive_connection: Connection):
@@ -121,7 +121,7 @@ async def test_error_in_middleware(caplog, dummy_recursive_connection: Connectio
             lambda x: all(
                 (
                     "ERROR" in x,
-                    "Event 'before_queue_flush'" in x,
+                    "Subscriber 'before_queue_flush'" in x,
                 )
             ),
             caplog.text.splitlines(),

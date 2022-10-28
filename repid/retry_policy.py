@@ -15,7 +15,7 @@ class RetryPolicyT(Protocol):
         """
 
 
-def default_retry_policy(
+def default_retry_policy_factory(
     min_backoff: int = 10,
     max_backoff: int = 86400,
     multiplier: int = 5,

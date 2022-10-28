@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Callable, NamedTuple, TypeVar, overload
 from repid._asyncify import asyncify
 from repid.actor import ActorData
 from repid.converter import DefaultConverter
-from repid.retry_policy import default_retry_policy
+from repid.retry_policy import default_retry_policy_factory
 from repid.utils import VALID_NAME
 
 if TYPE_CHECKING:
@@ -18,7 +18,7 @@ YourFunc = TypeVar("YourFunc", bound=Callable)
 
 class RouterDefaults(NamedTuple):
     queue: str = "default"
-    retry_policy: RetryPolicyT = default_retry_policy()
+    retry_policy: RetryPolicyT = default_retry_policy_factory()
     run_in_process: bool = False
     converter: type[ConverterT] = DefaultConverter
 

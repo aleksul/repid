@@ -1,22 +1,22 @@
 from __future__ import annotations
 
-from inspect import isfunction
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING, Iterable, Iterator
 
 import pytest
 
 from repid import Connection, Queue, Repid
-from repid.connections.abc import BucketBrokerT, MessageBrokerT
+from repid._processor import _Processor
+from repid.connections.abc import BucketBrokerT, ConsumerT, MessageBrokerT
 from repid.main import DEFAULT_CONNECTION
 from repid.middlewares import WRAPPED
+from repid.middlewares.wrapper import _middleware_wrapper
 
 if TYPE_CHECKING:
-    from repid.connections.abc import ConsumerT
     from repid.data.protocols import ParametersT, RoutingKeyT
 
 
 @pytest.fixture()
-def dummy_recursive_connection():
+def dummy_recursive_connection() -> Iterator[Connection]:
     class TestRecursiveConnection(MessageBrokerT):
         async def queue_flush(self, queue_name: str) -> None:
             pass
@@ -71,32 +71,33 @@ def dummy_recursive_connection():
     DEFAULT_CONNECTION.reset(contextvar_token)
 
 
-def test_available_functions():
-    for name in dir(MessageBrokerT) + dir(BucketBrokerT):
-        if name.startswith("__"):
-            continue
-        if name.endswith("connect"):
-            continue
-        if isfunction(getattr(MessageBrokerT, name, None) or getattr(BucketBrokerT, name, None)):
-            assert name in WRAPPED
+def test_available_functions(fake_connection: Connection) -> None:
+    for name in WRAPPED:
+        assert name in (
+            MessageBrokerT.__WRAPPED_METHODS__
+            + BucketBrokerT.__WRAPPED_METHODS__
+            + ConsumerT.__WRAPPED_METHODS__
+            + ("actor_run",)
+        )
+    assert isinstance(_Processor(fake_connection).actor_run, _middleware_wrapper)
 
 
-async def test_middleware_double_call(dummy_recursive_connection: Connection):
+async def test_middleware_double_call(dummy_recursive_connection: Connection) -> None:
     counter = 0
 
     class TestMiddleware:
-        async def before_queue_flush(self, queue_name: str):
+        async def before_queue_flush(self, queue_name: str) -> None:
             raise Exception("This should not be called")
 
-        async def after_queue_flush(self):
+        async def after_queue_flush(self) -> None:
             raise Exception("This should not be called")
 
         @staticmethod
-        async def before_queue_delete(queue_name: str):
+        async def before_queue_delete(queue_name: str) -> None:
             nonlocal counter
             counter += 1
 
-        async def after_queue_delete(self):
+        async def after_queue_delete(self) -> None:
             nonlocal counter
             counter += 1
 
@@ -109,9 +110,12 @@ async def test_middleware_double_call(dummy_recursive_connection: Connection):
     assert counter == 4
 
 
-async def test_error_in_middleware(caplog, dummy_recursive_connection: Connection):
+async def test_error_in_middleware(
+    caplog: pytest.LogCaptureFixture,
+    dummy_recursive_connection: Connection,
+) -> None:
     class TestMiddleware:
-        async def before_queue_flush(self, queue_name: str):
+        async def before_queue_flush(self, queue_name: str) -> None:
             raise Exception("Some random exception")
 
     dummy_recursive_connection.middleware.add_middleware(TestMiddleware())

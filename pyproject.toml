@@ -74,7 +74,14 @@ check_untyped_defs      = true
 warn_return_any         = true
 warn_unused_ignores     = true
 show_error_codes        = true
-exclude                 = "^tests/"
+
+[[tool.mypy.overrides]]
+module                  = "tests.*"
+disallow_any_unimported = false
+
+[[tool.mypy.overrides]]
+module                 = ["pytest_docker_tools", "pytest_lazyfixture"]
+ignore_missing_imports = true
 
 [tool.flake8]
 max-line-length = 100

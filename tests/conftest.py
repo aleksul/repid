@@ -1,4 +1,5 @@
 import asyncio
+from typing import AsyncIterator, Iterator
 
 import pytest
 
@@ -13,11 +14,9 @@ from repid.main import DEFAULT_CONNECTION
 
 
 @pytest.fixture(scope="session")
-def event_loop():
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
+def event_loop() -> Iterator[asyncio.AbstractEventLoop]:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     yield loop
     loop.close()
 
@@ -29,14 +28,14 @@ def fake_repid() -> Repid:
 
 
 @pytest.fixture()
-async def __fake_connection(fake_repid: Repid) -> Connection:
+async def __fake_connection(fake_repid: Repid) -> AsyncIterator[Connection]:
     await fake_repid._conn.connect()
     yield fake_repid._conn
     await fake_repid._conn.disconnect()
 
 
 @pytest.fixture()
-def fake_connection(__fake_connection: Connection) -> Connection:
+def fake_connection(__fake_connection: Connection) -> Iterator[Connection]:
     token = DEFAULT_CONNECTION.set(__fake_connection)
     yield __fake_connection
     DEFAULT_CONNECTION.reset(token)

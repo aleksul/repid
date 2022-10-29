@@ -1,5 +1,5 @@
 from time import sleep
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from pytest_docker_tools import container
@@ -9,7 +9,7 @@ from repid import Connection, Repid
 from repid.connections import RabbitBroker
 
 if TYPE_CHECKING:
-    from pytest_docker_tools.wrappers import Container
+    from pytest_docker_tools import wrappers
 
 # redis_container = container(
 #     image="redis:7.0-alpine",
@@ -30,7 +30,7 @@ rabbitmq_container = container(
 
 
 @pytest.fixture(scope="session")
-def rabbitmq_connection(rabbitmq_container: "Container") -> Repid:
+def rabbitmq_connection(rabbitmq_container: "wrappers.Container") -> Repid:
     while not rabbitmq_container.ready():
         sleep(0.1)
     repid = Repid(
@@ -44,22 +44,20 @@ def rabbitmq_connection(rabbitmq_container: "Container") -> Repid:
 
 
 @pytest.fixture(scope="session")
-def redis_connection(redis_container) -> Repid:
-    repid = Repid(
-        f"redis://:test@localhost:{redis_container.ports['6379/tcp'][0]}/2",
-        f"redis://:test@localhost:{redis_container.ports['6379/tcp'][0]}/3",
-        f"redis://:test@localhost:{redis_container.ports['6379/tcp'][0]}/4",
-    )
-    return repid
+def redis_connection(redis_container: "wrappers.Container") -> Repid:
+    while not redis_container.ready():
+        sleep(0.1)
+
+    repid = None
+    return repid  # type: ignore[return-value]
 
 
 @pytest.fixture(
     scope="session",
-    autouse=True,
     params=[
         lazy_fixture("rabbitmq_connection"),
         # lazy_fixture("redis_connection"),
     ],
 )
-def autoconn(request):
+def autoconn(request: pytest.FixtureRequest) -> Any:
     return request.param

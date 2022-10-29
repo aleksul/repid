@@ -5,7 +5,7 @@ from random import random
 from repid import Job, Repid, Router, Worker
 
 
-async def test_simple_job(autoconn: Repid):
+async def test_simple_job(autoconn: Repid) -> None:
     async with autoconn.connect():
         j = Job("awesome_job")
         await j.queue.declare()
@@ -17,7 +17,7 @@ async def test_simple_job(autoconn: Repid):
     hit = False
 
     @router.actor
-    async def awesome_job():
+    async def awesome_job() -> None:
         nonlocal hit
         hit = True
 
@@ -28,7 +28,7 @@ async def test_simple_job(autoconn: Repid):
     assert hit
 
 
-async def test_args_job(autoconn: Repid):
+async def test_args_job(autoconn: Repid) -> None:
     assertion1 = random()
     assertion2 = random()
 
@@ -43,7 +43,7 @@ async def test_args_job(autoconn: Repid):
     hit = False
 
     @router.actor
-    async def awesome_job(my_arg1: float, my_arg2: float):
+    async def awesome_job(my_arg1: float, my_arg2: float) -> None:
         nonlocal hit, assertion1, assertion2
         assert my_arg1 == assertion1
         assert my_arg2 == assertion2
@@ -56,7 +56,7 @@ async def test_args_job(autoconn: Repid):
     assert hit
 
 
-async def test_deferred_by_job(autoconn: Repid):
+async def test_deferred_by_job(autoconn: Repid) -> None:
     async with autoconn.connect():
         j = Job("awesome_job", deferred_by=timedelta(seconds=1))
         await j.queue.declare()
@@ -68,7 +68,7 @@ async def test_deferred_by_job(autoconn: Repid):
     hit = 0
 
     @router.actor
-    async def awesome_job():
+    async def awesome_job() -> None:
         nonlocal hit
         hit += 1
 
@@ -80,7 +80,7 @@ async def test_deferred_by_job(autoconn: Repid):
     assert hit == 3
 
 
-async def test_retries(autoconn: Repid):
+async def test_retries(autoconn: Repid) -> None:
     async with autoconn.connect():
         j = Job("awesome_job", retries=3)
         await j.queue.declare()
@@ -91,8 +91,11 @@ async def test_retries(autoconn: Repid):
 
     hit = 0
 
-    @router.actor(retry_policy=lambda retry_number: timedelta(seconds=0))
-    async def awesome_job():
+    def zero_retry_policy(retry_number: int = 1) -> timedelta:
+        return timedelta(seconds=0)
+
+    @router.actor(retry_policy=zero_retry_policy)
+    async def awesome_job() -> None:
         nonlocal hit
         hit += 1
         if hit < 2:
@@ -104,7 +107,7 @@ async def test_retries(autoconn: Repid):
     assert hit == 2
 
 
-async def test_worker_no_routers(autoconn: Repid):
+async def test_worker_no_routers(autoconn: Repid) -> None:
     async with autoconn.connect():
         myworker = Worker()
         await myworker.run()

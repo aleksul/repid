@@ -33,7 +33,7 @@ class _RabbitConsumer(ConsumerT):
         self._consumer_tag: str | None = None
         self.__is_paused: bool = False
 
-    async def __anext__(self) -> tuple[RoutingKeyT, str, ParametersT]:
+    async def consume(self) -> tuple[RoutingKeyT, str, ParametersT]:
         return await self.queue.get()
 
     async def __start(self) -> None:

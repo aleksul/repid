@@ -44,7 +44,7 @@ class _DummyConsumer(ConsumerT):
                     self._queue.simple.put_nowait(msg)
         await asyncio.sleep(0.1)
 
-    async def __anext__(self) -> tuple[RoutingKeyT, str, ParametersT]:
+    async def consume(self) -> tuple[RoutingKeyT, str, ParametersT]:
         await asyncio.sleep(0.1)
         if not self._started:
             raise RuntimeError("Consumer wasn't started.")

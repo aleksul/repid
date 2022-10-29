@@ -16,6 +16,8 @@ SignalEmitterT = Callable[[str, Dict[str, Any]], Coroutine]
 
 
 class ConsumerT(ABC):
+    __WRAPPED_METHODS__ = ("consume",)
+
     @abstractmethod
     async def start(self) -> None:
         """Start to consume messages from the queue."""
@@ -34,6 +36,10 @@ class ConsumerT(ABC):
         Reject all messages (if any),
         which are currently related to this consumer."""
 
+    @abstractmethod
+    async def consume(self) -> tuple[RoutingKeyT, EncodedPayloadT, ParametersT]:
+        """Consume one message. Consumer must be started."""
+
     async def __aenter__(self) -> ConsumerT:
         await self.start()
         return self
@@ -44,16 +50,15 @@ class ConsumerT(ABC):
     def __aiter__(self) -> ConsumerT:
         return self
 
-    @abstractmethod
     async def __anext__(self) -> tuple[RoutingKeyT, EncodedPayloadT, ParametersT]:
-        """Consume one message. Consumer must be started."""
+        return await self.consume()
 
     def __new__(cls: type[ConsumerT], *args: tuple, **kwargs: dict) -> ConsumerT:
         inst = super().__new__(cls)
-        inst.__anext__ = middleware_wrapper(  # type: ignore[assignment]
-            inst.__anext__,
-            name="consume",
-        )
+
+        for method in inst.__WRAPPED_METHODS__:
+            setattr(inst, method, middleware_wrapper(getattr(inst, method)))
+
         return inst
 
     @property
@@ -65,7 +70,8 @@ class ConsumerT(ABC):
     @_signal_emitter.setter
     def _signal_emitter(self, signal_emitter: SignalEmitterT) -> None:
         self.__repid_signal_emitter = signal_emitter
-        self.__anext__._repid_signal_emitter = signal_emitter  # type: ignore[attr-defined]
+        for method in self.__WRAPPED_METHODS__:
+            getattr(self, method)._repid_signal_emitter = signal_emitter
 
 
 class MessageBrokerT(ABC):
@@ -114,7 +120,7 @@ class MessageBrokerT(ABC):
 
     @abstractmethod
     async def reject(self, key: RoutingKeyT) -> None:
-        """Infroms message broker that job needs to be rescheduled on another worker."""
+        """Informs message broker that job needs to be rescheduled on another worker."""
 
     @abstractmethod
     async def ack(self, key: RoutingKeyT) -> None:

@@ -2,14 +2,18 @@ import asyncio
 import os
 from signal import SIGINT
 
+import pytest
+
 from repid import Job, Router, Worker
 
+pytestmark = pytest.mark.usefixtures("fake_connection")
 
-async def test_worker_sigint(fake_connection):
+
+async def test_worker_sigint() -> None:
     r = Router()
 
     @r.actor
-    async def awesome_job():
+    async def awesome_job() -> None:
         pass
 
     myworker = Worker(routers=[r], gracefull_shutdown_time=1)
@@ -22,7 +26,7 @@ async def test_worker_sigint(fake_connection):
     await task
 
 
-async def test_worker_long_task_reject(fake_connection):
+async def test_worker_long_task_reject() -> None:
     r = Router()
     j = Job("awesome_job")
     await j.queue.declare()
@@ -31,7 +35,7 @@ async def test_worker_long_task_reject(fake_connection):
     never_hit = False
 
     @r.actor
-    async def awesome_job():
+    async def awesome_job() -> None:
         nonlocal hit, never_hit
         hit = True
         await asyncio.sleep(10.0)
@@ -48,7 +52,7 @@ async def test_worker_long_task_reject(fake_connection):
     assert not never_hit
 
 
-async def test_worker_short_task_finishes(fake_connection):
+async def test_worker_short_task_finishes() -> None:
     r = Router()
 
     j = Job("awesome_job")
@@ -58,7 +62,7 @@ async def test_worker_short_task_finishes(fake_connection):
     hit = False
 
     @r.actor
-    async def awesome_job():
+    async def awesome_job() -> None:
         nonlocal hit
         await asyncio.sleep(1.9)
         hit = True

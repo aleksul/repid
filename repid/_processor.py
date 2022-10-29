@@ -22,7 +22,6 @@ class _Processor:
 
     def __init__(self, _conn: Connection) -> None:
         self._conn = _conn
-        self.actor_run = middleware_wrapper(self.actor_run)  # type: ignore[assignment]
         self.actor_run._repid_signal_emitter = self._conn.middleware.emit_signal
         self._processed = 0
 
@@ -34,8 +33,9 @@ class _Processor:
                 return bucket.data
         return initial_payload
 
+    @staticmethod
+    @middleware_wrapper
     async def actor_run(
-        self,
         actor: ActorData,
         message: MessageT,
         args: list,

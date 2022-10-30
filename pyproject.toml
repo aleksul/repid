@@ -50,6 +50,8 @@ tests = [
     "pytest-docker-tools",
     "pytest-asyncio",
     "pytest-lazy-fixture",
+    "pytest-sugar",
+    "py>==1.11.0",
     "hypothesis",
     "pydantic<2.0.0,>=1.10.0",
 ]
@@ -57,7 +59,8 @@ pre-commit = ["pre-commit"]
 docs = ["mkdocs-material", "mike"]
 
 [tool.coverage]
-report.fail_under = 70
+report.fail_under    = 70
+report.exclude_lines = ['\.\.\.', 'if TYPE_CHECKING:']
 
 [tool.black]
 line-length = 100

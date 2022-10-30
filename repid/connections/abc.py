@@ -3,7 +3,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Coroutine, Dict, Iterable
 
-from repid.data._buckets import ArgsBucket
 from repid.data._key import RoutingKey
 from repid.data._parameters import Parameters
 from repid.middlewares import middleware_wrapper
@@ -173,7 +172,7 @@ class MessageBrokerT(ABC):
 
 
 class BucketBrokerT(ABC):
-    BUCKET_CLASS: ClassVar[type[BucketT]] = ArgsBucket
+    BUCKET_CLASS: type[BucketT]
 
     __WRAPPED_METHODS__ = (
         "get_bucket",

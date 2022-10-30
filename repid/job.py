@@ -1,7 +1,8 @@
+from __future__ import annotations
+
 import uuid
-from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, ClassVar, Tuple, Union
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import orjson
 
@@ -9,124 +10,180 @@ from repid.data import ParametersT, PrioritiesT, ResultBucketT, RoutingKeyT
 from repid.main import DEFAULT_CONNECTION
 from repid.queue import Queue
 from repid.serializer import default_serializer
-from repid.utils import SLOTS_DATACLASS, VALID_ID, VALID_NAME
+from repid.utils import VALID_ID, VALID_NAME
 
 if TYPE_CHECKING:
     from repid.connection import Connection
     from repid.serializer import SerializerT
 
 
-@dataclass(**SLOTS_DATACLASS)
 class Job:
-    ARGS_SERIALIZER: ClassVar["SerializerT"] = default_serializer
+    ARGS_SERIALIZER: ClassVar[SerializerT] = default_serializer
+
+    __slots__ = (
+        "name",
+        "queue",
+        "priority",
+        "id_",
+        "deferred_until",
+        "deferred_by",
+        "cron",
+        "retries",
+        "timeout",
+        "ttl",
+        "timestamp",
+        "args_id",
+        "args_ttl",
+        "args",
+        "use_args_bucketer",
+        "result_id",
+        "result_ttl",
+        "store_result",
+        "_conn",
+    )
 
     name: str
-    queue: Union[str, Queue] = "default"
-    priority: PrioritiesT = PrioritiesT.MEDIUM
-    id_: Union[str, None] = None
+    queue: Queue
+    priority: PrioritiesT
+    id_: str | None
+    deferred_until: datetime | None
+    deferred_by: timedelta | None
+    cron: str | None
+    retries: int
+    timeout: timedelta
+    ttl: timedelta | None
+    timestamp: datetime
+    args_id: str
+    args_ttl: timedelta | None
+    args: str | None
+    use_args_bucketer: bool
+    result_id: str
+    result_ttl: timedelta | None
+    store_result: bool
+    _conn: Connection
 
-    deferred_until: Union[datetime, None] = None
-    deferred_by: Union[timedelta, None] = None
-    cron: Union[str, None] = None
+    def __init__(
+        self,
+        name: str,
+        queue: str | Queue = "default",
+        priority: PrioritiesT = PrioritiesT.MEDIUM,
+        id_: str | None = None,
+        deferred_until: datetime | None = None,
+        deferred_by: timedelta | None = None,
+        cron: str | None = None,
+        retries: int = 1,
+        timeout: timedelta = timedelta(minutes=10),  # noqa: B008
+        ttl: timedelta | None = None,
+        args_id: str | None = None,  # default: uuid4
+        args_ttl: timedelta | None = None,
+        args: Any = None,
+        use_args_bucketer: bool | None = None,
+        result_id: str | None = None,  # default: uuid4
+        result_ttl: timedelta | None = timedelta(days=1),  # noqa: B008
+        store_result: bool | None = None,
+        _connection: Connection | None = None,
+    ) -> None:
+        self._conn = _connection or DEFAULT_CONNECTION.get()
 
-    retries: int = 1
-    timeout: timedelta = field(default_factory=lambda: timedelta(minutes=10))
-
-    ttl: Union[timedelta, None] = None
-    timestamp: datetime = field(default_factory=datetime.now, init=False)
-
-    args_id: str = field(default_factory=lambda: uuid.uuid4().hex)
-    args_ttl: Union[timedelta, None] = None
-    args: Any = None
-    use_args_bucketer: Union[bool, None] = None
-
-    result_id: str = field(default_factory=lambda: uuid.uuid4().hex)
-    result_ttl: Union[timedelta, None] = field(default_factory=lambda: timedelta(days=1))
-    store_result: Union[bool, None] = None
-
-    _connection: "Connection" = field(default_factory=lambda: DEFAULT_CONNECTION.get(), repr=False)
-
-    def __post_init__(self) -> None:
+        self.name = name
         if not VALID_NAME.fullmatch(self.name):
             raise ValueError(
                 "Job name must start with a letter or an underscore "
                 "followed by letters, digits, dashes or underscores."
             )
 
+        self.queue = queue if isinstance(queue, Queue) else Queue(queue, self._conn)
+
+        self.priority = priority
+
+        self.id_ = id_
         if self.id_ is not None and not VALID_ID.fullmatch(self.id_):
             raise ValueError("Job id must contain only letters, numbers, dashes and underscores.")
 
-        self.queue: Queue
-        if not isinstance(self.queue, Queue):
-            self.queue = Queue(self.queue, self._connection)
-
+        self.deferred_until = deferred_until
+        self.deferred_by = deferred_by
+        self.cron = cron
         if (self.cron is not None) and (self.deferred_by is not None):
             raise ValueError("Usage of 'cron' AND 'deferred_by' together is prohibited.")
-
         if self.deferred_by is not None and self.deferred_by.total_seconds() < 1:
             raise ValueError("Deferred_by must be greater than or equal to 1 second.")
 
+        self.retries = retries
         if self.retries < 1:
             raise ValueError("Retries must be greater than or equal to 1.")
 
+        self.timeout = timeout
         if self.timeout.total_seconds() < 1:
             raise ValueError("Execution timeout must be greater than or equal to 1 second.")
 
+        self.ttl = ttl
         if self.ttl is not None and self.ttl.total_seconds() < 1:
             raise ValueError("TTL must be greater than or equal to 1 second.")
 
-        self.args: str = Job.ARGS_SERIALIZER(self.args)
+        self.args_id = args_id if isinstance(args_id, str) else uuid.uuid4().hex
+        self.args_ttl = args_ttl
+        if self.args_ttl is not None and self.args_ttl.total_seconds() < 1:
+            raise ValueError("Args TTL must be greater than or equal to 1 second.")
+        self.args = None if args is None else Job.ARGS_SERIALIZER(args)
+        self.use_args_bucketer = (
+            (self._conn.args_bucket_broker is not None)
+            if use_args_bucketer is None
+            else use_args_bucketer
+        )
 
-        if self.use_args_bucketer is None:
-            self.use_args_bucketer = self._connection.args_bucket_broker is not None
-
+        self.result_id = result_id if isinstance(result_id, str) else uuid.uuid4().hex
+        self.result_ttl = result_ttl
         if self.result_id is not None and not VALID_ID.fullmatch(self.result_id):
             raise ValueError(
                 "Result_id must contain only letters, numbers, dashes and underscores."
             )
-
         if self.result_ttl is not None and self.result_ttl.total_seconds() < 1:
             raise ValueError("Result_ttl must be greater than or equal to 1 second.")
+        self.store_result = (
+            (self._conn.results_bucket_broker is not None) if store_result is None else store_result
+        )
 
-        if self.store_result is None:
-            self.store_result = self._connection.results_bucket_broker is not None
+        self.timestamp = datetime.now()
 
-    async def enqueue(self, store_args: bool = True) -> Tuple[RoutingKeyT, str, ParametersT]:
-        stored_args = False
-        if store_args and self.use_args_bucketer and self.args is not None:
-            bucket = self._connection._ab.BUCKET_CLASS(data=self.args, ttl=self.args_ttl)
-            await self._connection._ab.store_bucket(self.args_id, bucket)
-            stored_args = True
-        key = self._connection.message_broker.ROUTING_KEY_CLASS(
+    def _construct_routing_key(self) -> RoutingKeyT:
+        return self._conn.message_broker.ROUTING_KEY_CLASS(
             id_=self.id_ or uuid.uuid4().hex,
             topic=self.name,
-            queue=self.queue.name,  # type: ignore[union-attr]
+            queue=self.queue.name,
             priority=self.priority.value,
         )
-        parameters = self._connection.message_broker.PARAMETERS_CLASS(
+
+    def _construct_parameters(self) -> ParametersT:
+        return self._conn.message_broker.PARAMETERS_CLASS(
             execution_timeout=self.timeout,
-            retries=self._connection.message_broker.PARAMETERS_CLASS.RETRIES_CLASS(
+            retries=self._conn.message_broker.PARAMETERS_CLASS.RETRIES_CLASS(
                 max_amount=self.retries
             ),
-            result=self._connection.message_broker.PARAMETERS_CLASS.RESULT_CLASS(
+            result=self._conn.message_broker.PARAMETERS_CLASS.RESULT_CLASS(
                 id_=self.result_id, ttl=self.result_ttl
             )
             if self.store_result
             else None,
-            delay=self._connection.message_broker.PARAMETERS_CLASS.DELAY_CLASS(
+            delay=self._conn.message_broker.PARAMETERS_CLASS.DELAY_CLASS(
                 delay_until=self.deferred_until, defer_by=self.deferred_by, cron=self.cron
             ),
             timestamp=self.timestamp,
             ttl=self.ttl,
         )
-        await self._connection.message_broker.enqueue(
-            key,
-            orjson.dumps(dict(__repid_payload_id=self.args_id)).decode()
-            if stored_args
-            else self.args,
-            parameters,
-        )
-        return (key, self.args, parameters)
+
+    async def _construct_args(self) -> str:
+        if self.use_args_bucketer and self.args is not None:
+            bucket = self._conn._ab.BUCKET_CLASS(data=self.args, ttl=self.args_ttl)
+            await self._conn._ab.store_bucket(self.args_id, bucket)
+            return orjson.dumps(dict(__repid_payload_id=self.args_id)).decode()
+        return self.args or ""
+
+    async def enqueue(self) -> tuple[RoutingKeyT, str, ParametersT]:
+        key = self._construct_routing_key()
+        parameters = self._construct_parameters()
+        args = await self._construct_args()
+        await self._conn.message_broker.enqueue(key, args, parameters)
+        return (key, self.args or "", parameters)
 
     @property
     def is_deferred(self) -> bool:
@@ -143,10 +200,10 @@ class Job:
         return False
 
     @property
-    async def result(self) -> Union[ResultBucketT, None]:
+    async def result(self) -> ResultBucketT | None:
         if self.result_id is None:
             raise ValueError("Result id is not set.")
-        data = await self._connection._rb.get_bucket(self.result_id)
+        data = await self._conn._rb.get_bucket(self.result_id)
         if isinstance(data, ResultBucketT):
             return data
         return None

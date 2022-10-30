@@ -10,6 +10,7 @@
                 "pytest",
                 "-vv",
                 "--hypothesis-verbosity=normal",
+                "--hypothesis-show-statistics",
                 "--disable-warnings",
                 "--cov-report=xml",
                 "--cov=repid",

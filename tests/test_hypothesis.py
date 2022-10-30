@@ -88,8 +88,7 @@ job_st = one_of(deferred_by_job_st, cron_job_st)
 
 @settings(
     suppress_health_check=[HealthCheck.function_scoped_fixture],
-    deadline=timedelta(milliseconds=750),
-    max_examples=1000,
+    max_examples=10000,
 )
 @given(job=job_st)
 @pytest.mark.usefixtures("fake_connection")

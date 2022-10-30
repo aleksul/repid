@@ -22,30 +22,30 @@ class _DummyConsumer(ConsumerT):
         self._started = False
 
     async def start(self) -> None:
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)
         self._started = True
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)
 
     async def finish(self) -> None:
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)
         self._started = False
         for msg in self._queue.processing:
             self._queue.processing.remove(msg)
             self._queue.simple.put_nowait(msg)
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)
 
     async def __update_delayed(self) -> None:
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)
         now = datetime.now()
         for time_, msgs in self._queue.delayed.items():
             if time_ > now:
                 self._queue.delayed.pop(time_)
                 for msg in msgs:
                     self._queue.simple.put_nowait(msg)
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)
 
     async def consume(self) -> tuple[RoutingKeyT, str, ParametersT]:
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)
         if not self._started:
             raise RuntimeError("Consumer wasn't started.")
         msg: MessageT
@@ -59,8 +59,8 @@ class _DummyConsumer(ConsumerT):
                     self._queue.simple.put_nowait(msg)
                 else:
                     break
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0)
         self._queue.processing.add(msg)
 
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)
         return (msg.key, msg.payload, msg.parameters)

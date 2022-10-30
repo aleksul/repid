@@ -3,13 +3,7 @@ from typing import AsyncIterator, Iterator
 
 import pytest
 
-from repid import (
-    Connection,
-    DummyBucketBroker,
-    DummyMessageBroker,
-    DummyResultBucketBroker,
-    Repid,
-)
+from repid import Connection, DummyBucketBroker, DummyMessageBroker, Repid
 from repid.main import DEFAULT_CONNECTION
 
 
@@ -23,7 +17,7 @@ def event_loop() -> Iterator[asyncio.AbstractEventLoop]:
 
 @pytest.fixture()
 def fake_repid() -> Repid:
-    repid = Repid(Connection(DummyMessageBroker(), DummyBucketBroker(), DummyResultBucketBroker()))
+    repid = Repid(Connection(DummyMessageBroker(), DummyBucketBroker(), DummyBucketBroker(True)))
     return repid
 
 

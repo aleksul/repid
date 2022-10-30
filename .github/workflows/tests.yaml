@@ -32,11 +32,15 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: true
 
-      - name: Install dependencies
-        run: pdm install --no-lock -G :all
+      - name: Install or update dependencies
+        run: pdm sync -G :all --clean
 
       - name: Run tests
-        run: pdm run pytest tests/ -vv --hypothesis-show-statistics --hypothesis-verbosity=normal --color=yes --disable-warnings --cov-report=xml --cov=repid
+        run: |
+          pdm run pytest tests/ -vv --diff-symbols \
+          --hypothesis-show-statistics --hypothesis-verbosity=normal \
+          --color=yes --disable-warnings \
+          --cov-report=xml --cov=repid
 
       - name: Upload code coverage
         if: matrix.python-version == '3.8'

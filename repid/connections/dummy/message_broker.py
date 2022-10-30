@@ -21,11 +21,11 @@ class DummyMessageBroker(MessageBrokerT):
 
     async def connect(self) -> None:
         logger.info("Connecting to dummy message broker.")
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)
 
     async def disconnect(self) -> None:
         logger.info("Disconnecting from dummy message broker.")
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)
 
     async def consume(
         self,
@@ -47,7 +47,7 @@ class DummyMessageBroker(MessageBrokerT):
         params: ParametersT | None = None,
     ) -> None:
         logger.debug("Enqueueing message with id: {id_}.", extra=dict(id_=key.id_))
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)
 
         delay: datetime | None = wait_until(params)
 
@@ -57,11 +57,11 @@ class DummyMessageBroker(MessageBrokerT):
         else:
             self.queues[key.queue].simple.put_nowait(msg)
 
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)
 
     async def reject(self, key: RoutingKeyT) -> None:
         logger.debug("Rejecting message with id: {id_}.", extra=dict(id_=key.id_))
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)
 
         q = self.queues[key.queue]
         for msg in q.processing:
@@ -70,11 +70,11 @@ class DummyMessageBroker(MessageBrokerT):
                 q.simple.put_nowait(msg)
                 break
 
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)
 
     async def ack(self, key: RoutingKeyT) -> None:
         logger.debug("Acking message with id: {id_}.", extra=dict(id_=key.id_))
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)
 
         q = self.queues[key.queue]
         for msg in q.processing:
@@ -82,11 +82,11 @@ class DummyMessageBroker(MessageBrokerT):
                 q.processing.remove(msg)
                 break
 
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)
 
     async def nack(self, key: RoutingKeyT) -> None:
         logger.debug("Nacking message with id: {id_}.", extra=dict(id_=key.id_))
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)
 
         q = self.queues[key.queue]
         for msg in q.processing:
@@ -95,7 +95,7 @@ class DummyMessageBroker(MessageBrokerT):
                 q.dead.append(msg)
                 break
 
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)
 
     async def requeue(
         self,
@@ -109,26 +109,26 @@ class DummyMessageBroker(MessageBrokerT):
 
     async def queue_declare(self, queue_name: str) -> None:
         logger.debug("Declaring queue '{queue_name}'.", extra=dict(queue_name=queue_name))
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)
 
         if queue_name not in self.queues:
             self.queues[queue_name] = DummyQueue()
 
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)
 
     async def queue_flush(self, queue_name: str) -> None:
         logger.debug("Flushing queue '{queue_name}'.", extra=dict(queue_name=queue_name))
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)
 
         if queue_name in self.queues:
             self.queues[queue_name] = DummyQueue()
 
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)
 
     async def queue_delete(self, queue_name: str) -> None:
         logger.debug("Deleting queue '{queue_name}'.", extra=dict(queue_name=queue_name))
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)
 
         self.queues.pop(queue_name, None)
 
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)

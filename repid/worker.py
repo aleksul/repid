@@ -111,7 +111,10 @@ class Worker:
             await asyncio.wait(runner.tasks, return_when=asyncio.ALL_COMPLETED)
 
         if consumers:
-            await asyncio.wait({c.finish() for c in consumers}, return_when=asyncio.ALL_COMPLETED)
+            await asyncio.wait(
+                {asyncio.create_task(c.finish()) for c in consumers},
+                return_when=asyncio.ALL_COMPLETED,
+            )
 
         runner.stop_consume_event.set()
         runner.cancel_event.set()

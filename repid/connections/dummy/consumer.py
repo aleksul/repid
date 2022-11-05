@@ -19,12 +19,20 @@ class _DummyConsumer(ConsumerT):
         self._queue = broker.queues[queue_name]
         self.topics = topics
 
+        self._paused = asyncio.Lock()
         self._started = False
 
     async def start(self) -> None:
         await asyncio.sleep(0)
         self._started = True
         await asyncio.sleep(0)
+
+    async def pause(self) -> None:
+        if not self._paused.locked():
+            await self._paused.acquire()
+
+    async def unpause(self) -> None:
+        self._paused.release()
 
     async def finish(self) -> None:
         await asyncio.sleep(0)
@@ -48,6 +56,8 @@ class _DummyConsumer(ConsumerT):
         await asyncio.sleep(0)
         if not self._started:
             raise RuntimeError("Consumer wasn't started.")
+        while self._paused.locked():
+            await asyncio.sleep(0.1)
         msg: MessageT
         while True:
             await self.__update_delayed()

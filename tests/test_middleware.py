@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Iterable, Iterator
+from typing import TYPE_CHECKING, AsyncIterator, Iterable
 
 import pytest
 
-from repid import Connection, Queue, Repid
+from repid import Connection, Queue
 from repid._processor import _Processor
 from repid.connections.abc import BucketBrokerT, ConsumerT, MessageBrokerT
-from repid.main import DEFAULT_CONNECTION
+from repid.main import Repid
 from repid.middlewares import WRAPPED
 from repid.middlewares.wrapper import _middleware_wrapper
 
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture()
-def dummy_recursive_connection() -> Iterator[Connection]:
+async def dummy_recursive_connection() -> AsyncIterator[Connection]:
     class TestRecursiveConnection(MessageBrokerT):
         async def queue_flush(self, queue_name: str) -> None:
             pass
@@ -25,10 +25,10 @@ def dummy_recursive_connection() -> Iterator[Connection]:
             await self.queue_flush(queue_name)
 
         async def connect(self) -> None:
-            raise NotImplementedError
+            pass
 
         async def disconnect(self) -> None:
-            raise NotImplementedError
+            pass
 
         async def consume(
             self,
@@ -65,10 +65,9 @@ def dummy_recursive_connection() -> Iterator[Connection]:
         async def queue_declare(self, queue_name: str) -> None:
             raise NotImplementedError
 
-    repid = Repid(Connection(TestRecursiveConnection()))
-    contextvar_token = DEFAULT_CONNECTION.set(repid._conn)
-    yield repid._conn
-    DEFAULT_CONNECTION.reset(contextvar_token)
+    repid_app = Repid(Connection(TestRecursiveConnection()))
+    async with repid_app.magic(auto_disconnect=True) as conn:
+        yield conn
 
 
 def test_available_functions(fake_connection: Connection) -> None:

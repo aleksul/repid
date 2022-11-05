@@ -5,7 +5,7 @@ import signal
 from typing import TYPE_CHECKING, Callable
 
 from repid._runner import _Runner
-from repid.main import DEFAULT_CONNECTION
+from repid.main import Repid
 from repid.queue import Queue
 
 if TYPE_CHECKING:
@@ -24,7 +24,7 @@ class Worker:
         tasks_limit: int = 1000,
         _connection: Connection | None = None,
     ):
-        self._conn = _connection or DEFAULT_CONNECTION.get()
+        self._conn = _connection or Repid.get_magic_connection()
 
         self.actors: dict[str, ActorData] = {}
         self._queues_to_routes: dict[str, set[str]] = {}

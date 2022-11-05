@@ -4,7 +4,6 @@ from typing import AsyncIterator, Iterator
 import pytest
 
 from repid import Connection, DummyBucketBroker, DummyMessageBroker, Repid
-from repid.main import DEFAULT_CONNECTION
 
 
 @pytest.fixture(scope="session")
@@ -22,14 +21,6 @@ def fake_repid() -> Repid:
 
 
 @pytest.fixture()
-async def __fake_connection(fake_repid: Repid) -> AsyncIterator[Connection]:
-    await fake_repid._conn.connect()
-    yield fake_repid._conn
-    await fake_repid._conn.disconnect()
-
-
-@pytest.fixture()
-def fake_connection(__fake_connection: Connection) -> Iterator[Connection]:
-    token = DEFAULT_CONNECTION.set(__fake_connection)
-    yield __fake_connection
-    DEFAULT_CONNECTION.reset(token)
+async def fake_connection(fake_repid: Repid) -> AsyncIterator[Connection]:
+    async with fake_repid.magic(auto_disconnect=True) as conn:
+        yield conn

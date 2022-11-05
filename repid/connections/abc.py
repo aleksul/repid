@@ -8,7 +8,7 @@ from repid.data._parameters import Parameters
 from repid.middlewares import middleware_wrapper
 
 if TYPE_CHECKING:
-    from repid.data.protocols import BucketT, ParametersT, RoutingKeyT
+    from repid.data.protocols import BucketT, ParametersT, ResultBucketT, RoutingKeyT
 
 EncodedPayloadT = str
 SignalEmitterT = Callable[[str, Dict[str, Any]], Coroutine]
@@ -62,13 +62,13 @@ class ConsumerT(ABC):
 
     @property
     def _signal_emitter(self) -> SignalEmitterT | None:
-        if not hasattr(self, "__repid_signal_emitter"):
+        if not hasattr(self, "_signal_emitter_var"):
             return None
-        return self.__repid_signal_emitter
+        return self._signal_emitter_var
 
     @_signal_emitter.setter
     def _signal_emitter(self, signal_emitter: SignalEmitterT) -> None:
-        self.__repid_signal_emitter = signal_emitter
+        self._signal_emitter_var = signal_emitter
         for method in self.__WRAPPED_METHODS__:
             getattr(self, method)._repid_signal_emitter = signal_emitter
 
@@ -160,19 +160,19 @@ class MessageBrokerT(ABC):
 
     @property
     def _signal_emitter(self) -> SignalEmitterT | None:
-        if not hasattr(self, "__repid_signal_emitter"):
+        if not hasattr(self, "_signal_emitter_var"):
             return None
-        return self.__repid_signal_emitter
+        return self._signal_emitter_var
 
     @_signal_emitter.setter
     def _signal_emitter(self, signal_emitter: SignalEmitterT) -> None:
-        self.__repid_signal_emitter = signal_emitter
+        self._signal_emitter_var = signal_emitter
         for method in self.__WRAPPED_METHODS__:
             getattr(self, method)._repid_signal_emitter = signal_emitter
 
 
 class BucketBrokerT(ABC):
-    BUCKET_CLASS: type[BucketT]
+    BUCKET_CLASS: type[BucketT | ResultBucketT]
 
     __WRAPPED_METHODS__ = (
         "get_bucket",
@@ -210,12 +210,12 @@ class BucketBrokerT(ABC):
 
     @property
     def _signal_emitter(self) -> SignalEmitterT | None:
-        if not hasattr(self, "__repid_signal_emitter"):
+        if not hasattr(self, "_signal_emitter_var"):
             return None
-        return self.__repid_signal_emitter
+        return self._signal_emitter_var
 
     @_signal_emitter.setter
     def _signal_emitter(self, signal_emitter: SignalEmitterT) -> None:
-        self.__repid_signal_emitter = signal_emitter
+        self._signal_emitter_var = signal_emitter
         for method in self.__WRAPPED_METHODS__:
             getattr(self, method)._repid_signal_emitter = signal_emitter

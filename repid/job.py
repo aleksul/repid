@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import orjson
 
 from repid.data import ParametersT, PrioritiesT, ResultBucketT, RoutingKeyT
-from repid.main import DEFAULT_CONNECTION
+from repid.main import Repid
 from repid.queue import Queue
 from repid.serializer import default_serializer
 from repid.utils import VALID_ID, VALID_NAME
@@ -83,7 +83,7 @@ class Job:
         store_result: bool | None = None,
         _connection: Connection | None = None,
     ) -> None:
-        self._conn = _connection or DEFAULT_CONNECTION.get()
+        self._conn = _connection or Repid.get_magic_connection()
 
         self.name = name
         if not VALID_NAME.fullmatch(self.name):

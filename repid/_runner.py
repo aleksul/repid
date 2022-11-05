@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Iterable
 
 from repid._processor import _Processor
 from repid.data._message import Message
-from repid.main import DEFAULT_CONNECTION
+from repid.main import Repid
 
 if TYPE_CHECKING:
     from repid.actor import ActorData
@@ -21,7 +21,7 @@ class _Runner(_Processor):
         tasks_concurrency_limit: int = 1000,
         _connection: Connection | None = None,
     ):
-        self._conn = _connection or DEFAULT_CONNECTION.get()
+        self._conn = _connection or Repid.get_magic_connection()
 
         self._actors: dict[str, ActorData] = {}
         self._queues_to_routes: dict[str, set[str]] = {}

@@ -84,7 +84,7 @@ class _Runner(_Processor):
         topics: Iterable[str],
         actors: dict[str, ActorData],
     ) -> ConsumerT:
-        consumer = await self._conn.message_broker.consume(queue_name, topics)
+        consumer = self._conn.message_broker.get_consumer(queue_name, topics)
         await consumer.start()
         try:
             while True:

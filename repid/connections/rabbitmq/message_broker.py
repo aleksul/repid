@@ -44,6 +44,9 @@ class RabbitBroker(MessageBrokerT):
     def _channel(self) -> aiormq.abc.AbstractChannel:
         if self.__channel is None:
             raise ConnectionError("Channel isn't set.")
+        if self.__channel.is_closed:
+            coro = asyncio.run_coroutine_threadsafe(self.__channel.open(), asyncio.get_event_loop())
+            coro.result(timeout=100)
         return self.__channel
 
     async def connect(self) -> None:

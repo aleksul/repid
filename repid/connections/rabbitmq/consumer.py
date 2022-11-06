@@ -109,13 +109,15 @@ class _RabbitConsumer(ConsumerT):
             msg_topic = message.header.properties.headers.get("topic", None)
             msg_queue = message.header.properties.headers.get("queue", "default")
 
-        # reject the message with no topic set
+        # reject the message with no topic set (== message wasn't scheduled by repid-like producer)
         if msg_topic is None:
+            await asyncio.sleep(0.1)  # poison message fix
             await self.channel.basic_reject(message.delivery_tag)
             return
 
         # reject the message if the topic isn't in the range of specified
         if self.topics and msg_topic not in self.topics:
+            await asyncio.sleep(0.1)  # poison message fix
             await self.channel.basic_reject(message.delivery_tag)
             return
 

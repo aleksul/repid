@@ -16,6 +16,8 @@ if TYPE_CHECKING:
 
 
 class DummyMessageBroker(MessageBrokerT):
+    CONSUMER_CLASS = _DummyConsumer
+
     def __init__(self) -> None:
         self.queues: dict[str, DummyQueue] = {}
 
@@ -26,19 +28,6 @@ class DummyMessageBroker(MessageBrokerT):
     async def disconnect(self) -> None:
         logger.info("Disconnecting from dummy message broker.")
         await asyncio.sleep(0)
-
-    async def consume(
-        self,
-        queue_name: str,
-        topics: Iterable[str] | None = None,
-    ) -> _DummyConsumer:
-        logger.debug(
-            "Consuming from queue '{queue_name}'.",
-            extra=dict(queue_name=queue_name, topics=topics),
-        )
-        consumer = _DummyConsumer(self, queue_name, topics)
-        consumer._signal_emitter = self._signal_emitter
-        return consumer
 
     async def enqueue(
         self,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, AsyncIterator, Iterable
+from typing import TYPE_CHECKING, AsyncIterator
 
 import pytest
 
@@ -29,13 +29,6 @@ async def dummy_recursive_connection() -> AsyncIterator[Connection]:
 
         async def disconnect(self) -> None:
             pass
-
-        async def consume(
-            self,
-            queue_name: str,
-            topics: Iterable[str] | None = None,
-        ) -> ConsumerT:
-            raise NotImplementedError
 
         async def enqueue(
             self,

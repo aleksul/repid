@@ -18,6 +18,15 @@ class ConsumerT(ABC):
     __WRAPPED_METHODS__ = ("consume",)
 
     @abstractmethod
+    def __init__(
+        self,
+        broker: "MessageBrokerT",
+        queue_name: str,
+        topics: Iterable[str] | None = None,
+    ) -> None:
+        ...
+
+    @abstractmethod
     async def start(self) -> None:
         """Start to consume messages from the queue."""
 
@@ -74,6 +83,8 @@ class ConsumerT(ABC):
 
 
 class MessageBrokerT(ABC):
+    CONSUMER_CLASS: ClassVar[type[ConsumerT]]
+
     ROUTING_KEY_CLASS: ClassVar[type[RoutingKeyT]] = RoutingKey
     PARAMETERS_CLASS: ClassVar[type[ParametersT]] = Parameters
 
@@ -96,8 +107,7 @@ class MessageBrokerT(ABC):
     async def disconnect(self) -> None:
         ...
 
-    @abstractmethod
-    async def consume(
+    def get_consumer(
         self,
         queue_name: str,
         topics: Iterable[str] | None = None,
@@ -106,7 +116,10 @@ class MessageBrokerT(ABC):
         If topics are specified, each message will be checked for compliance with one of the topics.
         Otherwise every message from the queue can be consumed.
         Informs the broker that job execution is started."""
-        # NOTE: implementation of this method must set consumer's _signal_emitter.
+
+        consumer = self.CONSUMER_CLASS(self, queue_name, topics)
+        consumer._signal_emitter = self._signal_emitter
+        return consumer
 
     @abstractmethod
     async def enqueue(

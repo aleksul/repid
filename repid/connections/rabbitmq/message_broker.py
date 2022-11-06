@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING
 
 import aiormq
 import orjson
@@ -27,6 +27,8 @@ if TYPE_CHECKING:
 
 
 class RabbitBroker(MessageBrokerT):
+    CONSUMER_CLASS = _RabbitConsumer
+
     def __init__(
         self,
         dsn: str,
@@ -60,19 +62,6 @@ class RabbitBroker(MessageBrokerT):
             await self.__connection.close()
         self.__channel = None
         self.__connection = None
-
-    async def consume(
-        self,
-        queue_name: str,
-        topics: Iterable[str] | None = None,
-    ) -> _RabbitConsumer:
-        logger.debug(
-            "Consuming from queue '{queue_name}'.",
-            extra=dict(queue_name=queue_name, topics=topics),
-        )
-        consumer = _RabbitConsumer(self, queue_name, topics)
-        consumer._signal_emitter = self._signal_emitter
-        return consumer
 
     async def enqueue(
         self,

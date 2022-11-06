@@ -88,7 +88,21 @@ job_st = one_of(deferred_by_job_st, cron_job_st)
 
 @settings(
     suppress_health_check=[HealthCheck.function_scoped_fixture],
-    max_examples=10000,
+    deadline=None,
+)
+@given(queue=queue_st)
+@pytest.mark.usefixtures("fake_connection")
+async def test_queue_methods(queue: Queue) -> None:
+    assert queue
+    await queue.declare()
+    await queue.flush()
+    await queue.delete()
+
+
+@settings(
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+    max_examples=1000,
+    deadline=None,
 )
 @given(job=job_st)
 @pytest.mark.usefixtures("fake_connection")

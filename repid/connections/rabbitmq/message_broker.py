@@ -80,7 +80,7 @@ class RabbitBroker(MessageBrokerT):
         payload: str = "",
         params: ParametersT | None = None,
     ) -> None:
-        logger.debug("Enqueueing message with id: {id_}.", extra=dict(id_=key.id_))
+        logger.debug("Enqueueing message ({routing_key}).", extra=dict(routing_key=key))
 
         body = MessageContent(
             payload=payload,

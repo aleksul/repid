@@ -13,7 +13,7 @@ from repid.data.priorities import PrioritiesT
 from repid.logger import logger
 
 if TYPE_CHECKING:
-    from repid.connections.rabbitmq.message_broker import RabbitBroker
+    from repid.connections.rabbitmq.message_broker import RabbitMessageBroker
     from repid.connections.rabbitmq.utils import MessageContent
     from repid.data.protocols import ParametersT, RoutingKeyT
 
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 class _RabbitConsumer(ConsumerT):
     def __init__(
         self,
-        broker: RabbitBroker,
+        broker: RabbitMessageBroker,
         queue_name: str,
         topics: Iterable[str] | None = None,
     ) -> None:

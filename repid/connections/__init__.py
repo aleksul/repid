@@ -1,6 +1,6 @@
 from .abc import BucketBrokerT, ConsumerT, MessageBrokerT
 from .dummy import DummyBucketBroker, DummyMessageBroker
-from .rabbitmq import RabbitBroker
+from .rabbitmq import RabbitMessageBroker
 
 __all__ = [
     "BucketBrokerT",
@@ -8,5 +8,5 @@ __all__ = [
     "MessageBrokerT",
     "DummyBucketBroker",
     "DummyMessageBroker",
-    "RabbitBroker",
+    "RabbitMessageBroker",
 ]

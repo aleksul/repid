@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from repid.data.protocols import ParametersT, RoutingKeyT
 
 
-class RabbitBroker(MessageBrokerT):
+class RabbitMessageBroker(MessageBrokerT):
     CONSUMER_CLASS = _RabbitConsumer
 
     def __init__(

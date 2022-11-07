@@ -6,7 +6,7 @@ from pytest_docker_tools import container
 from pytest_lazyfixture import lazy_fixture
 
 from repid import Connection, Repid
-from repid.connections import RabbitBroker
+from repid.connections import RabbitMessageBroker
 
 if TYPE_CHECKING:
     from pytest_docker_tools import wrappers
@@ -35,7 +35,7 @@ def rabbitmq_connection(rabbitmq_container: "wrappers.Container") -> Repid:
         sleep(0.1)
     repid = Repid(
         Connection(
-            RabbitBroker(
+            RabbitMessageBroker(
                 f"amqp://user:testtest@localhost:{rabbitmq_container.ports['5672/tcp'][0]}"
             )
         )

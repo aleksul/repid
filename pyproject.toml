@@ -45,13 +45,12 @@ lint = [
 ]
 tests = [
     "pytest",
-    "pytest-cov",
-    "pytest-clarity",
-    "pytest-docker-tools",
     "pytest-asyncio",
+    "pytest-pretty",
+    "pytest-clarity",
     "pytest-lazy-fixture",
-    "pytest-sugar",
-    "py>==1.11.0",
+    "pytest-docker-tools",
+    "pytest-cov",
     "hypothesis",
     "pydantic<2.0.0,>=1.10.0",
 ]

@@ -20,7 +20,7 @@ redis_container = container(
 
 rabbitmq_container = container(
     image="rabbitmq:3.11-alpine",
-    ports={"5672/tcp": None, "15672/tcp": None},
+    ports={"5672/tcp": None},
     environment={
         "RABBITMQ_DEFAULT_USER": "user",
         "RABBITMQ_DEFAULT_PASS": "testtest",
@@ -30,7 +30,7 @@ rabbitmq_container = container(
 
 rabbitmq_container_2 = container(
     image="rabbitmq:3.11-alpine",
-    ports={"5672/tcp": None, "15672/tcp": None},
+    ports={"5672/tcp": None},
     environment={
         "RABBITMQ_DEFAULT_USER": "user",
         "RABBITMQ_DEFAULT_PASS": "testtest",
@@ -57,7 +57,6 @@ def rabbitmq_connection(rabbitmq_container: "wrappers.Container") -> Repid:
 def redis_connection(redis_container: "wrappers.Container") -> Repid:
     while not redis_container.ready():
         sleep(0.1)
-
     repid = Repid(
         Connection(
             RedisMessageBroker(f"redis://:test@localhost:{redis_container.ports['6379/tcp'][0]}/0"),

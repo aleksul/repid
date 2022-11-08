@@ -15,6 +15,7 @@ jobs:
     runs-on: ubuntu-latest
 
     strategy:
+      fail-fast: false
       matrix:
         python-version:
           - "3.8"
@@ -37,10 +38,9 @@ jobs:
 
       - name: Run tests
         run: |
-          pdm run pytest tests/ -vv --diff-symbols \
+          pdm run pytest tests/ --diff-symbols \
           --hypothesis-show-statistics --hypothesis-verbosity=normal \
-          --color=yes --disable-warnings \
-          --cov-report=xml --cov=repid
+          --color=yes --cov-report=xml --cov=repid
 
       - name: Upload code coverage
         if: matrix.python-version == '3.8'

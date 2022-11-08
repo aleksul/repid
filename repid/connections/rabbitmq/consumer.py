@@ -106,8 +106,8 @@ class _RabbitConsumer(ConsumerT):
 
         # get message topic and queue
         if message.header.properties.headers is not None:
-            msg_topic = message.header.properties.headers.get("topic", None)
-            msg_queue = message.header.properties.headers.get("queue", "default")
+            msg_topic = message.header.properties.headers.get("topic", None)  # type: ignore[assignment]  # noqa: E501
+            msg_queue = message.header.properties.headers.get("queue", "default")  # type: ignore[assignment]  # noqa: E501
 
         # reject the message with no topic set (== message wasn't scheduled by repid-like producer)
         if msg_topic is None:

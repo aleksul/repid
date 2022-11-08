@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING
 
 from repid.connections.abc import MessageBrokerT
 from repid.connections.dummy.consumer import _DummyConsumer

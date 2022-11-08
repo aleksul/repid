@@ -10,9 +10,12 @@ from repid.connection import Connection
 class Repid:
     __local = threading.local()
 
-    def __init__(self, connection: Connection):
+    def __init__(self, connection: Connection, middlewares: list | None = None):
         self.connection = connection
-        self.add_middleware = self.connection.middleware.add_middleware
+
+        if middlewares is not None:
+            for middleware in middlewares:
+                self.connection.middleware.add_middleware(middleware)
 
     @classmethod
     def get_magic_connection(cls) -> Connection:

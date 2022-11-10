@@ -1,9 +1,20 @@
 site_name: Repid
-site_description: Fast async Redis queue for Python
+site_description: "Repid framework: simple to use, fast to run and extensible to adopt job scheduler"
 site_url: https://aleksul.github.io/repid/
+
+repo_name: aleksul/repid
+repo_url: https://github.com/aleksul/repid
+
+nav:
+  - Home: "index.md"
+  - Quickstart Guide: "quickstart_guide.md"
+
 theme:
   name: material
-  theme:
+  logo: https://gist.github.com/aleksul/2e4686cf9a4f027909fe43dc33039f10/raw/56935b8183682d1e46d68af70fec52cf647ab756/repid_logo.svg
+  favicon: https://gist.github.com/aleksul/2e4686cf9a4f027909fe43dc33039f10/raw/56935b8183682d1e46d68af70fec52cf647ab756/repid_logo.svg
+  features:
+    - content.code.annotate
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
@@ -19,24 +30,19 @@ theme:
       toggle:
         icon: material/lightbulb
         name: Switch to light mode
+
 markdown_extensions:
-  - pymdownx.highlight
+  - pymdownx.highlight:
+      anchor_linenums: true
   - pymdownx.inlinehilite
   - pymdownx.superfences
   - pymdownx.snippets
   - admonition
   - pymdownx.details
   - pymdownx.superfences
+  - pymdownx.keys
 
 extra:
   generator: false
   version:
     provider: mike
-  analytics:
-    provider: google
-    property: G-NWQ37DSSKV
-repo_name: aleksul/repid
-repo_url: https://github.com/aleksul/repid
-nav:
-  - Home: "index.md"
-  - User Guide: "user_guide.md"

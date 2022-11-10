@@ -1,6 +1,6 @@
 [project]
 name = "repid"
-description = "Async queue for Python."
+description = "Repid framework: simple to use, fast to run and extensible to adopt job scheduler"
 authors = [{ name = "aleksul", email = "me@aleksul.space" }]
 dependencies = [
     "orjson>=3.7.11,<4.0.0",

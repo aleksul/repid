@@ -26,7 +26,7 @@ class RedisMessageBroker(MessageBrokerT):
 
     def __init__(self, dsn: str):
         self.dsn = dsn
-        self.conn = Redis.from_url(dsn)
+        self.conn: Redis[bytes] = Redis.from_url(dsn)
         self._priorities = parse_priorities_distribution(self.priorities_distribution)
 
     async def connect(self) -> None:
@@ -157,7 +157,7 @@ class RedisMessageBroker(MessageBrokerT):
         now = datetime.now()
         tasks: list[asyncio.Task] = []
         async for short_name, processing_start_time in self.conn.zscan_iter(self.processing_queue):
-            async for full_name in self.conn.scan_iter(match=f"m:*:{short_name}"):
+            async for full_name in self.conn.scan_iter(match=f"m:*:{short_name.decode()}"):
                 raw_params: bytes | None = await self.conn.hget(full_name, "parameters")
                 if raw_params is None:
                     # drop message with no data
@@ -171,7 +171,7 @@ class RedisMessageBroker(MessageBrokerT):
                         "Message '{short_name}' timed out.",
                         extra=dict(short_name=short_name),
                     )
-                    id_, topic, queue, priority = utils.parse_message_name(full_name)
+                    id_, topic, queue, priority = utils.parse_message_name(full_name.decode())
                     tasks.append(
                         asyncio.create_task(
                             self.nack(

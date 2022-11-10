@@ -734,7 +734,7 @@ summary = "Backport of pathlib-compatible object wrapper for zip files"
 
 [metadata]
 lock_version = "4.0"
-content_hash = "sha256:975a647434cbd8f35e596eb66fab1655be6915dbcd94cfbef2ae6e9ee93687b2"
+content_hash = "sha256:b24f3f286909b9fb6679c33eb45c5dd121407d2170f117ce3acfe73bf4ab6e92"
 
 [metadata.files]
 "aiormq 6.4.2" = [

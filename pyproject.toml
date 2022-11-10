@@ -55,7 +55,7 @@ tests = [
     "pydantic<2.0.0,>=1.10.0",
 ]
 pre-commit = ["pre-commit"]
-docs = ["mkdocs-material", "mike"]
+docs = ["mkdocs-material", "mike", "setuptools>=65.5.1"]
 
 [tool.coverage]
 report.fail_under    = 70

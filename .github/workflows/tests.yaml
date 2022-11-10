@@ -15,32 +15,32 @@ jobs:
     runs-on: ubuntu-latest
 
     strategy:
+      fail-fast: false
       matrix:
         python-version:
           - "3.8"
           - "3.9"
           - "3.10"
+          - "3.11"
 
     steps:
-      - name: Setup PDM
-        uses: pdm-project/setup-pdm@v2
-        with:
-          python-version: ${{ matrix.python-version }}
-
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Cache dependencies
-        uses: actions/cache@v3
+      - name: Setup PDM
+        uses: pdm-project/setup-pdm@v3
         with:
-          path: .venv
-          key: ${{ runner.os }}-pdm-${{ hashFiles('pdm.lock') }}
+          python-version: ${{ matrix.python-version }}
+          cache: true
 
-      - name: Install dependencies
-        run: pdm install --no-lock -G :all
+      - name: Install or update dependencies
+        run: pdm sync -G :all --clean
 
       - name: Run tests
-        run: pdm run pytest tests/ -vv --hypothesis-verbosity=normal --color=yes --disable-warnings --cov-report=xml --cov=repid
+        run: |
+          pdm run pytest tests/ --diff-symbols \
+          --hypothesis-show-statistics --hypothesis-verbosity=normal \
+          --color=yes --cov-report=xml --cov=repid
 
       - name: Upload code coverage
         if: matrix.python-version == '3.8'

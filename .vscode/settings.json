@@ -15,7 +15,11 @@
     // Testing
     "python.testing.pytestEnabled": true,
     "python.testing.pytestArgs": [
-        "./tests"
+        "./tests",
+        "-vv",
+        "--diff-symbols",
+        "--hypothesis-verbosity=normal",
+        "--hypothesis-show-statistics",
     ],
     "python.testing.autoTestDiscoverOnSaveEnabled": true,
     // Linting

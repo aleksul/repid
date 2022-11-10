@@ -1,12 +1,15 @@
 import asyncio
 from random import randint
 
+import pytest
 from pydantic import BaseModel
 
 from repid import Job, Router, Worker
 
+pytestmark = pytest.mark.usefixtures("fake_connection")
 
-async def test_pydantic_model_args(fake_connection):
+
+async def test_pydantic_model_args() -> None:
     r = Router()
 
     class MyBaseModel(BaseModel):
@@ -17,7 +20,7 @@ async def test_pydantic_model_args(fake_connection):
     actual = None
 
     @r.actor
-    async def my_pydantic_actor(arg1: str, arg2: int):
+    async def my_pydantic_actor(arg1: str, arg2: int) -> None:
         nonlocal actual
         actual = MyBaseModel(arg1=arg1, arg2=arg2)
 

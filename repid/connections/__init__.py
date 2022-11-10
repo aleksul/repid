@@ -1,6 +1,7 @@
 from .abc import BucketBrokerT, ConsumerT, MessageBrokerT
-from .dummy import DummyBucketBroker, DummyMessageBroker, DummyResultBucketBroker
-from .rabbitmq import RabbitBroker
+from .dummy import DummyBucketBroker, DummyMessageBroker
+from .rabbitmq import RabbitMessageBroker
+from .redis import RedisBucketBroker, RedisMessageBroker
 
 __all__ = [
     "BucketBrokerT",
@@ -8,6 +9,7 @@ __all__ = [
     "MessageBrokerT",
     "DummyBucketBroker",
     "DummyMessageBroker",
-    "DummyResultBucketBroker",
-    "RabbitBroker",
+    "RabbitMessageBroker",
+    "RedisBucketBroker",
+    "RedisMessageBroker",
 ]

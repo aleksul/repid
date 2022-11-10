@@ -8,9 +8,9 @@
             "args": [
                 "run",
                 "pytest",
-                "-vv",
+                "--diff-symbols",
                 "--hypothesis-verbosity=normal",
-                "--disable-warnings",
+                "--hypothesis-show-statistics",
                 "--cov-report=xml",
                 "--cov=repid",
             ],

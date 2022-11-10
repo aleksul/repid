@@ -1,6 +1,6 @@
 [project]
 name = "repid"
-description = "Async queue for Python."
+description = "Repid framework: simple to use, fast to run and extensible to adopt job scheduler"
 authors = [{ name = "aleksul", email = "me@aleksul.space" }]
 dependencies = [
     "orjson>=3.7.11,<4.0.0",
@@ -12,15 +12,15 @@ dynamic = ["version"]
 license = { text = "MIT" }
 
 [project.urls]
-repository = "https://github.com/aleksul/repid"
+repository    = "https://github.com/aleksul/repid"
 documentation = "https://aleksul.github.io/repid"
-funding = "https://github.com/sponsors/aleksul"
-tracker = "https://github.com/aleksul/repid/issues"
+funding       = "https://github.com/sponsors/aleksul"
+tracker       = "https://github.com/aleksul/repid/issues"
 
 [project.optional-dependencies]
-amqp = ["aiormq<7.0.0,>=6.4.0"]
+amqp  = ["aiormq<7.0.0,>=6.4.0"]
 redis = ["redis<5.0.0,>=4.3.3"]
-cron = ["croniter<2.0.0,>=1.3.4"]
+cron  = ["croniter<2.0.0,>=1.3.4"]
 
 [tool.pdm]
 version = { source = "scm" }
@@ -45,11 +45,12 @@ lint = [
 ]
 tests = [
     "pytest",
-    "pytest-cov",
-    "pytest-clarity",
-    "pytest-docker-tools",
     "pytest-asyncio",
+    "pytest-pretty",
+    "pytest-clarity",
     "pytest-lazy-fixture",
+    "pytest-docker-tools",
+    "pytest-cov",
     "hypothesis",
     "pydantic<2.0.0,>=1.10.0",
 ]
@@ -57,28 +58,40 @@ pre-commit = ["pre-commit"]
 docs = ["mkdocs-material", "mike"]
 
 [tool.coverage]
-report.fail_under = 70
+report.fail_under    = 70
+report.exclude_lines = ['\.\.\.', 'if TYPE_CHECKING:']
 
 [tool.black]
 line-length = 100
 
 [tool.isort]
-profile = "black"
+profile           = "black"
 multi_line_output = 3
 
 [tool.mypy]
-disallow_untyped_defs = true
+disallow_untyped_defs   = true
 disallow_any_unimported = true
-no_implicit_optional = true
-check_untyped_defs = true
-warn_return_any = true
-warn_unused_ignores = true
-show_error_codes = true
-exclude = "^tests/"
+no_implicit_optional    = true
+check_untyped_defs      = true
+warn_return_any         = true
+warn_unused_ignores     = true
+show_error_codes        = true
+
+[[tool.mypy.overrides]]
+module                  = "tests.*"
+disallow_any_unimported = false
+
+[[tool.mypy.overrides]]
+module                 = ["pytest_docker_tools", "pytest_lazyfixture"]
+ignore_missing_imports = true
 
 [tool.flake8]
 max-line-length = 100
-per-file-ignores = ["__init__.py:F401", "tests/*:TC", "protocols.py:B008"]
+per-file-ignores = [
+    "__init__.py:F401",
+    "tests/*:TC",
+    "protocols.py:B008",
+]
 ignore = "W503,PT013"
 enable-extensions = ["TC", "TC1"]
 
@@ -86,5 +99,5 @@ enable-extensions = ["TC", "TC1"]
 asyncio_mode = "auto"
 
 [build-system]
-requires = ["pdm-pep517>=1.0.0"]
+requires      = ["pdm-pep517>=1.0.0"]
 build-backend = "pdm.pep517.api"

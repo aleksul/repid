@@ -9,7 +9,7 @@ import orjson
 
 from repid.actor import ActorData, ActorResult
 from repid.logger import logger
-from repid.middlewares import MiddlewareWrapper
+from repid.middlewares import middleware_wrapper
 
 if TYPE_CHECKING:
     from repid.connection import Connection
@@ -22,7 +22,6 @@ class _Processor:
 
     def __init__(self, _conn: Connection) -> None:
         self._conn = _conn
-        self.actor_run = MiddlewareWrapper(self.actor_run)  # type: ignore[assignment]
         self.actor_run._repid_signal_emitter = self._conn.middleware.emit_signal
         self._processed = 0
 
@@ -34,8 +33,9 @@ class _Processor:
                 return bucket.data
         return initial_payload
 
+    @staticmethod
+    @middleware_wrapper
     async def actor_run(
-        self,
         actor: ActorData,
         message: MessageT,
         args: list,

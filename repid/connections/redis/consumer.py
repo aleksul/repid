@@ -13,6 +13,8 @@ from repid.connections.redis.utils import (
 )
 
 if TYPE_CHECKING:
+    from redis.asyncio import Redis
+
     from repid.connections.redis.message_broker import RedisMessageBroker
     from repid.data.protocols import ParametersT, PrioritiesT, RoutingKeyT
 
@@ -31,7 +33,7 @@ class _RedisConsumer(ConsumerT):
         self.broker = broker
         self.queue_name = queue_name
         self.topics = frozenset(topics) if topics is not None else frozenset()
-        self.conn = broker.conn
+        self.conn: Redis[bytes] = broker.conn
 
         self.queue: asyncio.Queue[tuple[RoutingKeyT, str, ParametersT]] = asyncio.Queue(
             maxsize=self.MAX_IN_MEMORY_MESSAGES

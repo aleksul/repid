@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 class RedisBucketBroker(BucketBrokerT):
     def __init__(self, dsn: str, use_result_bucket: bool = False):
         self.BUCKET_CLASS = ResultBucket if use_result_bucket else ArgsBucket
-        self.conn = Redis.from_url(dsn)
+        self.conn: Redis[bytes] = Redis.from_url(dsn)
 
     async def connect(self) -> None:
         await self.conn.ping()
@@ -27,7 +27,7 @@ class RedisBucketBroker(BucketBrokerT):
         logger.debug("Getting bucket with id: {id_}.", extra=dict(id_=id_))
         data = await self.conn.get(id_)
         if data is not None:
-            return self.BUCKET_CLASS.decode(data)  # type: ignore[no-any-return]
+            return self.BUCKET_CLASS.decode(data.decode())  # type: ignore[no-any-return]
         return None
 
     async def store_bucket(self, id_: str, payload: BucketT) -> None:

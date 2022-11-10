@@ -1,5 +1,5 @@
 <a href="https://www.instagram.com/p/Cd-ob1NNZ84/">
-  <img alt="Repid's logo" width="350" align="right" src="https://gist.github.com/aleksul/2e4686cf9a4f027909fe43dc33039f10/raw/56935b8183682d1e46d68af70fec52cf647ab756/repid_logo.svg">
+  <img alt="Repid's logo" width="350" align="right" src="https://gist.github.com/aleksul/fedbe168f1fc59c5aac3ddd17ecff30a/raw/b9467303f55517d99633d6551de223cd6534b149/repid_logo_borders.svg">
 </a>
 
 # repid
@@ -12,7 +12,7 @@
 
 <br>
 
-**Repid** is a job queueing library for Python with focus on simplicity.
+**Repid** framework: simple to use, fast to run and extensible to adopt job scheduler.
 
 <br>
 
@@ -28,13 +28,16 @@ Producer:
 
 ```python
 import asyncio
-from repid import Repid, Connection, RabbitBroker, Job
 
-myrepid = Repid(Connection(RabbitBroker("amqp://user:password@localhost:5672")))
+from repid import Connection, Job, RabbitMessageBroker, Repid
 
-async def main():
-  async with myrepid.connect():
-    await Job(name="awesome_job").enqueue()
+app = Repid(Connection(RabbitMessageBroker("amqp://user:password@localhost:5672")))
+
+
+async def main() -> None:
+    async with app.magic():
+        await Job(name="awesome_job").enqueue()
+
 
 asyncio.run(main())
 ```
@@ -43,21 +46,23 @@ Consumer:
 
 ```python
 import asyncio
-from repid import Repid, Router, Connection, RabbitBroker, Worker, Job
 
-myrepid = Repid(Connection(RabbitBroker("amqp://user:password@localhost:5672")))
+from repid import Connection, RabbitMessageBroker, Repid, Router, Worker
 
-r = Router()
+app = Repid(Connection(RabbitMessageBroker("amqp://user:password@localhost:5672")))
+router = Router()
 
-@r.actor
+
+@router.actor
 async def awesome_job() -> None:
-  print("Hello async jobs!")
-  await do_some_async_stuff()
+    print("Hello async jobs!")
+    await asyncio.sleep(1.0)
 
-async def main():
-  async with myrepid.connect():
-    w = Worker(routers=[r])
-    await w.run()
+
+async def main() -> None:
+    async with app.magic():
+        await Worker(routers=[router]).run()
+
 
 asyncio.run(main())
 ```
@@ -68,7 +73,7 @@ Check out [user guide] to learn more!
 
 **Repid** is distributed under the terms of the MIT license. Please see [License.md] for more information.
 
-**Repid's logo** is distributed under the terms of the [CC BY-NC 4.0] license. It was originally created by [ari_the_crow_].
+**Repid's logo** is distributed under the terms of the [CC BY-NC 4.0] license. It is originally created by [ari_the_crow_].
 
 [License.md]: https://github.com/aleksul/repid/blob/master/LICENSE
 [user guide]: https://aleksul.github.io/repid

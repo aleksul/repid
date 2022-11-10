@@ -1,49 +1,86 @@
 # Repid
 
-[![PyPI version](https://img.shields.io/pypi/v/repid.svg)](https://pypi.org/project/repid/)
-[![codecov](https://codecov.io/gh/aleksul/repid/branch/main/graph/badge.svg?token=IP3Z1VXB1G)](https://codecov.io/gh/aleksul/repid)
-[![PyPI pyversions](https://img.shields.io/pypi/pyversions/repid.svg)](https://pypi.python.org/pypi/repid/)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+<p align="center">
+  <a href="https://www.instagram.com/p/Cd-ob1NNZ84/">
+    <img alt="Repid's logo" width=400 src="https://gist.github.com/aleksul/fedbe168f1fc59c5aac3ddd17ecff30a/raw/b9467303f55517d99633d6551de223cd6534b149/repid_logo_borders.svg">
+  </a>
+</p>
 
-**Repid** is a job queuing library for Python with focus on simplicity.
+<p align="center">
+<b>Repid</b> framework: simple to use, fast to run and extensible to adopt job scheduler.
+</p>
+
+<p align="center">
+<a href="https://pypi.org/project/repid/" target="_blank">
+    <img src="https://img.shields.io/pypi/v/repid.svg" alt="PyPI version">
+</a>
+<a href="https://codecov.io/gh/aleksul/repid" target="_blank">
+    <img src="https://codecov.io/gh/aleksul/repid/branch/main/graph/badge.svg?token=IP3Z1VXB1G" alt="codecov">
+</a>
+<a href="https://pypi.python.org/pypi/repid/" target="_blank">
+    <img src="https://img.shields.io/pypi/pyversions/repid.svg" alt="PyPI pyversions">
+</a>
+</p>
 
 ## Example
 
-Here's what a smallest (but already working) peace of code can look like:
+Here is how the easiest example of producer-consumer application can look like.
+
+Producer:
 
 ```python
-import repid
 import asyncio
-from redis.asyncio import Redis
 
-# create redis instance as usual
-myredis = Redis(host="localhost", port=6379, db=0, decode_responses=True)
+from repid import Connection, Job, RabbitMessageBroker, Repid
 
-# create repid worker using redis instance
-myworker = repid.Worker(myredis)
+app = Repid(Connection(RabbitMessageBroker("amqp://user:password@localhost:5672")))
 
-# add a simple actor to the worker
-@myworker.actor()
-async def my_first_job():
-    return "Hello Repid!"
 
-# enqueue a job...
-asyncio.run(myworker.enqueue_job("my_first_job"))
+async def main() -> None:
+    async with app.magic():
+        await Job(name="awesome_job").enqueue()
 
-# ...and run the worker
-asyncio.run(myworker.run_forever())
+
+asyncio.run(main())
+```
+
+Consumer:
+
+```python
+import asyncio
+
+from repid import Connection, RabbitMessageBroker, Repid, Router, Worker
+
+app = Repid(Connection(RabbitMessageBroker("amqp://user:password@localhost:5672")))
+router = Router()
+
+
+@router.actor
+async def awesome_job() -> None:
+    print("Hello async jobs!")
+    await asyncio.sleep(1.0)
+
+
+async def main() -> None:
+    async with app.magic():
+        await Worker(routers=[router]).run()
+
+
+asyncio.run(main())
 ```
 
 ## Install
 
-**Repid** supports Python versions 3.8 and up and installable via either `pip` or `poetry`.
+**Repid** supports Python versions 3.8 and up and is installable via `pip`.
 
 ```bash
 pip install repid
 ```
 
+There are also a couple of additional dependencies you may want to install, depending on your use case, e.g.
+
 ```bash
-poetry add repid
+pip install repid[amqp, redis, cron]
 ```
 
 ## Why repid?
@@ -55,8 +92,7 @@ And you don't have to worry that it will slow down your other asyncio-driven cod
 
 ### Ease of integration
 
-You are probably already used to `redis-py`. Why don't you utilize it?
-Just pass its instance to `repid` and you are ready to go!
+There is an abstraction layer on top of other queue solutions. It means that even if `repid` doesn't provide some broker out of the box, you will be able to write your own.
 
 ### Built with microservices in mind
 
@@ -64,8 +100,7 @@ Your producer and consumer can be running in different containers, `repid` will 
 
 ### Can be used with other languages
 
-`Repid` doesn't use pickling, instead all data is parsed into json, which are documented [here]().
-It means you can easily adopt it for other languages.
+`Repid` uses json (de-)serialization by default, which makes integration with other languages as easy as possible. You're also able to easily override default (de-)serialization behavior thanks to PEP 544 Protocols.
 
 ### Integrated scheduling
 
@@ -73,15 +108,16 @@ It means you can easily adopt it for other languages.
 You can delay job execution until some date or even execute it every once in a while.
 No need for extra dependencies!
 
-### Small
-
-`Repid` tries to be as small as possible.
-It makes it simpler to learn, simpler to test and simpler to use. So what are you waiting for?
-
 ## Inspiration
 
 `Repid` is inspired by [`dramatiq`](https://github.com/Bogdanp/dramatiq) and [`arq`](https://github.com/samuelcolvin/arq).
 
 ## License
 
-This project is licensed under the terms of the MIT license.
+**Repid** is distributed under the terms of the MIT license. Please see [License.md] for more information.
+
+**Repid's logo** is distributed under the terms of the [CC BY-NC 4.0] license. It is originally created by [ari_the_crow_].
+
+[License.md]: https://github.com/aleksul/repid/blob/master/LICENSE
+[CC BY-NC 4.0]: https://creativecommons.org/licenses/by-nc/4.0/
+[ari_the_crow_]: https://www.instagram.com/p/Cd-ob1NNZ84/

@@ -5,7 +5,7 @@ import orjson
 PYDANTIC_IMPORTED = True
 try:
     import pydantic
-except ImportError:
+except ImportError:  # pragma: no cover
     PYDANTIC_IMPORTED = False
 
 

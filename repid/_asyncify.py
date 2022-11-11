@@ -6,7 +6,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from functools import partial, wraps
 from typing import Any, Callable, Coroutine, TypeVar, overload
 
-if sys.version_info >= (3, 10):
+if sys.version_info >= (3, 10):  # pragma: no cover
     from typing import ParamSpec
 else:
     from typing_extensions import ParamSpec

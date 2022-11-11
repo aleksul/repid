@@ -19,7 +19,7 @@ try:
     from croniter import croniter
 
     CRON_SUPPORT = True
-except ImportError:
+except ImportError:  # pragma: no cover
     CRON_SUPPORT = False
 
 

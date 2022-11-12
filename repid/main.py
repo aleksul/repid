@@ -31,7 +31,8 @@ class Repid:
 
     async def magic_disconnect(self) -> Connection:
         await self.connection.disconnect()
-        delattr(Repid.__local, "connection")
+        if hasattr(Repid.__local, "connection"):
+            delattr(Repid.__local, "connection")
         return self.connection
 
     @asynccontextmanager

@@ -22,7 +22,7 @@ from hypothesis.strategies import (
     timedeltas,
 )
 
-from repid import Job, PrioritiesT, Queue
+from repid import Job, PrioritiesT, Queue, default_retry_policy_factory
 from repid.utils import VALID_ID, VALID_NAME
 
 MAX = 2**31 - 1
@@ -110,3 +110,9 @@ async def test_job_creation(job: Job) -> None:
     assert job
     await job.queue.declare()
     await job.enqueue()
+
+
+@given(retry_number=integers(min_value=1))
+def test_retry_policy(retry_number: int) -> None:
+    policy = default_retry_policy_factory()
+    policy(retry_number)

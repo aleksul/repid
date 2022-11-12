@@ -22,6 +22,7 @@ class Worker:
         gracefull_shutdown_time: float = 25.0,
         messages_limit: int = float("inf"),  # type: ignore[assignment]
         tasks_limit: int = 1000,
+        handle_signals: list[signal.Signals] | None = None,
         _connection: Connection | None = None,
     ):
         self._conn = _connection or Repid.get_magic_connection()
@@ -36,6 +37,9 @@ class Worker:
         self.tasks_limit = tasks_limit
         self.gracefull_shutdown_time = gracefull_shutdown_time
         self.messages_limit = messages_limit
+        self.handle_signals = (
+            [signal.SIGINT, signal.SIGTERM] if handle_signals is None else handle_signals
+        )
 
     def include_router(self, router: Router) -> None:
         self.actors.update(router.actors)
@@ -57,9 +61,10 @@ class Worker:
             t = asyncio.create_task(wait_before_cancel())
             runner.tasks.add(t)
             t.add_done_callback(runner.tasks.discard)
+
             loop = asyncio.get_running_loop()
-            loop.remove_signal_handler(signal.SIGINT)
-            loop.remove_signal_handler(signal.SIGTERM)
+            for sig in self.handle_signals:
+                loop.remove_signal_handler(sig)
 
         return signal_handler
 
@@ -83,8 +88,8 @@ class Worker:
 
         loop = asyncio.get_running_loop()
         signal_handler = self._signal_handler_constructor(runner)
-        loop.add_signal_handler(signal.SIGINT, signal_handler)
-        loop.add_signal_handler(signal.SIGTERM, signal_handler)
+        for sig in self.handle_signals:
+            loop.add_signal_handler(sig, signal_handler)
 
         queue_consume_tasks: set[asyncio.Task] = set()
 

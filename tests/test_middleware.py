@@ -63,6 +63,22 @@ async def dummy_recursive_connection() -> AsyncIterator[Connection]:
         yield conn
 
 
+async def test_add_middleware(dummy_recursive_connection: Connection) -> None:
+    counter = 0
+
+    class TestMiddleware:
+        @staticmethod
+        async def before_queue_delete(queue_name: str) -> None:
+            nonlocal counter
+            counter += 1
+
+    app = Repid(dummy_recursive_connection, middlewares=[TestMiddleware])
+    async with app.magic(auto_disconnect=True):
+        await Queue("test_queue_name").delete()
+
+    assert counter == 1
+
+
 def test_available_functions(fake_connection: Connection) -> None:
     for name in WRAPPED:
         assert name in (

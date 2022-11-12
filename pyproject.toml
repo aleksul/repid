@@ -58,7 +58,7 @@ pre-commit = ["pre-commit"]
 docs = ["mkdocs-material", "mike", "setuptools>=65.5.1"]
 
 [tool.coverage]
-report.fail_under = 70
+report.fail_under = 90
 report.exclude_lines = [
     '\.\.\.',
     'if TYPE_CHECKING:',

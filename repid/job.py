@@ -135,10 +135,10 @@ class Job:
         self.result_ttl = result_ttl
         if self.result_id is not None and not VALID_ID.fullmatch(self.result_id):
             raise ValueError(
-                "Result_id must contain only letters, numbers, dashes and underscores."
+                "Result id must contain only letters, numbers, dashes and underscores."
             )
         if self.result_ttl is not None and self.result_ttl.total_seconds() < 1:
-            raise ValueError("Result_ttl must be greater than or equal to 1 second.")
+            raise ValueError("Result TTL must be greater than or equal to 1 second.")
         self.store_result = (
             (self._conn.results_bucket_broker is not None) if store_result is None else store_result
         )
@@ -201,8 +201,6 @@ class Job:
 
     @property
     async def result(self) -> ResultBucketT | None:
-        if self.result_id is None:
-            raise ValueError("Result id is not set.")
         data = await self._conn._rb.get_bucket(self.result_id)
         if isinstance(data, ResultBucketT):
             return data

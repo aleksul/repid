@@ -45,11 +45,13 @@ class _DummyConsumer(ConsumerT):
     async def __update_delayed(self) -> None:
         await asyncio.sleep(0)
         now = datetime.now()
+        pop_soon = []
         for time_, msgs in self._queue.delayed.items():
-            if time_ > now:
-                self._queue.delayed.pop(time_)
+            if time_ < now:
+                pop_soon.append(time_)
                 for msg in msgs:
                     self._queue.simple.put_nowait(msg)
+        [self._queue.delayed.pop(i) for i in pop_soon]
         await asyncio.sleep(0)
 
     async def consume(self) -> tuple[RoutingKeyT, str, ParametersT]:

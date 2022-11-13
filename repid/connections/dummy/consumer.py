@@ -13,7 +13,13 @@ if TYPE_CHECKING:
 
 
 class _DummyConsumer(ConsumerT):
-    def __init__(self, broker: DummyMessageBroker, queue_name: str, topics: Iterable[str] | None):
+    def __init__(
+        self,
+        broker: DummyMessageBroker,
+        queue_name: str,
+        topics: Iterable[str] | None,
+        max_unacked_messages: int | None = None,
+    ):
         self.broker = broker
         self.queue_name = queue_name
         self._queue = broker.queues[queue_name]

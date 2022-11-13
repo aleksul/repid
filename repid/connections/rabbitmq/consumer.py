@@ -24,20 +24,26 @@ class _RabbitConsumer(ConsumerT):
         broker: RabbitMessageBroker,
         queue_name: str,
         topics: Iterable[str] | None = None,
+        max_unacked_messages: int | None = None,
     ) -> None:
         self.broker = broker
         self.channel: aiormq.abc.AbstractChannel = broker._channel()
         self.queue_name = queue_name
         self.topics = topics
         self.queue: asyncio.Queue[tuple[RoutingKeyT, str, ParametersT]] = asyncio.Queue()
+        self.max_unacked_messages = 0 if max_unacked_messages is None else max_unacked_messages
         self._consumer_tag: str | None = None
         self.__is_paused: bool = False
 
     async def consume(self) -> tuple[RoutingKeyT, str, ParametersT]:
         return await self.queue.get()
 
-    async def __start(self) -> None:
+    async def start(self) -> None:
         self.__is_paused = False
+        await self.channel.basic_qos(
+            prefetch_size=0,
+            prefetch_count=self.max_unacked_messages,
+        )
         confirmation = await self.channel.basic_consume(
             self.queue_name, self.on_new_message, no_ack=False
         )
@@ -46,7 +52,21 @@ class _RabbitConsumer(ConsumerT):
         else:
             self._consumer_tag = confirmation.consumer_tag
 
-    async def __stop(self) -> None:
+    async def pause(self) -> None:
+        self.__is_paused = True
+        await self.channel.basic_qos(
+            prefetch_size=0,
+            prefetch_count=1,
+        )
+
+    async def unpause(self) -> None:
+        self.__is_paused = False
+        await self.channel.basic_qos(
+            prefetch_size=0,
+            prefetch_count=self.max_unacked_messages,
+        )
+
+    async def finish(self) -> None:
         self.__is_paused = True
         if self._consumer_tag is None:
             return
@@ -56,18 +76,6 @@ class _RabbitConsumer(ConsumerT):
                 "Consumer (tag: {tag}) wasn't stopped properly.",
                 extra=dict(tag=self._consumer_tag),
             )
-
-    async def start(self) -> None:
-        await self.__start()
-
-    async def pause(self) -> None:
-        await self.__stop()
-
-    async def unpause(self) -> None:
-        await self.__start()
-
-    async def finish(self) -> None:
-        await self.__stop()
         rejects = []
         while self.queue.qsize() > 0:
             key, _, _ = self.queue.get_nowait()

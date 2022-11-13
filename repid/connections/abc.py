@@ -23,6 +23,7 @@ class ConsumerT(ABC):
         broker: "MessageBrokerT",
         queue_name: str,
         topics: Iterable[str] | None = None,
+        max_unacked_messages: int | None = None,
     ) -> None:
         ...
 
@@ -111,13 +112,16 @@ class MessageBrokerT(ABC):
         self,
         queue_name: str,
         topics: Iterable[str] | None = None,
+        max_unacked_messages: int | None = None,
     ) -> ConsumerT:
         """Consumes messages from the specified queue.
         If topics are specified, each message will be checked for compliance with one of the topics.
         Otherwise every message from the queue can be consumed.
-        Informs the broker that job execution is started."""
+        Consumer should informs the broker that job execution is started.
+        Some brokers can adjust their load based on max_unacked_messages parameter.
+        """
 
-        consumer = self.CONSUMER_CLASS(self, queue_name, topics)
+        consumer = self.CONSUMER_CLASS(self, queue_name, topics, max_unacked_messages)
         consumer._signal_emitter = self._signal_emitter
         return consumer
 

@@ -13,7 +13,7 @@ license = { text = "MIT" }
 
 [project.urls]
 repository    = "https://github.com/aleksul/repid"
-documentation = "https://aleksul.github.io/repid"
+documentation = "https://repid.aleksul.space"
 funding       = "https://github.com/sponsors/aleksul"
 tracker       = "https://github.com/aleksul/repid/issues"
 

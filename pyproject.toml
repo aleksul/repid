@@ -73,6 +73,7 @@ profile           = "black"
 multi_line_output = 3
 
 [tool.mypy]
+exclude                 = ["benchmarks"]
 disallow_untyped_defs   = true
 disallow_any_unimported = true
 no_implicit_optional    = true

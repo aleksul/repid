@@ -27,7 +27,6 @@ class _RabbitConsumer(ConsumerT):
         max_unacked_messages: int | None = None,
     ) -> None:
         self.broker = broker
-        self.channel: aiormq.abc.AbstractChannel = broker._channel()
         self.queue_name = queue_name
         self.topics = topics
         self.queue: asyncio.Queue[tuple[RoutingKeyT, str, ParametersT]] = asyncio.Queue()
@@ -40,11 +39,11 @@ class _RabbitConsumer(ConsumerT):
 
     async def start(self) -> None:
         self.__is_paused = False
-        await self.channel.basic_qos(
+        await self.broker._channel().basic_qos(
             prefetch_size=0,
             prefetch_count=self.max_unacked_messages,
         )
-        confirmation = await self.channel.basic_consume(
+        confirmation = await self.broker._channel().basic_consume(
             self.queue_name, self.on_new_message, no_ack=False
         )
         if not isinstance(confirmation, Basic.ConsumeOk):
@@ -54,14 +53,14 @@ class _RabbitConsumer(ConsumerT):
 
     async def pause(self) -> None:
         self.__is_paused = True
-        await self.channel.basic_qos(
+        await self.broker._channel().basic_qos(
             prefetch_size=0,
             prefetch_count=1,
         )
 
     async def unpause(self) -> None:
         self.__is_paused = False
-        await self.channel.basic_qos(
+        await self.broker._channel().basic_qos(
             prefetch_size=0,
             prefetch_count=self.max_unacked_messages,
         )
@@ -70,7 +69,7 @@ class _RabbitConsumer(ConsumerT):
         self.__is_paused = True
         if self._consumer_tag is None:
             return
-        confirmation = await self.channel.basic_cancel(self._consumer_tag)
+        confirmation = await self.broker._channel().basic_cancel(self._consumer_tag)
         if not isinstance(confirmation, Basic.CancelOk):
             logger.error(
                 "Consumer (tag: {tag}) wasn't stopped properly.",
@@ -81,7 +80,7 @@ class _RabbitConsumer(ConsumerT):
             key, _, _ = self.queue.get_nowait()
             tag = self.broker._id_to_delivery_tag.pop(key.id_, None)
             if tag is not None:
-                rejects.append(self.channel.basic_reject(tag))
+                rejects.append(self.broker._channel().basic_reject(tag))
             else:
                 logger.error(
                     "Can't reject unknown delivery tag for message ({routing_key}) "
@@ -106,7 +105,7 @@ class _RabbitConsumer(ConsumerT):
 
         # if consumer is paused - reject the message
         if self.__is_paused:
-            await self.channel.basic_reject(message.delivery_tag)
+            await self.broker._channel().basic_reject(message.delivery_tag)
             return
 
         msg_topic: str | None = None
@@ -120,13 +119,13 @@ class _RabbitConsumer(ConsumerT):
         # reject the message with no topic set (== message wasn't scheduled by repid-like producer)
         if msg_topic is None:
             await asyncio.sleep(0.1)  # poison message fix
-            await self.channel.basic_reject(message.delivery_tag)
+            await self.broker._channel().basic_reject(message.delivery_tag)
             return
 
         # reject the message if the topic isn't in the range of specified
         if self.topics and msg_topic not in self.topics:
             await asyncio.sleep(0.1)  # poison message fix
-            await self.channel.basic_reject(message.delivery_tag)
+            await self.broker._channel().basic_reject(message.delivery_tag)
             return
 
         # decode message payload (rabbitmq abstraction level)
@@ -136,7 +135,7 @@ class _RabbitConsumer(ConsumerT):
 
         # put message to a dead queue if it's overdue
         if params.is_overdue:
-            await self.channel.basic_nack(message.delivery_tag, requeue=False)
+            await self.broker._channel().basic_nack(message.delivery_tag, requeue=False)
 
         # save delivery tag for the future
         self.broker._id_to_delivery_tag[msg_id] = message.delivery_tag

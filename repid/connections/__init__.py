@@ -1,7 +1,5 @@
-from .abc import BucketBrokerT, ConsumerT, MessageBrokerT
-from .dummy import DummyBucketBroker, DummyMessageBroker
-from .rabbitmq import RabbitMessageBroker
-from .redis import RedisBucketBroker, RedisMessageBroker
+from repid.connections.abc import BucketBrokerT, ConsumerT, MessageBrokerT
+from repid.connections.dummy import DummyBucketBroker, DummyMessageBroker
 
 __all__ = [
     "BucketBrokerT",
@@ -9,7 +7,23 @@ __all__ = [
     "MessageBrokerT",
     "DummyBucketBroker",
     "DummyMessageBroker",
-    "RabbitMessageBroker",
-    "RedisBucketBroker",
-    "RedisMessageBroker",
 ]
+
+try:
+    import aiormq
+except ImportError:
+    pass
+else:
+    from repid.connections.rabbitmq import RabbitMessageBroker
+
+    __all__.append("RabbitMessageBroker")
+
+try:
+    import redis
+except ImportError:
+    pass
+else:
+    from repid.connections.redis import RedisBucketBroker, RedisMessageBroker
+
+    __all__.append("RedisBucketBroker")
+    __all__.append("RedisMessageBroker")

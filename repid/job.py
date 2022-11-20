@@ -2,24 +2,21 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any
 
 import orjson
 
+from repid.config import Config
 from repid.data import ParametersT, PrioritiesT, ResultBucketT, RoutingKeyT
 from repid.main import Repid
 from repid.queue import Queue
-from repid.serializer import default_serializer
 from repid.utils import VALID_ID, VALID_NAME
 
 if TYPE_CHECKING:
     from repid.connection import Connection
-    from repid.serializer import SerializerT
 
 
 class Job:
-    ARGS_SERIALIZER: ClassVar[SerializerT] = default_serializer
-
     __slots__ = (
         "name",
         "queue",
@@ -124,7 +121,7 @@ class Job:
         self.args_ttl = args_ttl
         if self.args_ttl is not None and self.args_ttl.total_seconds() < 1:
             raise ValueError("Args TTL must be greater than or equal to 1 second.")
-        self.args = None if args is None else Job.ARGS_SERIALIZER(args)
+        self.args = None if args is None else Config.SERIALIZER(args)
         self.use_args_bucketer = (
             (self._conn.args_bucket_broker is not None)
             if use_args_bucketer is None

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass, field
 from functools import partial
-from typing import TYPE_CHECKING, Callable, NamedTuple, TypeVar, overload
+from typing import TYPE_CHECKING, Callable, TypeVar, overload
 
 from repid._asyncify import asyncify
 from repid.actor import ActorData
-from repid.converter import DefaultConverter
+from repid.config import Config
 from repid.retry_policy import default_retry_policy_factory
 from repid.utils import VALID_NAME
 
@@ -17,11 +18,12 @@ if TYPE_CHECKING:
 YourFunc = TypeVar("YourFunc", bound=Callable)
 
 
-class RouterDefaults(NamedTuple):
+@dataclass(frozen=True)
+class RouterDefaults:
     queue: str = "default"
-    retry_policy: RetryPolicyT = default_retry_policy_factory()
+    retry_policy: RetryPolicyT = field(default_factory=default_retry_policy_factory)
     run_in_process: bool = False
-    converter: type[ConverterT] = DefaultConverter
+    converter: type[ConverterT] = field(default_factory=lambda: Config.CONVERTER)
 
 
 class Router:

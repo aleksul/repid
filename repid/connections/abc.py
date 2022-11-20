@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Coroutine, Dict, Iterable
 
-from repid.data._key import RoutingKey
-from repid.data._parameters import Parameters
+from repid.config import Config
 from repid.middlewares import middleware_wrapper
 
 if TYPE_CHECKING:
@@ -86,8 +86,8 @@ class ConsumerT(ABC):
 class MessageBrokerT(ABC):
     CONSUMER_CLASS: ClassVar[type[ConsumerT]]
 
-    ROUTING_KEY_CLASS: ClassVar[type[RoutingKeyT]] = RoutingKey
-    PARAMETERS_CLASS: ClassVar[type[ParametersT]] = Parameters
+    ROUTING_KEY_CLASS: ClassVar[type[RoutingKeyT]]
+    PARAMETERS_CLASS: ClassVar[type[ParametersT]]
 
     __WRAPPED_METHODS__ = (
         "enqueue",
@@ -168,6 +168,9 @@ class MessageBrokerT(ABC):
         """Deletes the queue with all of its messages."""
 
     def __new__(cls: type[MessageBrokerT], *args: tuple, **kwargs: dict) -> MessageBrokerT:
+        cls.ROUTING_KEY_CLASS = deepcopy(Config.ROUTING_KEY)
+        cls.PARAMETERS_CLASS = deepcopy(Config.PARAMETERS)
+
         inst = super().__new__(cls)
 
         for method in inst.__WRAPPED_METHODS__:
@@ -218,6 +221,8 @@ class BucketBrokerT(ABC):
         """Deletes the bucket."""
 
     def __new__(cls: type[BucketBrokerT], *args: tuple, **kwargs: dict) -> BucketBrokerT:
+        cls.BUCKET_CLASS = deepcopy(Config.BUCKET)
+
         inst = super().__new__(cls)
 
         for method in inst.__WRAPPED_METHODS__:

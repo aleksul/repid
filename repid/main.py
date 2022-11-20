@@ -4,18 +4,28 @@ import threading
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
+from repid.config import Config
 from repid.connection import Connection
 
 
 class Repid:
     __local = threading.local()
 
-    def __init__(self, connection: Connection, middlewares: list | None = None):
+    def __init__(
+        self,
+        connection: Connection,
+        *,
+        middlewares: list | None = None,
+        update_config: bool = False,
+    ):
         self.connection = connection
 
         if middlewares is not None:
             for middleware in middlewares:
                 self.connection.middleware.add_middleware(middleware)
+
+        if update_config:
+            Config.update_all()
 
     @classmethod
     def get_magic_connection(cls) -> Connection:

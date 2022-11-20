@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from collections import defaultdict
+from dataclasses import dataclass, field
 from functools import partial
-from typing import TYPE_CHECKING, Callable, NamedTuple, TypeVar, overload
+from typing import TYPE_CHECKING, Callable, TypeVar, overload
 
 from repid._asyncify import asyncify
 from repid.actor import ActorData
-from repid.converter import DefaultConverter
+from repid.config import Config
 from repid.retry_policy import default_retry_policy_factory
 from repid.utils import VALID_NAME
 
@@ -16,18 +18,20 @@ if TYPE_CHECKING:
 YourFunc = TypeVar("YourFunc", bound=Callable)
 
 
-class RouterDefaults(NamedTuple):
+@dataclass(frozen=True)
+class RouterDefaults:
     queue: str = "default"
-    retry_policy: RetryPolicyT = default_retry_policy_factory()
+    retry_policy: RetryPolicyT = field(default_factory=default_retry_policy_factory)
     run_in_process: bool = False
-    converter: type[ConverterT] = DefaultConverter
+    converter: type[ConverterT] = field(default_factory=lambda: Config.CONVERTER)
 
 
 class Router:
-    __slots__ = ("actors", "defaults")
+    __slots__ = ("actors", "defaults", "topics_by_queue")
 
     def __init__(self, *, defaults: RouterDefaults | None = None) -> None:
         self.actors: dict[str, ActorData] = dict()
+        self.topics_by_queue: defaultdict[str, set[str]] = defaultdict(set)
         self.defaults = defaults or RouterDefaults()
 
     @property
@@ -36,12 +40,12 @@ class Router:
 
     @property
     def queues(self) -> frozenset[str]:
-        return frozenset(q.queue for q in self.actors.values())
+        return frozenset(self.topics_by_queue.keys())
 
-    @property
-    def topics_by_queue(self) -> dict[str, frozenset[str]]:
-        topics = self.topics
-        return {q: frozenset(t for t in topics if self.actors[t].queue == q) for q in self.queues}
+    def include_router(self, router: Router) -> None:
+        self.actors.update(router.actors)
+        for queue_name, topics in router.topics_by_queue.items():
+            self.topics_by_queue[queue_name].update(topics)
 
     @overload
     def actor(
@@ -135,4 +139,5 @@ class Router:
             )
 
         self.actors[a.name] = a
+        self.topics_by_queue[a.queue].add(a.name)
         return fn

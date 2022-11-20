@@ -76,6 +76,6 @@ Check out [user guide] to learn more!
 **Repid's logo** is distributed under the terms of the [CC BY-NC 4.0] license. It is originally created by [ari_the_crow_].
 
 [License.md]: https://github.com/aleksul/repid/blob/master/LICENSE
-[user guide]: https://aleksul.github.io/repid
+[user guide]: https://repid.aleksul.space
 [CC BY-NC 4.0]: https://creativecommons.org/licenses/by-nc/4.0/
 [ari_the_crow_]: https://www.instagram.com/p/Cd-ob1NNZ84/

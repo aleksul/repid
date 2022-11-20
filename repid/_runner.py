@@ -78,17 +78,21 @@ class _Runner(_Processor):
             return
         await process_task
 
-    async def __call__(
+    async def run_one_queue(
         self,
         queue_name: str,
         topics: Iterable[str],
         actors: dict[str, ActorData],
     ) -> ConsumerT:
-        consumer = self._conn.message_broker.get_consumer(queue_name, topics)
+        consumer = self._conn.message_broker.get_consumer(
+            queue_name,
+            topics,
+            self.tasks_concurrency_limit,
+        )
         await consumer.start()
         try:
             while True:
-                consume_task = asyncio.create_task(consumer.__anext__())
+                consume_task = asyncio.create_task(consumer.consume())
                 await asyncio.wait(
                     {self.stop_consume_event_task, consume_task},
                     return_when=asyncio.FIRST_COMPLETED,

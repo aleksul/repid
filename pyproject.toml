@@ -13,7 +13,7 @@ license = { text = "MIT" }
 
 [project.urls]
 repository    = "https://github.com/aleksul/repid"
-documentation = "https://aleksul.github.io/repid"
+documentation = "https://repid.aleksul.space"
 funding       = "https://github.com/sponsors/aleksul"
 tracker       = "https://github.com/aleksul/repid/issues"
 
@@ -58,8 +58,12 @@ pre-commit = ["pre-commit"]
 docs = ["mkdocs-material", "mike", "setuptools>=65.5.1"]
 
 [tool.coverage]
-report.fail_under    = 70
-report.exclude_lines = ['\.\.\.', 'if TYPE_CHECKING:']
+report.fail_under = 85
+report.exclude_lines = [
+    '\.\.\.',
+    'if TYPE_CHECKING:',
+    'pragma: no cover',
+]
 
 [tool.black]
 line-length = 100
@@ -69,6 +73,7 @@ profile           = "black"
 multi_line_output = 3
 
 [tool.mypy]
+exclude                 = ["benchmarks"]
 disallow_untyped_defs   = true
 disallow_any_unimported = true
 no_implicit_optional    = true

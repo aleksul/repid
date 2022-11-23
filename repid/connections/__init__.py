@@ -10,20 +10,23 @@ __all__ = [
 ]
 
 try:
-    import aiormq
+    import aiormq  # noqa: F401
 except ImportError:
     pass
 else:
-    from repid.connections.rabbitmq import RabbitMessageBroker
+    from repid.connections.rabbitmq import RabbitMessageBroker  # noqa: F401
 
     __all__.append("RabbitMessageBroker")
 
 try:
-    import redis
+    import redis  # noqa: F401
 except ImportError:
     pass
 else:
-    from repid.connections.redis import RedisBucketBroker, RedisMessageBroker
+    from repid.connections.redis import (  # noqa: F401
+        RedisBucketBroker,
+        RedisMessageBroker,
+    )
 
     __all__.append("RedisBucketBroker")
     __all__.append("RedisMessageBroker")

@@ -34,7 +34,7 @@ class RoutingKeyT(Protocol):
     def __init__(
         self,
         *,
-        id_: str = uuid4().hex,
+        id_: str = uuid4().hex,  # noqa: B008
         topic: str,
         queue: str = "default",
         priority: int = PrioritiesT.MEDIUM.value,
@@ -109,11 +109,11 @@ class ParametersT(SerializableT, TimedT, Protocol):
     def __init__(
         self,
         *,
-        execution_timeout: timedelta = timedelta(minutes=10),
+        execution_timeout: timedelta = timedelta(minutes=10),  # noqa: B008
         result: Union[ResultPropertiesT, None] = None,
         retries: Union[RetriesPropertiesT, None] = None,
         delay: Union[DelayPropertiesT, None] = None,
-        timestamp: datetime = datetime.now(),
+        timestamp: datetime = datetime.now(),  # noqa: B008
         ttl: Union[timedelta, None] = None,
     ) -> None:
         ...

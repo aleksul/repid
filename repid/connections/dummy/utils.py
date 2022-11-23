@@ -5,15 +5,22 @@ from typing import TYPE_CHECKING, Dict, List, Set, Union
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from repid.data.protocols import MessageT, ParametersT
+    from repid.data.protocols import ParametersT, RoutingKeyT
+
+
+@dataclass(frozen=True)
+class Message:
+    key: "RoutingKeyT"
+    payload: str
+    parameters: "ParametersT"
 
 
 @dataclass
 class DummyQueue:
     simple: asyncio.Queue = field(default_factory=asyncio.Queue)
-    delayed: Dict["datetime", List["MessageT"]] = field(default_factory=dict)
-    dead: List["MessageT"] = field(default_factory=list)
-    processing: Set["MessageT"] = field(default_factory=set)
+    delayed: Dict["datetime", List[Message]] = field(default_factory=dict)
+    dead: List[Message] = field(default_factory=list)
+    processing: Set[Message] = field(default_factory=set)
 
 
 def wait_until(params: Union["ParametersT", None] = None) -> Union["datetime", None]:

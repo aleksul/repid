@@ -5,8 +5,7 @@ from typing import TYPE_CHECKING
 
 from repid.connections.abc import MessageBrokerT
 from repid.connections.dummy.consumer import _DummyConsumer
-from repid.connections.dummy.utils import DummyQueue, wait_until
-from repid.data._message import Message
+from repid.connections.dummy.utils import DummyQueue, Message, wait_until
 from repid.logger import logger
 
 if TYPE_CHECKING:

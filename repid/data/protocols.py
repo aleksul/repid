@@ -163,18 +163,3 @@ class ResultBucketT(BucketT, Protocol):
         ttl: Union[timedelta, None] = None,
     ) -> None:
         ...
-
-
-class MessageT(Protocol):
-    key: RoutingKeyT
-    payload: str
-    parameters: ParametersT
-
-    def __init__(
-        self,
-        *,
-        key: RoutingKeyT,
-        payload: str,
-        parameters: ParametersT,
-    ) -> None:
-        ...

@@ -4,14 +4,13 @@ import asyncio
 from typing import TYPE_CHECKING, Iterable
 
 from repid._processor import _Processor
-from repid.data._message import Message
 from repid.main import Repid
 
 if TYPE_CHECKING:
     from repid.actor import ActorData
     from repid.connection import Connection
     from repid.connections import ConsumerT
-    from repid.data import MessageT
+    from repid.data import ParametersT, RoutingKeyT
 
 
 class _Runner(_Processor):
@@ -66,17 +65,40 @@ class _Runner(_Processor):
         if self.max_tasks_hit:
             self.stop_consume_event.set()
 
-    async def _process_with_event(self, actor: ActorData, message: MessageT) -> None:
-        process_task = asyncio.create_task(self.process(actor, message))
+    async def _process_with_event(
+        self,
+        actor: ActorData,
+        key: RoutingKeyT,
+        payload: str,
+        parameters: ParametersT,
+    ) -> None:
+        process_task = asyncio.create_task(self.process(actor, key, payload, parameters))
         await asyncio.wait(
             {self.cancel_event_task, process_task},
             return_when=asyncio.FIRST_COMPLETED,
         )
         if self.cancel_event.is_set():
             process_task.cancel()
-            await self._conn.message_broker.reject(message.key)
+            await self._conn.message_broker.reject(key)
             return
         await process_task
+
+    async def _run_consumer(
+        self,
+        consumer: ConsumerT,
+        actors: dict[str, ActorData],
+    ) -> None:
+        async for key, payload, params in consumer:
+            actor = actors[key.topic]
+            if self.limiter.locked():
+                await consumer.pause()
+                await self.limiter.acquire()
+                await consumer.unpause()
+            else:
+                await self.limiter.acquire()
+            t = asyncio.create_task(self._process_with_event(actor, key, payload, params))
+            self.tasks.add(t)
+            t.add_done_callback(self._task_callback)
 
     async def run_one_queue(
         self,
@@ -91,27 +113,13 @@ class _Runner(_Processor):
         )
         await consumer.start()
         try:
-            while True:
-                consume_task = asyncio.create_task(consumer.consume())
-                await asyncio.wait(
-                    {self.stop_consume_event_task, consume_task},
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                if self.stop_consume_event.is_set():
-                    consume_task.cancel()
-                    break
-                key, payload, params = consume_task.result()
-                msg = Message(key, payload or "", params)
-                actor = actors[key.topic]
-                if self.limiter.locked():
-                    await consumer.pause()
-                    await self.limiter.acquire()
-                    await consumer.unpause()
-                else:
-                    await self.limiter.acquire()
-                t = asyncio.create_task(self._process_with_event(actor, msg))
-                self.tasks.add(t)
-                t.add_done_callback(self._task_callback)
+            consume_task = asyncio.create_task(self._run_consumer(consumer, actors))
+            await asyncio.wait(
+                {self.stop_consume_event_task, consume_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if self.stop_consume_event.is_set():
+                consume_task.cancel()
         finally:
             await consumer.pause()
         return consumer

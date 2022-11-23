@@ -1,6 +1,6 @@
 repid[amqp]==1.0.0rc1
 uvloop==0.17.0
-redis==4.3.4
+redis==4.3.5
 dramatiq[rabbitmq]==1.13.0
 celery==5.2.7
 amqp==5.1.1

@@ -3,10 +3,10 @@ name: Tests
 on:
   push:
     branches:
-      - "main"
+    - main
   pull_request:
     branches:
-      - "main"
+    - main
   workflow_dispatch:
 
 jobs:
@@ -18,33 +18,33 @@ jobs:
       fail-fast: false
       matrix:
         python-version:
-          - "3.8"
-          - "3.9"
-          - "3.10"
-          - "3.11"
+        - '3.8'
+        - '3.9'
+        - '3.10'
+        - '3.11'
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+    - name: Checkout repository
+      uses: actions/checkout@v3
 
-      - name: Setup PDM
-        uses: pdm-project/setup-pdm@v3
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: true
+    - name: Setup PDM
+      uses: pdm-project/setup-pdm@v3
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: true
 
-      - name: Install or update dependencies
-        run: pdm sync -G :all --clean
+    - name: Install or update dependencies
+      run: pdm sync -G :all --clean
 
-      - name: Run tests
-        run: |
-          pdm run pytest tests/ --diff-symbols \
-          --hypothesis-show-statistics --hypothesis-verbosity=normal \
-          --color=yes --cov-report=xml --cov=repid
+    - name: Run tests
+      run: |
+        pdm run pytest tests/ --diff-symbols \
+        --hypothesis-show-statistics --hypothesis-verbosity=normal \
+        --color=yes --cov-report=xml --cov=repid
 
-      - name: Upload code coverage
-        if: matrix.python-version == '3.8'
-        uses: codecov/codecov-action@v3
-        with:
-          files: ./coverage.xml
-          flags: unittests
+    - name: Upload code coverage
+      if: matrix.python-version == '3.8'
+      uses: codecov/codecov-action@v3
+      with:
+        files: ./coverage.xml
+        flags: unittests

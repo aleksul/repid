@@ -3,13 +3,13 @@ services:
   redis:
     image: redis:7.0-alpine
     ports:
-      - "127.0.0.1:6379:6379"
+    - 127.0.0.1:6379:6379
     command: redis-server --requirepass testtest
   rabbitmq:
     image: rabbitmq:3.11-management-alpine
     ports:
-      - "127.0.0.1:5672:5672"
-      - "127.0.0.1:15672:15672"
+    - 127.0.0.1:5672:5672
+    - 127.0.0.1:15672:15672
     environment:
-      - RABBITMQ_DEFAULT_USER=user
-      - RABBITMQ_DEFAULT_PASS=testtest
+    - RABBITMQ_DEFAULT_USER=user
+    - RABBITMQ_DEFAULT_PASS=testtest

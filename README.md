@@ -1,8 +1,11 @@
+<!-- markdownlint-configure-file { "MD013": { "line_length": 100 } } -->
+<!-- markdownlint-disable MD033 -->
+
+# repid
+
 <a href="https://www.instagram.com/p/Cd-ob1NNZ84/">
   <img alt="Repid's logo" width="350" align="right" src="https://gist.github.com/aleksul/fedbe168f1fc59c5aac3ddd17ecff30a/raw/b9467303f55517d99633d6551de223cd6534b149/repid_logo_borders.svg">
 </a>
-
-# repid
 
 [![PyPI version](https://img.shields.io/pypi/v/repid.svg)](https://pypi.org/project/repid/)
 [![codecov](https://codecov.io/gh/aleksul/repid/branch/main/graph/badge.svg?token=IP3Z1VXB1G)](https://codecov.io/gh/aleksul/repid)
@@ -73,7 +76,8 @@ Check out [user guide] to learn more!
 
 **Repid** is distributed under the terms of the MIT license. Please see [License.md] for more information.
 
-**Repid's logo** is distributed under the terms of the [CC BY-NC 4.0] license. It is originally created by [ari_the_crow_].
+**Repid's logo** is distributed under the terms of the [CC BY-NC 4.0] license.
+It is originally created by [ari_the_crow_].
 
 [License.md]: https://github.com/aleksul/repid/blob/master/LICENSE
 [user guide]: https://repid.aleksul.space

@@ -1,3 +1,5 @@
+<!-- markdownlint-disable MD033 -->
+<!-- markdownlint-configure-file { "MD013": { "line_length": 100 } } -->
 # Repid
 
 <p align="center">
@@ -77,7 +79,8 @@ asyncio.run(main())
 pip install repid
 ```
 
-There are also a couple of additional dependencies you may want to install, depending on your use case, e.g.
+There are also a couple of additional dependencies you may want to install,
+depending on your use case, e.g.
 
 ```bash
 pip install repid[amqp, redis, cron]
@@ -92,7 +95,9 @@ And you don't have to worry that it will slow down your other asyncio-driven cod
 
 ### Ease of integration
 
-There is an abstraction layer on top of other queue solutions. It means that even if `repid` doesn't provide some broker out of the box, you will be able to write your own.
+There is an abstraction layer on top of other queue solutions.
+It means that even if `repid` doesn't provide some broker out of the box,
+you will be able to write your own.
 
 ### Built with microservices in mind
 
@@ -100,7 +105,9 @@ Your producer and consumer can be running in different containers, `repid` will 
 
 ### Can be used with other languages
 
-`Repid` uses json (de-)serialization by default, which makes integration with other languages as easy as possible. You're also able to easily override default (de-)serialization behavior thanks to PEP 544 Protocols.
+`Repid` uses json (de-)serialization by default, which makes integration with other languages
+as easy as possible. You're also able to easily override default (de-)serialization
+behavior thanks to PEP 544 Protocols.
 
 ### Integrated scheduling
 
@@ -116,7 +123,8 @@ No need for extra dependencies!
 
 **Repid** is distributed under the terms of the MIT license. Please see [License.md] for more information.
 
-**Repid's logo** is distributed under the terms of the [CC BY-NC 4.0] license. It is originally created by [ari_the_crow_].
+**Repid's logo** is distributed under the terms of the [CC BY-NC 4.0] license.
+It is originally created by [ari_the_crow_].
 
 [License.md]: https://github.com/aleksul/repid/blob/master/LICENSE
 [CC BY-NC 4.0]: https://creativecommons.org/licenses/by-nc/4.0/

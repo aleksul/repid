@@ -1,3 +1,7 @@
+[build-system]
+requires = ["pdm-pep517>=1.0.0"]
+build-backend = "pdm.pep517.api"
+
 [project]
 name = "repid"
 description = "Repid framework: simple to use, fast to run and extensible to adopt job scheduler"
@@ -11,16 +15,51 @@ readme = "README.md"
 dynamic = ["version"]
 license = { text = "MIT" }
 
-[project.urls]
-repository    = "https://github.com/aleksul/repid"
-documentation = "https://repid.aleksul.space"
-funding       = "https://github.com/sponsors/aleksul"
-tracker       = "https://github.com/aleksul/repid/issues"
-
 [project.optional-dependencies]
-amqp  = ["aiormq<7.0.0,>=6.4.0"]
+amqp = ["aiormq<7.0.0,>=6.4.0"]
 redis = ["redis<5.0.0,>=4.3.3"]
-cron  = ["croniter<2.0.0,>=1.3.4"]
+cron = ["croniter<2.0.0,>=1.3.4"]
+
+[project.urls]
+repository = "https://github.com/aleksul/repid"
+documentation = "https://repid.aleksul.space"
+funding = "https://github.com/sponsors/aleksul"
+tracker = "https://github.com/aleksul/repid/issues"
+
+[tool.black]
+line-length = 100
+
+[tool.coverage]
+
+[tool.coverage.report]
+fail_under = 85
+exclude_lines = [
+    '\.\.\.',
+    'if TYPE_CHECKING:',
+    'pragma: no cover',
+]
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+
+[tool.mypy]
+exclude = ["benchmarks"]
+disallow_untyped_defs = true
+disallow_any_unimported = true
+no_implicit_optional = true
+check_untyped_defs = true
+warn_return_any = true
+warn_unused_ignores = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_any_unimported = false
+
+[[tool.mypy.overrides]]
+module = ["pytest_docker_tools", "pytest_lazyfixture"]
+ignore_missing_imports = true
 
 [tool.pdm]
 version = { source = "scm" }
@@ -35,13 +74,7 @@ lint = [
     "types-orjson",
     "types-redis",
     "types-croniter",
-    "flake8",
-    "flake8-bugbear",
-    "flake8-builtins",
-    "flake8-pyproject",
-    "flake8-type-checking",
-    "flake8-logging-format",
-    "yesqa",
+    "ruff",
 ]
 tests = [
     "pytest",
@@ -57,52 +90,11 @@ tests = [
 pre-commit = ["pre-commit"]
 docs = ["mkdocs-material", "mike", "setuptools>=65.5.1"]
 
-[tool.coverage]
-report.fail_under = 85
-report.exclude_lines = [
-    '\.\.\.',
-    'if TYPE_CHECKING:',
-    'pragma: no cover',
-]
-
-[tool.black]
-line-length = 100
-
-[tool.isort]
-profile           = "black"
-multi_line_output = 3
-
-[tool.mypy]
-exclude                 = ["benchmarks"]
-disallow_untyped_defs   = true
-disallow_any_unimported = true
-no_implicit_optional    = true
-check_untyped_defs      = true
-warn_return_any         = true
-warn_unused_ignores     = true
-show_error_codes        = true
-
-[[tool.mypy.overrides]]
-module                  = "tests.*"
-disallow_any_unimported = false
-
-[[tool.mypy.overrides]]
-module                 = ["pytest_docker_tools", "pytest_lazyfixture"]
-ignore_missing_imports = true
-
-[tool.flake8]
-max-line-length = 100
-per-file-ignores = [
-    "__init__.py:F401",
-    "tests/*:TC",
-    "protocols.py:B008",
-]
-ignore = "W503,PT013"
-enable-extensions = ["TC", "TC1"]
-
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 
-[build-system]
-requires      = ["pdm-pep517>=1.0.0"]
-build-backend = "pdm.pep517.api"
+[tool.ruff]
+select = ["F", "E", "M", "B", "A", "RUF", "S", "W"]
+line-length = 100
+ignore = ["S101"]
+per-file-ignores = { "tests/*" = ["S"] }

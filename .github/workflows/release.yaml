@@ -3,28 +3,28 @@ name: Release
 on:
   release:
     types:
-      - published
+    - published
   workflow_dispatch:
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
 
-      - name: Setup PDM
-        uses: pdm-project/setup-pdm@v3
-        with:
-          python-version: "3.8"
-          cache: true
+    - name: Setup PDM
+      uses: pdm-project/setup-pdm@v3
+      with:
+        python-version: '3.8'
+        cache: true
 
-      - name: Configure PyPI token
-        run: |
-          pdm config repository.pypi.username "__token__"
-          pdm config repository.pypi.password "${{ secrets.PYPI_TOKEN }}"
+    - name: Configure PyPI token
+      run: |
+        pdm config repository.pypi.username "__token__"
+        pdm config repository.pypi.password "${{ secrets.PYPI_TOKEN }}"
 
-      - name: Publish to PyPI
-        run: pdm publish -r pypi
+    - name: Publish to PyPI
+      run: pdm publish -r pypi

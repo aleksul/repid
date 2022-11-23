@@ -105,6 +105,7 @@ class _RabbitConsumer(ConsumerT):
 
         # if consumer is paused - reject the message
         if self.__is_paused:
+            await asyncio.sleep(0.1)
             await self.broker._channel().basic_reject(message.delivery_tag)
             return
 

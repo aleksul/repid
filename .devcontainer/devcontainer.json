@@ -4,7 +4,7 @@
 		"dockerfile": "Dockerfile",
 		"context": "..",
 		"args": {
-			"VARIANT": "3.10-bullseye"
+			"VARIANT": "3.8-bullseye"
 		}
 	},
 	"workspaceFolder": "/workspace",
@@ -18,12 +18,15 @@
 				"ms-python.python",
 				"ms-python.vscode-pylance",
 				"matangover.mypy",
+				"charliermarsh.ruff",
+				"ms-python.isort",
 				"njpwerner.autodocstring",
-				"ryanluker.vscode-coverage-gutters"
+				"ryanluker.vscode-coverage-gutters",
+				"seatonjiang.gitmoji-vscode"
 			]
 		}
 	},
-	"postCreateCommand": "pdm install -d -G :all && pdm run pre-commit install",
+	"postCreateCommand": "pdm install -G :all && pdm run pre-commit install",
 	"remoteUser": "vscode",
 	"features": {
 		"docker-from-docker": "latest"

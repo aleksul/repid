@@ -25,7 +25,6 @@
     // Linting
     "python.linting.enabled": true,
     "python.linting.lintOnSave": true,
-    "python.linting.flake8Enabled": true,
     "python.linting.mypyEnabled": false,
     "mypy.runUsingActiveInterpreter": true,
     // Formatting

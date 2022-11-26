@@ -1,0 +1,56 @@
+name: Upgrade dependencies
+
+on:
+  workflow_dispatch:
+  schedule:
+    # every day at 12 o'clock
+  - cron: 0 12 * * *
+
+jobs:
+  upgrade:
+    name: Upgrade & Open Pull Request
+    runs-on: ubuntu-latest
+    if: github.ref_type == "branch"
+    env:
+      BRANCH_NAME: not-dependabot/${{ github.ref_name }}
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+
+    - name: Setup PDM
+      uses: pdm-project/setup-pdm@v3
+      with:
+        python-version: '3.8'
+        cache: true
+
+    - name: Upgrade Python dependencies
+      run: pdm update -G :all --update-all
+
+    - name: Detect changes
+      id: changes
+      run: echo "count=$(git status --porcelain=v1 2>/dev/null | wc -l)" >> $GITHUB_OUTPUT
+
+    - name: Commit & push changes
+      if: steps.changes.outputs.count > 0
+      run: |
+        git config user.name github-actions
+        git config user.email github-actions@github.com
+        git commit --all -m "⬆ PDM auto-updates"
+        git push -f origin ${{ github.ref_name }}:$BRANCH_NAME
+
+    - name: Create or update pull request
+      if: steps.changes.outputs.count > 0
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        PR=$(gh pr list --head $BRANCH_NAME --json number -q '.[0].number')
+        if [ -z $PR ]; then
+          gh pr create \
+          --base ${{ github.ref_name }} \
+          --head $BRANCH_NAME \
+          --title "⬆ PDM auto-updates" \
+          --body "CI log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        else
+          gh pr edit $PR \
+          --body "CI log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        fi

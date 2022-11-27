@@ -37,9 +37,7 @@ from repid import Repid, Job
 Repid("amqp://user:password@localhost:5672")
 
 async def main():
-  myjob = Job(name="awesome_job")
-  await myjob.queue.declare()
-  await myjob.enqueue()
+  await Job(name="awesome_job").enqueue()
 
 asyncio.run(main())
 ```

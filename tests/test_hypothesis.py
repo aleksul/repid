@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 
 from hypothesis import HealthCheck, given, settings
 from hypothesis.strategies import (
+    booleans,
     builds,
     characters,
     datetimes,
@@ -17,9 +18,7 @@ from hypothesis.strategies import (
     tuples,
 )
 
-from repid.data import Args, ArgsBucket, PrioritiesT
-from repid.job import Job
-from repid.queue import Queue
+from repid import ArgsBucket, Job, PrioritiesT, Queue, ResultMetadata
 from repid.utils import VALID_ID, VALID_NAME
 
 MAX = 2**31 - 1
@@ -44,14 +43,6 @@ def jsonable():
     )
 
 
-def job_args_simple_st():
-    return builds(
-        Args,
-        args=tuples(jsonable()),
-        kwargs=dictionaries(keys=characters(), values=jsonable()),
-    )
-
-
 def job_args_bucket_st():
     return builds(
         ArgsBucket,
@@ -59,6 +50,14 @@ def job_args_bucket_st():
         args=one_of(none(), tuples(jsonable())),
         kwargs=one_of(none(), dictionaries(keys=characters(), values=jsonable())),
         timestamp=integers(min_value=0, max_value=MAX),
+        ttl=one_of(integers(min_value=1, max_value=MAX), none()),
+    )
+
+
+def job_result_metadata_st():
+    return builds(
+        ResultMetadata,
+        id_=from_regex(VALID_ID, fullmatch=True),
         ttl=one_of(integers(min_value=1, max_value=MAX), none()),
     )
 
@@ -86,9 +85,9 @@ def job_st():
         timeout=integers(min_value=1, max_value=MAX),
         ttl=one_of(integers(min_value=1, max_value=MAX), none()),
         id_=one_of(from_regex(VALID_ID, fullmatch=True), none()),
-        args=one_of(none(), job_args_simple_st(), job_args_bucket_st()),
-        result_id=one_of(from_regex(VALID_ID, fullmatch=True), none()),
-        result_ttl=one_of(integers(min_value=1, max_value=MAX), none()),
+        args=one_of(none(), job_args_bucket_st()),
+        use_args_bucketer=one_of(none(), booleans()),
+        result_metadata=one_of(none(), job_result_metadata_st()),
         _connection=none(),
     )
 

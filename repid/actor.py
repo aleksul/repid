@@ -7,13 +7,14 @@ from uuid import uuid4
 
 import anyio
 
+from repid.middlewares import Middleware
 from repid.utils import VALID_NAME, unix_time
 
 logger = logging.getLogger(__name__)
 
 
-class Result(NamedTuple):
-    data: Any
+class ActorResult(NamedTuple):
+    data: Any  # must be encodable
     success: bool
     exception: Union[Exception, None]
     started_when: int
@@ -50,15 +51,25 @@ class Actor:
                 "followed by letters, digits, dashes or underscores."
             )
 
-    async def __call__(self, *args: Tuple, **kwargs: Dict) -> Result:
+    async def __call__(self, *args: Tuple, **kwargs: Dict) -> ActorResult:
         result: Any = None
         success: bool
         started_when = unix_time()
         exception = None
         time_limit = self._TIME_LIMIT.get()
-        logger_extra = dict(call_id=uuid4().hex)
+        run_id = uuid4().hex
+        logger_extra = dict(run_id=run_id)
         logger.info(f"Running {str(self)}.", extra=logger_extra)
         logger.debug(f"Time limit is set to {time_limit}.", extra=logger_extra)
+        await Middleware.emit_signal(
+            "before_actor_run",
+            dict(
+                actor=self,
+                run_id=run_id,
+                args=args,
+                kwargs=kwargs,
+            ),
+        )
         try:
             with anyio.fail_after(delay=time_limit):
                 if iscoroutinefunction(self.fn):
@@ -71,19 +82,32 @@ class Actor:
             logger.error(
                 f"Error occured while running {str(self)}.",
                 extra=logger_extra,
-                exc_info=exc,
+                exc_info=True,
             )
         else:
             logger.info(f"{str(self)} finished successfully.", extra=logger_extra)
             success = True
 
-        return Result(
+        actor_result = ActorResult(
             data=result,
             success=success,
             exception=exception,
             started_when=started_when,
             finished_when=unix_time(),
         )
+
+        await Middleware.emit_signal(
+            "after_actor_run",
+            dict(
+                actor=self,
+                run_id=run_id,
+                args=args,
+                kwargs=kwargs,
+                result=result,
+            ),
+        )
+
+        return actor_result
 
     def __str__(self) -> str:
         return f"Actor({self.fn.__name__}, name='{self.name}', queue='{self.queue}')"

@@ -3,13 +3,13 @@ from __future__ import annotations
 import logging
 import signal
 from itertools import cycle
-from typing import Callable
+from typing import Any, Callable
 
 import anyio
 
 from repid.actor import Actor
 from repid.connection import Connection
-from repid.data import Args, ArgsBucket, Message, ResultBucket
+from repid.data import ArgsBucket, Message, ResultBucket
 from repid.main import Repid
 from repid.utils import unix_time
 
@@ -53,9 +53,9 @@ class Worker:
 
         return decorator
 
-    async def _get_message_args(self, message: Message) -> Args:
+    async def _get_message_args(self, message: Message) -> tuple[tuple, dict[str, Any]]:
         if message.simple_args or message.simple_kwargs:
-            return Args(message.simple_args or (), message.simple_kwargs or {})
+            return (message.simple_args or (), message.simple_kwargs or {})
         elif message.args_bucket_id:
             if self._conn.args_bucketer is None:
                 raise ConnectionError("No args bucketer provided.")
@@ -63,8 +63,8 @@ class Worker:
             if bucket is None:
                 logger.error(f"No bucket found for id = {message.args_bucket_id}.")
             if isinstance(bucket, ArgsBucket):
-                return Args(bucket.args or (), bucket.kwargs or {})
-        return Args((), {})
+                return (bucket.args or (), bucket.kwargs or {})
+        return ((), {})
 
     async def _set_result(self, result: ResultBucket) -> None:
         if self._conn.results_bucketer is None:
@@ -97,13 +97,19 @@ class Worker:
 
         # return result
         if message.result_bucket_id is not None:
-            result_with_metadata = dict(
+            result_bucket = ResultBucket(
                 id_=message.result_bucket_id,
-                ttl=message.result_bucket_ttl,
+                data=result.data,
+                success=result.success,
+                started_when=result.started_when,
+                finished_when=result.finished_when,
+                exception=f"{type(result.exception)}: {result.exception}"
+                if result.exception is not None
+                else None,
                 timestamp=unix_time(),
-                **result._asdict(),
+                ttl=message.result_bucket_ttl,
             )
-            await self._set_result(ResultBucket(**result_with_metadata))
+            await self._set_result(result_bucket)
 
     async def __process_message_with_cancellation(self, message: Message) -> None:
         try:

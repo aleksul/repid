@@ -27,4 +27,4 @@ jobs:
       run: pdm export --group :all --format requirements --output requirements.txt
 
     - name: Dependency Review
-      uses: actions/dependency-review-action@v2
+      uses: actions/dependency-review-action@v3

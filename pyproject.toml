@@ -2,7 +2,10 @@
 name = "repid"
 description = "Async queue for Python."
 authors = [{ name = "aleksul", email = "me@aleksul.space" }]
-dependencies = ["orjson>=3.7.11,<4.0.0", "typing-extensions>=4.3.0,<5.0.0"]
+dependencies = [
+    "orjson>=3.7.11,<4.0.0",
+    "typing-extensions>=4.3.0,<5.0.0; python_version < \"3.10\"",
+]
 requires-python = ">=3.8"
 readme = "README.md"
 dynamic = ["version"]
@@ -11,9 +14,11 @@ license = { text = "MIT" }
 [project.urls]
 repository = "https://github.com/aleksul/repid"
 documentation = "https://aleksul.github.io/repid"
+funding = "https://github.com/sponsors/aleksul"
+tracker = "https://github.com/aleksul/repid/issues"
 
 [project.optional-dependencies]
-amqp = ["aio-pika<9.0.0,>=8.2.0"]
+amqp = ["aiormq<7.0.0,>=6.4.0"]
 redis = ["redis<5.0.0,>=4.3.3"]
 cron = ["croniter<2.0.0,>=1.3.4"]
 
@@ -46,6 +51,7 @@ tests = [
     "pytest-asyncio",
     "pytest-lazy-fixture",
     "hypothesis",
+    "pydantic<2.0.0,>=1.10.0",
 ]
 pre-commit = ["pre-commit"]
 docs = ["mkdocs-material", "mike"]
@@ -72,7 +78,7 @@ exclude = "^tests/"
 
 [tool.flake8]
 max-line-length = 100
-per-file-ignores = ["__init__.py:F401", "tests/*:TC"]
+per-file-ignores = ["__init__.py:F401", "tests/*:TC", "protocols.py:B008"]
 ignore = "W503,PT013"
 enable-extensions = ["TC", "TC1"]
 

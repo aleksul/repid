@@ -1,39 +1,40 @@
+from inspect import isfunction
+
 import pytest
 
-from repid import Queue, Repid
-from repid.connection import CONNECTIONS_MAPPING
+from repid import Connection, Queue, Repid
+from repid.connections.abc import BucketBrokerT, MessageBrokerT
+from repid.main import DEFAULT_CONNECTION
 from repid.middlewares import AVAILABLE_FUNCTIONS, InjectMiddleware
-from repid.protocols import Bucketing, Messaging
 
 
 @pytest.fixture()
 def dummy_recursive_connection():
     @InjectMiddleware
     class DummyConnection:
-        def __init__(self, dsn: str) -> None:
-            pass
-
         async def queue_flush(self, queue_name: str) -> None:
             pass
 
         async def queue_delete(self, queue_name: str) -> None:
             await self.queue_flush(queue_name)
 
-    CONNECTIONS_MAPPING["test://"] = DummyConnection
-    return DummyConnection
+    repid = Repid(Connection(DummyConnection()))
+    contextvar_token = DEFAULT_CONNECTION.set(repid._conn)
+    yield repid._conn
+    DEFAULT_CONNECTION.reset(contextvar_token)
 
 
 def test_available_functions():
-    for name in dir(Messaging) + dir(Bucketing):
+    for name in dir(MessageBrokerT) + dir(BucketBrokerT):
         if name.startswith("__"):
             continue
-        if callable(getattr(Messaging, name, None) or getattr(Bucketing, name, None)):
+        if name.endswith("connect"):
+            continue
+        if isfunction(getattr(MessageBrokerT, name, None) or getattr(BucketBrokerT, name, None)):
             assert name in AVAILABLE_FUNCTIONS
 
 
-async def test_middleware_double_call(dummy_recursive_connection):
-    r = Repid("test://test")
-
+async def test_middleware_double_call(dummy_recursive_connection: Connection):
     counter = 0
 
     class TestMiddleware:
@@ -52,7 +53,7 @@ async def test_middleware_double_call(dummy_recursive_connection):
             nonlocal counter
             counter += 1
 
-    r.middleware.add_middleware(TestMiddleware())
+    dummy_recursive_connection.middleware.add_middleware(TestMiddleware())
     await Queue("test_queue_name").delete()
     assert counter == 2
     await Queue("test_another_queue_name").delete()
@@ -61,14 +62,12 @@ async def test_middleware_double_call(dummy_recursive_connection):
     assert counter == 4
 
 
-async def test_error_in_middleware(caplog, dummy_recursive_connection):
-    r = Repid("test://test")
-
+async def test_error_in_middleware(caplog, dummy_recursive_connection: Connection):
     class TestMiddleware:
         async def before_queue_flush(self, queue_name: str):
             raise Exception("Some random exception")
 
-    r.middleware.add_middleware(TestMiddleware())
+    dummy_recursive_connection.middleware.add_middleware(TestMiddleware())
     await Queue("test_queue_name").flush()
     assert any(
         map(

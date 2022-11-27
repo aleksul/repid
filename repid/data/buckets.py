@@ -19,7 +19,7 @@ class ResultBucket:
     id_: str
     data: Any
     success: bool
-    started_when: int
+    started_when: int  # perf_counter_ns
     finished_when: int
     exception: Union[str, None]
     timestamp: int

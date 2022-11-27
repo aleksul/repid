@@ -1,6 +1,7 @@
+import asyncio
 from datetime import timedelta
 
-import anyio
+import pytest
 
 from repid import Job, Worker
 
@@ -48,6 +49,5 @@ async def test_worker_no_queue():
     async def awesome_job():
         pass
 
-    async with anyio.create_task_group():
-        with anyio.move_on_after(3):
-            await myworker.run()
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(myworker.run(), 3.0)

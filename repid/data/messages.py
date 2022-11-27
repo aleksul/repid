@@ -28,8 +28,8 @@ class Message:
 
     execution_timeout: int
 
-    retries: int
-    tried: int
+    retries: int  # max number of retries
+    tried: int  # number of tries done
 
     # args_bucket
     args_bucket_id: Union[str, None]

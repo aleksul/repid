@@ -1,9 +1,9 @@
+import asyncio
 import logging
 from datetime import datetime
 from typing import Dict, FrozenSet, Union
 
 import aio_pika as aiopika
-import anyio
 from yarl import URL
 
 from repid.data import Message
@@ -153,15 +153,21 @@ class RabbitMessaging:
             queue = await channel.get_queue(queue_name)
             await queue.purge()
 
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(_flush, queue_name)
-            tg.start_soon(_flush, f"{queue_name}:delayed")
-            tg.start_soon(_flush, f"{queue_name}:dead")
+        await asyncio.gather(
+            *[
+                _flush(queue_name),
+                _flush(f"{queue_name}:delayed"),
+                _flush(f"{queue_name}:dead"),
+            ]
+        )
 
     async def queue_delete(self, queue_name: str) -> None:
         logger.debug(f"Deleting queue {queue_name = }.")
         channel = await self._channel()
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(channel.queue_delete, queue_name)
-            tg.start_soon(channel.queue_delete, f"{queue_name}:delayed")
-            tg.start_soon(channel.queue_delete, f"{queue_name}:dead")
+        await asyncio.gather(
+            *[
+                channel.queue_delete(queue_name),
+                channel.queue_delete(f"{queue_name}:delayed"),
+                channel.queue_delete(f"{queue_name}:dead"),
+            ]
+        )

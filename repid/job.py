@@ -1,19 +1,13 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime, timedelta
-from typing import Union
 
 from repid.connection import Connection
-from repid.data import ArgsBucket, Message, PrioritiesT, ResultBucket
-from repid.data.messages import (
-    ArgsBucketMetadata,
-    ResultBucketMetadata,
-    SimpleArgsBucket,
-)
-from repid.main import DEFAULT_CONNECTION
+from repid.data import Args, ArgsBucket, Message, PrioritiesT, ResultBucket
+from repid.main import Repid
 from repid.queue import Queue
 from repid.utils import VALID_ID, VALID_NAME, unix_time
-
-ArgsBucketT = Union[SimpleArgsBucket, ArgsBucketMetadata, None]
 
 
 class Job:
@@ -31,29 +25,32 @@ class Job:
         "timeout",
         "created",
         "ttl",
-        "__args_bucket_metadata",
-        "__simple_args_bucket",
-        "__result_bucket_metadata",
-        "__conn",
+        "args",
+        "result_id",
+        "result_ttl",
+        "_conn",
     )
 
     def __init__(
         self,
         name: str,
-        queue: Union[str, Queue] = "default",
+        queue: str | Queue = "default",
         priority: PrioritiesT = PrioritiesT.MEDIUM,
-        deferred_until: Union[datetime, int, None] = None,
-        deferred_by: Union[timedelta, int, None] = None,
-        cron: Union[str, None] = None,
+        deferred_until: datetime | int | None = None,
+        deferred_by: timedelta | int | None = None,
+        cron: str | None = None,
         retries: int = 1,
         timeout: int = 600,
-        ttl: Union[int, None] = None,
-        id_: Union[str, None] = None,
-        _connection: Union[Connection, None] = None,
+        ttl: int | None = None,
+        id_: str | None = None,
+        args: Args | ArgsBucket | None = None,
+        result_id: str | None = None,
+        result_ttl: int | None = 86400,
+        _connection: Connection | None = None,
     ):
-        self.__conn = _connection or DEFAULT_CONNECTION.get()
+        self._conn = _connection or Repid.get_default_connection()
 
-        if not self.__conn.messager.supports_delayed_messages and self.is_deferred:
+        if not self._conn.messager.supports_delayed_messages and self.is_deferred:
             raise ValueError("Deferred jobs are not supported by this connection.")
 
         if not VALID_NAME.fullmatch(name):
@@ -68,7 +65,7 @@ class Job:
         self.id_ = id_  # if id is not None -> job is unique
 
         if not isinstance(queue, Queue):
-            self.queue = Queue(queue, self.__conn)
+            self.queue = Queue(queue, self._conn)
         else:
             self.queue = queue
 
@@ -99,16 +96,24 @@ class Job:
             raise ValueError("TTL must be greater than or equal to 1 second.")
         self.ttl = ttl
 
-        self.__args_bucket_metadata: Union[ArgsBucketMetadata, None] = None
-        self.__simple_args_bucket: Union[SimpleArgsBucket, None] = None
-        self.__result_bucket_metadata: Union[ResultBucketMetadata, None] = None
-        if self.__conn.results_bucketer is not None:
-            self.__result_bucket_metadata = ResultBucketMetadata(id_=uuid.uuid4().hex, ttl=86400)
+        if result_id is not None and not VALID_ID.fullmatch(result_id):
+            raise ValueError(
+                "Result id must contain only letters, numbers, dashes and underscores."
+            )
+        self.result_id = result_id
+
+        if result_ttl is not None and result_ttl < 1:
+            raise ValueError("Result TTL must be greater than or equal to 1 second.")
+        self.result_ttl = result_ttl
+
+        self.args = args
         self.created = unix_time()
 
-    async def enqueue(self) -> Message:
+    async def enqueue(self, store_args: bool = True) -> Message:
+        if store_args and isinstance(self.args, ArgsBucket):
+            await self._conn.ab.store_bucket(self.args)
         msg = self._to_message()
-        await self.__conn.messager.enqueue(msg)
+        await self._conn.messager.enqueue(msg)
         return msg
 
     @property
@@ -126,100 +131,44 @@ class Job:
         return False
 
     @property
-    def args_metadata(self) -> Union[ArgsBucketMetadata, None]:
-        return self.__args_bucket_metadata
-
-    @args_metadata.setter
-    def args_metadata(self, value: Union[ArgsBucketMetadata, None]) -> None:
-        self.__args_bucket_metadata = None
-        if isinstance(value, ArgsBucketMetadata):
-            self.__args_bucket_metadata = value
-        self.__simple_args_bucket = None
-
-    @property
-    def simple_args(self) -> Union[SimpleArgsBucket, None]:
-        return self.__simple_args_bucket
-
-    @simple_args.setter
-    def simple_args(self, value: Union[SimpleArgsBucket, None]) -> None:
-        self.__simple_args_bucket = None
-        if isinstance(value, SimpleArgsBucket):
-            self.__simple_args_bucket = value
-        self.__args_bucket_metadata = None
-
-    @property
-    def result_metadata(self) -> Union[ResultBucketMetadata, None]:
-        return self.__result_bucket_metadata
-
-    @result_metadata.setter
-    def result_metadata(self, value: Union[ResultBucketMetadata, None]) -> None:
-        self.__result_bucket_metadata = None
-        if isinstance(value, ResultBucketMetadata):
-            self.__result_bucket_metadata = value
-
-    @property
-    async def args(self) -> Union[SimpleArgsBucket, ArgsBucket, None]:
-        if self.simple_args is not None:
-            return self.simple_args
-        if self.args_metadata is None:
-            raise ValueError("Args metadata object is not configured.")
-        if self.__conn.args_bucketer is None:
-            raise ConnectionError("Args bucketer is not configured.")
-        data = await self.__conn.args_bucketer.get_bucket(
-            id_=self.args_metadata.id_,
-        )
-        if isinstance(data, ArgsBucket):
-            return data
-        return None
-
-    @args.setter
-    async def args(self, value: ArgsBucket) -> None:
-        metadata = ArgsBucketMetadata(id_=value.id_)
-        self.args_metadata = metadata
-        if self.__conn.args_bucketer is None:
-            raise ConnectionError("Args bucketer is not configured.")
-        await self.__conn.args_bucketer.store_bucket(value)
-
-    @args.deleter
-    async def args(self) -> None:
-        if self.args_metadata is None:
-            raise ValueError("Args metadata object is not configured.")
-        if self.__conn.args_bucketer is None:
-            raise ConnectionError("Args bucketer is not configured.")
-        await self.__conn.args_bucketer.delete_bucket(self.args_metadata.id_)
-
-    @property
-    async def result(self) -> Union[ResultBucket, None]:
-        if self.result_metadata is None:
-            raise ValueError("Result metadata object is not configured.")
-        if self.__conn.results_bucketer is None:
-            raise ConnectionError("Results bucketer is not configured.")
-        data = await self.__conn.results_bucketer.get_bucket(
-            self.result_metadata.id_,
-        )
+    async def result(self) -> ResultBucket | None:
+        if self.result_id is None:
+            raise ValueError("Result_id is not set.")
+        data = await self._conn.rb.get_bucket(self.result_id)
         if isinstance(data, ResultBucket):
             return data
         return None
 
     def _to_message(self) -> Message:
+        args_id = None
+        simple_args = None
+        simple_kwargs = None
+        if self.args is not None:
+            if isinstance(self.args, Args):
+                simple_args = self.args.args
+                simple_kwargs = self.args.kwargs
+            else:
+                args_id = self.args.id_
+
         msg = Message(
             id_=self.id_ or uuid.uuid4().hex,
             topic=self.name,
             queue=self.queue.name,
-            priority=self.priority,
+            priority=self.priority.value,
             execution_timeout=self.timeout,
             retries=self.retries,
             tried=0,
-            args_bucket=self.args_metadata or self.simple_args,
-            result_bucket=self.result_metadata,
+            args_bucket_id=args_id,
+            simple_args=simple_args,
+            simple_kwargs=simple_kwargs,
+            result_bucket_id=self.result_id,
+            result_bucket_ttl=self.result_ttl,
             delay_until=self.deferred_until,
             defer_by=self.deferred_by,
             cron=self.cron,
             ttl=self.ttl,
             timestamp=unix_time(),
         )
-        if self.is_deferred and msg.delay_until is None:
-            msg.delay_until = msg.next_execution_time
         return msg
 
     def __str__(self) -> str:

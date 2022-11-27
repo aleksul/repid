@@ -1,9 +1,9 @@
 import pytest
 
 from repid import Queue, Repid
-from repid.connection import Bucketing, Messaging
-from repid.connections import CONNECTIONS
+from repid.connection import CONNECTIONS_MAPPING
 from repid.middlewares import AVAILABLE_FUNCTIONS, InjectMiddleware
+from repid.protocols import Bucketing, Messaging
 
 
 @pytest.fixture()
@@ -19,7 +19,7 @@ def dummy_recursive_connection():
         async def queue_delete(self, queue_name: str) -> None:
             await self.queue_flush(queue_name)
 
-    CONNECTIONS["test://"] = DummyConnection
+    CONNECTIONS_MAPPING["test://"] = DummyConnection
     return DummyConnection
 
 

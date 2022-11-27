@@ -7,7 +7,7 @@ from functools import partial, update_wrapper
 from inspect import signature
 from typing import Any, Callable, Coroutine, Generic, TypeVar, overload
 
-if sys.version_info >= (3, 10):
+if sys.version_info >= (3, 10):  # pragma: no cover
     from typing import ParamSpec
 else:
     from typing_extensions import ParamSpec

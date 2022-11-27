@@ -1,7 +1,7 @@
 import re
 import sys
 
-VALID_ID = re.compile(r"[a-zA-Z0-9_-]*")
+VALID_ID = re.compile(r"[a-zA-Z0-9_-]+")
 VALID_NAME = re.compile(r"[a-zA-Z_][a-zA-Z0-9_-]*")  # valid actor and queue names
 
 SLOTS_DATACLASS = dict(slots=True) if sys.version_info >= (3, 10) else dict()

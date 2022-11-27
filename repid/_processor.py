@@ -145,4 +145,4 @@ class _Processor:
 
     @property
     def processed(self) -> int:
-        return self._processed
+        return self._processed  # pragma: no cover

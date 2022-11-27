@@ -22,13 +22,13 @@ if TYPE_CHECKING:
 class _RedisConsumer(ConsumerT):
     POLLING_WAIT: float = 0.1
     PREFETCH_AMOUNT: int = 10
-    MAX_IN_MEMORY_MESSAGES: int = 100
 
     def __init__(
         self,
         broker: RedisMessageBroker,
         queue_name: str,
         topics: Iterable[str] | None = None,
+        max_unacked_messages: int | None = None,
     ) -> None:
         self.broker = broker
         self.queue_name = queue_name
@@ -36,7 +36,7 @@ class _RedisConsumer(ConsumerT):
         self.conn: Redis[bytes] = broker.conn
 
         self.queue: asyncio.Queue[tuple[RoutingKeyT, str, ParametersT]] = asyncio.Queue(
-            maxsize=self.MAX_IN_MEMORY_MESSAGES
+            maxsize=0 if max_unacked_messages is None else max_unacked_messages
         )
         self.pause_lock = asyncio.Lock()
         self.consume_task: asyncio.Task | None = None
@@ -72,8 +72,8 @@ class _RedisConsumer(ConsumerT):
             msg = await self.consume_or_none()
             if msg is not None:
                 await self.queue.put(msg)
-                continue
-            await asyncio.sleep(self.POLLING_WAIT)
+            else:
+                await asyncio.sleep(self.POLLING_WAIT)
 
     async def consume_or_none(self) -> tuple[RoutingKeyT, str, ParametersT] | None:
         for priority in get_priorities_order(self.broker._priorities):

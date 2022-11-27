@@ -1,6 +1,6 @@
 site_name: Repid
 site_description: "Repid framework: simple to use, fast to run and extensible to adopt job scheduler"
-site_url: https://aleksul.github.io/repid/
+site_url: https://repid.aleksul.space
 
 repo_name: aleksul/repid
 repo_url: https://github.com/aleksul/repid

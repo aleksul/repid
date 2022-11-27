@@ -13,7 +13,13 @@ if TYPE_CHECKING:
 
 
 class _DummyConsumer(ConsumerT):
-    def __init__(self, broker: DummyMessageBroker, queue_name: str, topics: Iterable[str] | None):
+    def __init__(
+        self,
+        broker: DummyMessageBroker,
+        queue_name: str,
+        topics: Iterable[str] | None,
+        max_unacked_messages: int | None = None,
+    ):
         self.broker = broker
         self.queue_name = queue_name
         self._queue = broker.queues[queue_name]
@@ -45,11 +51,13 @@ class _DummyConsumer(ConsumerT):
     async def __update_delayed(self) -> None:
         await asyncio.sleep(0)
         now = datetime.now()
+        pop_soon = []
         for time_, msgs in self._queue.delayed.items():
-            if time_ > now:
-                self._queue.delayed.pop(time_)
+            if time_ < now:
+                pop_soon.append(time_)
                 for msg in msgs:
                     self._queue.simple.put_nowait(msg)
+        [self._queue.delayed.pop(i) for i in pop_soon]
         await asyncio.sleep(0)
 
     async def consume(self) -> tuple[RoutingKeyT, str, ParametersT]:

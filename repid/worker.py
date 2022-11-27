@@ -131,16 +131,6 @@ class Worker:
         if cancel_event.is_set():
             await self._conn.messager.reject(message)
 
-    @staticmethod
-    async def _on_signal(
-        stop_consume_event: asyncio.Event,
-        cancel_event: asyncio.Event,
-        shutdown_time: float,
-    ) -> None:
-        stop_consume_event.set()
-        await asyncio.sleep(shutdown_time)
-        cancel_event.set()
-
     async def run(self) -> None:
         queue_names = self.queues
         await asyncio.wait(
@@ -157,9 +147,16 @@ class Worker:
         tasks: set[asyncio.Task] = set()
 
         loop = asyncio.get_running_loop()
-        signal_handler = lambda: asyncio.ensure_future(  # noqa: E731
-            self._on_signal(stop_consume_event, cancel_event, self.gracefull_shutdown_time)
-        )
+
+        def signal_handler() -> None:
+            stop_consume_event.set()
+
+            async def wait_before_cancel() -> None:
+                await asyncio.sleep(self.gracefull_shutdown_time)
+                cancel_event.set()
+
+            tasks.add(asyncio.create_task(wait_before_cancel()))
+
         loop.add_signal_handler(signal.SIGINT, signal_handler)
         loop.add_signal_handler(signal.SIGTERM, signal_handler)
 

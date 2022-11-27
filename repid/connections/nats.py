@@ -1,2 +1,0 @@
-class NatsMessaging:
-    pass

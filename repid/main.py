@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from repid.connection import Connection
 from repid.middlewares import Middleware
@@ -27,7 +28,7 @@ class Repid:
         logging.info("Default connection set.")
         self.middleware = Middleware
 
-    def add_middleware(self, middleware: any) -> None:
+    def add_middleware(self, middleware: Any) -> None:
         self.middleware.add_middleware(middleware)
 
     @classmethod

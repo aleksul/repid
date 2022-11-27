@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
 
-from repid.connection import Connection
 from repid.data import ArgsBucket, Message, PrioritiesT, ResultBucket, ResultMetadata
 from repid.main import Repid
 from repid.queue import Queue
 from repid.utils import VALID_ID, VALID_NAME, unix_time
+
+if TYPE_CHECKING:
+    from repid.connection import Connection
 
 
 class Job:
@@ -109,7 +112,7 @@ class Job:
 
     async def enqueue(self, store_args: bool = True, declare_queue: bool = True) -> Message:
         if store_args and self.use_args_bucketer and self.args is not None:
-            await self._conn.ab.store_bucket(self.args)
+            await self._conn._ab.store_bucket(self.args)
         if declare_queue:
             await self.queue.declare()
         msg = self._to_message()
@@ -134,7 +137,7 @@ class Job:
     async def result(self) -> ResultBucket | None:
         if self.result_metadata is None:
             raise ValueError("Result metadata is not set.")
-        data = await self._conn.rb.get_bucket(self.result_metadata.id_)
+        data = await self._conn._rb.get_bucket(self.result_metadata.id_)
         if isinstance(data, ResultBucket):
             return data
         return None

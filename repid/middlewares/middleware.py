@@ -1,12 +1,11 @@
 import asyncio
-import logging
 from functools import partial
 from inspect import getfullargspec, getmembers, isfunction, ismethod
 from typing import Any, Callable, Coroutine, Dict, List
 
-from . import POSSIBLE_EVENT_NAMES
+from repid.logger import logger
 
-logger = logging.getLogger(__name__)
+from . import POSSIBLE_EVENT_NAMES
 
 
 class Middleware:
@@ -19,7 +18,9 @@ class Middleware:
         if name not in POSSIBLE_EVENT_NAMES:
             return
 
-        logger.debug(f"Subscribed function '{name}' to middleware signals.")
+        logger_extra = dict(fn_name=name, fn=fn)
+
+        logger.debug("Subscribed function '{fn_name}' to middleware signals.", extra=logger_extra)
 
         is_coroutine = asyncio.iscoroutinefunction(fn)
         argspec = getfullargspec(fn)
@@ -43,7 +44,7 @@ class Middleware:
                     return await loop.run_in_executor(None, partial(fn, **kwargs))
             # ignore the exception and pass it to the logger
             except Exception:
-                logger.error(f"Event {fn.__name__} ({fn}) raised exception.", exc_info=True)
+                logger.exception("Event '{fn_name}' ({fn}) raised exception.", extra=logger_extra)
 
         # add wrapped event to the dictionary
         if name not in cls.events:
@@ -52,14 +53,21 @@ class Middleware:
 
     @classmethod
     def add_middleware(cls, middleware: Any) -> None:
-        middleware_name = middleware.__class__.__name__
         for _, fn in getmembers(middleware, predicate=lambda x: isfunction(x) or ismethod(x)):
-            logger.debug(f"Adding event {middleware_name}.{fn.__name__} to middleware.")
+            logger.debug(
+                "Adding event {middleware_name}.{fn_name} to middleware.",
+                extra=dict(
+                    middleware_name=middleware.__class__.__name__,
+                    fn_name=fn.__name__,
+                ),
+            )
             cls.add_event(fn)
 
     @classmethod
     async def emit_signal(cls, name: str, kwargs: Dict[str, Any]) -> None:
         if name not in cls.events:
             return
-        logger.debug(f"Emitting signal with {name = }.")
+        logger_extra = dict(signal_name=name)
+        logger.debug("Emitting signal '{signal_name}'.", extra=logger_extra)
         await asyncio.gather(*[fn(**kwargs) for fn in cls.events[name]])
+        logger.debug("Done emitting signal '{signal_name}'.", extra=logger_extra)

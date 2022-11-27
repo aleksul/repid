@@ -11,7 +11,7 @@ on:
 
 jobs:
   deploy_docs:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -32,7 +32,7 @@ jobs:
         run: pdm install --no-default --no-self --no-lock -G docs
 
       - name: Get current package version
-        run: echo "VER=$(pdm show | grep '^Latest version' | grep -Eo '[0-9.]*')" >> $GITHUB_ENV
+        run: echo "VER=$(pdm show --version)" >> $GITHUB_ENV
 
       - name: Mike update version
         run: pdm run mike deploy --push --force --update-aliases ${{ env.VER }} latest

@@ -9,6 +9,7 @@
                 "run",
                 "pytest",
                 "-vv",
+                "--hypothesis-verbosity=normal",
                 "--disable-warnings",
                 "--cov-report=xml",
                 "--cov=repid",

@@ -16,7 +16,7 @@ class Queue:
         self.name = name
         if not VALID_NAME.fullmatch(name):
             raise ValueError(
-                "Queue name must start with a letter or an underscore"
+                "Queue name must start with a letter or an underscore "
                 "followed by letters, digits, dashes or underscores."
             )
 

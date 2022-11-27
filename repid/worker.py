@@ -12,6 +12,8 @@ from repid.data.messages import ArgsBucketMetadata, SimpleArgsBucket
 from repid.main import DEFAULT_CONNECTION
 from repid.utils import unix_time
 
+logger = logging.getLogger(__name__)
+
 
 class Worker:
     __slots__ = (
@@ -63,14 +65,14 @@ class Worker:
                 raise ConnectionError("No args bucketer provided.")
             bucket = await self.__conn.args_bucketer.get_bucket(message.args_bucket.id_)
             if bucket is None:
-                logging.error(f"No bucket found for id = {message.args_bucket.id_}.")
+                logger.error(f"No bucket found for id = {message.args_bucket.id_}.")
             if isinstance(bucket, ArgsBucket):
                 return bucket
         return None
 
     async def __set_message_result(self, result: ResultBucket) -> None:
         if self.__conn.results_bucketer is None:
-            logging.error("No results bucketer provided for returned data.")
+            logger.error("No results bucketer provided for returned data.")
             return
         await self.__conn.results_bucketer.store_bucket(result)
 
@@ -80,29 +82,32 @@ class Worker:
         args = getattr(args_bucket, "args", ())
         kwargs = getattr(args_bucket, "kwargs", {})
 
+        actor._TIME_LIMIT.set(message.execution_timeout)
         result = await actor(*args, **kwargs)
 
-        message.tried += 1
-        if result["success"]:
+        # rescheduling (retry)
+        if not result.success and message.tried + 1 < message.retries:
+            message.tried += 1
+            # message.delay_until = None  # TODO: exponential backoff
+            await self.__conn.messager.requeue(message)
+        # rescheduling (deferred)
+        elif message.defer_by is not None or message.cron is not None:
+            message._prepare_reschedule()
+            await self.__conn.messager.requeue(message)
+        # ack
+        elif result.success:
             await self.__conn.messager.ack(message)
-            if message.defer_by is not None or message.cron is not None:
-                message._prepare_reschedule()
-                await self.__conn.messager.enqueue(message)
+        # nack
         else:
             await self.__conn.messager.nack(message)
-            if message.tried < message.retries:
-                message.delay_until = None
-                await self.__conn.messager.enqueue(message)
-            elif message.defer_by is not None or message.cron is not None:
-                message._prepare_reschedule()
-                await self.__conn.messager.enqueue(message)
 
+        # return result
         if message.result_bucket is not None:
             result_with_metadata = dict(
                 id_=message.result_bucket.id_,
                 ttl=message.result_bucket.ttl,
                 timestamp=unix_time(),
-                **result,
+                **result._asdict(),
             )
             await self.__set_message_result(ResultBucket(**result_with_metadata))
 

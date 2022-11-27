@@ -26,15 +26,49 @@ pip install repid
 
 ## Quickstart
 
-...
+Here is how the easiest example of producer-consumer application can look like.
+
+Producer:
+
+```python
+import asyncio
+from repid import Repid, Job
+
+Repid("amqp://user:password@localhost:5672")
+
+async def main():
+  myjob = Job(name="awesome_job")
+  await myjob.queue.declare()
+  await myjob.enqueue()
+
+asyncio.run(main())
+```
+
+Consumer:
+
+```python
+import asyncio
+from repid import Repid, Worker, Job
+
+Repid("amqp://user:password@localhost:5672")
+
+myworker = Worker()
+
+@myworker.actor()
+async def awesome_job() -> None:
+  print("Hello async jobs!")
+  await do_some_async_stuff()
+
+asyncio.run(myworker.run())
+```
 
 Check out [user guide] to learn more!
 
 ## License
 
-**Repid** is licensed under the MIT. Please see [License.md] for more information.
+**Repid** is distributed under the terms of the MIT license. Please see [License.md] for more information.
 
-**Repid's logo** is licensed under [CC BY-NC 4.0] and originally created by [ari_the_crow_].
+**Repid's logo** is distributed under the terms of the [CC BY-NC 4.0] license. It was originally created by [ari_the_crow_].
 
 [License.md]: https://github.com/aleksul/repid/blob/master/LICENSE
 [user guide]: https://aleksul.github.io/repid

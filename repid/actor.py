@@ -1,14 +1,14 @@
 from asyncio import iscoroutinefunction
 from contextvars import ContextVar
 from functools import partial
-from typing import Any, Callable, Dict, Tuple, TypedDict, Union
+from typing import Any, Callable, Dict, NamedTuple, Tuple, Union
 
 import anyio
 
 from repid.utils import VALID_NAME, unix_time
 
 
-class Result(TypedDict):
+class Result(NamedTuple):
     data: Any
     success: bool
     exception: Union[Exception, None]
@@ -22,7 +22,7 @@ class Actor:
     Adds ability to specify actor's name and queue.
     """
 
-    _TIME_LIMIT = ContextVar("time_limit", default=None)
+    _TIME_LIMIT: ContextVar[Union[int, None]] = ContextVar("time_limit", default=None)
 
     __slots__ = ("fn", "name", "queue")
 
@@ -72,4 +72,4 @@ class Actor:
         )
 
     def __str__(self) -> str:
-        return f"Actor({self.fn}, name='{self.name}', queue='{self.queue}')"
+        return f"Actor({self.fn.__name__}, name='{self.name}', queue='{self.queue}')"

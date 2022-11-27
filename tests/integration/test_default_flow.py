@@ -42,6 +42,26 @@ async def test_deferred_by_job():
     assert hit == 3
 
 
+async def test_retries():
+    j = Job("awesome_job", retries=2)
+    await j.queue.declare()
+    await j.enqueue()
+
+    myworker = Worker(messages_limit=2)
+
+    hit = 0
+
+    @myworker.actor()
+    async def awesome_job():
+        nonlocal hit
+        hit += 1
+        if hit < 2:
+            raise Exception("Some stupid exception.")
+
+    await myworker.run()
+    assert hit == 2
+
+
 async def test_worker_no_queue():
     myworker = Worker(gracefull_shutdown_time=1)
 

@@ -9,7 +9,7 @@ from repid.data.messages import (
     ResultBucketMetadata,
     SimpleArgsBucket,
 )
-from repid.main import DEFAULT_CONNECTION
+from repid.main import Repid
 from repid.queue import Queue
 from repid.utils import VALID_ID, VALID_NAME, unix_time
 
@@ -51,7 +51,7 @@ class Job:
         id_: Union[str, None] = None,
         _connection: Union[Connection, None] = None,
     ):
-        self.__conn = _connection or DEFAULT_CONNECTION.get()
+        self.__conn = _connection or Repid.get_default_connection()
 
         if not self.__conn.messager.supports_delayed_messages and self.is_deferred:
             raise ValueError("Deferred jobs are not supported by this connection.")

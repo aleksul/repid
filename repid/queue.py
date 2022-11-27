@@ -1,7 +1,7 @@
 from typing import Union
 
 from repid.connection import Connection
-from repid.main import DEFAULT_CONNECTION
+from repid.main import Repid
 from repid.utils import VALID_NAME
 
 
@@ -20,7 +20,7 @@ class Queue:
                 "followed by letters, digits, dashes or underscores."
             )
 
-        self.__conn = _connection or DEFAULT_CONNECTION.get()
+        self.__conn = _connection or Repid.get_default_connection()
 
     async def declare(self) -> None:
         await self.__conn.messager.queue_declare(self.name)

@@ -5,7 +5,6 @@ from pytest_lazyfixture import lazy_fixture
 from repid import Repid
 from repid.connection import Connection
 from repid.connections.redis.redis_messaging import RedisMessaging
-from repid.main import DEFAULT_CONNECTION
 
 redis_container = container(
     image="redis:7.0-alpine",
@@ -32,7 +31,7 @@ def standart_connection(rabbitmq_container, redis_container) -> Connection:
         f"redis://:test@localhost:{redis_container.ports['6379/tcp'][0]}/0",
         f"redis://:test@localhost:{redis_container.ports['6379/tcp'][0]}/1",
     )
-    assert DEFAULT_CONNECTION.get()
+    assert Repid._Repid__default_connection is not None
     return repid._Repid__conn
 
 
@@ -44,7 +43,7 @@ def redis_connection(redis_container) -> Connection:
         f"redis://:test@localhost:{redis_container.ports['6379/tcp'][0]}/3",
         f"redis://:test@localhost:{redis_container.ports['6379/tcp'][0]}/4",
     )
-    assert DEFAULT_CONNECTION.get()
+    assert Repid._Repid__default_connection is not None
     return repid._Repid__conn
 
 

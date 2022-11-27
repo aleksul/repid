@@ -1,16 +1,20 @@
+from __future__ import annotations
+
 import logging
 from asyncio import create_task, sleep
 from random import randint
-from typing import FrozenSet, List, Union
+from typing import TYPE_CHECKING
 
 from redis.asyncio.client import Pipeline, Redis
 
-from repid.data import Message, PrioritiesT
 from repid.middlewares import InjectMiddleware
 from repid.serializer import MessageSerializer
 from repid.utils import unix_time
 
 from .utils import get_priorities_order, mnc, parse_priorities_distribution, qnc
+
+if TYPE_CHECKING:
+    from repid.data import Message, PrioritiesT
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +26,7 @@ class RedisMessaging:
     priorities_distribution = "10/3/1"
     processing_queue = "processing"  # inside of redis is a sorted set
     run_maintenance_every: int = 600  # seconds
+    prefetch_amount = 10
 
     def __init__(self, dsn: str):
         self.dsn = dsn
@@ -41,65 +46,95 @@ class RedisMessaging:
 
             create_task(first_run_maintenance())
 
-    async def __get_message_name_from_delayed_queue(self, full_queue_name: str) -> Union[str, None]:
-        msg_short_name: Union[str, None] = None
+    async def __fetch_message_name(
+        self,
+        full_queue_name: str,
+        delayed: bool,
+        startswith_topics: tuple[str, ...],
+        pipe: Pipeline,
+    ) -> str | None:
+        names: list[bytes] = [b""]
+        offset = 0
+        while len(names) > 0:
+            for name in names:
+                str_name = name.decode()
+                if str_name.startswith(startswith_topics):
+                    return str_name
+            try:
+                if not delayed:
+                    names = await pipe.immediate_execute_command(
+                        "LRANGE",
+                        full_queue_name,
+                        offset - self.prefetch_amount,
+                        offset - 1,
+                    )
+                    offset -= self.prefetch_amount
+                else:
+                    names = await pipe.immediate_execute_command(
+                        "ZRANGE",
+                        full_queue_name,
+                        "-inf",  # minimum score
+                        unix_time(),  # maximum score
+                        "BYSCORE",
+                        "LIMIT",
+                        offset,  # offset
+                        self.prefetch_amount,  # count
+                    )
+                    offset += self.prefetch_amount
+            except Exception:
+                return None
+        return None
+
+    async def __get_message_name(
+        self,
+        full_queue_name: str,
+        topics: frozenset[str],
+        delayed: bool = False,
+    ) -> str | None:
+        startswith_topics = tuple(map(lambda x: x + ":", topics))
         async with self.conn.pipeline(transaction=True) as pipe:
             await pipe.watch(full_queue_name)
-            names: List[bytes] = await pipe.immediate_execute_command(
-                "ZRANGE",
-                full_queue_name,
-                "-inf",  # minimum score
-                unix_time(),  # maximum score
-                "BYSCORE",
-                "LIMIT",
-                0,  # offset
-                1,  # count
+            msg_short_name = await self.__fetch_message_name(
+                full_queue_name, delayed, startswith_topics, pipe
             )
-            if names and (msg_short_name := names[0].decode()):
+            if msg_short_name is not None:
                 pipe.multi()
-                pipe.zrem(full_queue_name, msg_short_name)  # remove message from delayed queue
+                # remove message from the queue
+                if not delayed:
+                    pipe.lrem(full_queue_name, -1, msg_short_name)
+                else:
+                    pipe.zrem(full_queue_name, msg_short_name)
                 pipe.zadd(  # mark message as processing
                     self.processing_queue, {msg_short_name: str(unix_time())}
                 )
                 await pipe.execute()
         return msg_short_name
 
-    async def __get_message_name_from_normal_queue(self, full_queue_name: str) -> Union[str, None]:
-        msg_short_name: Union[str, None] = None
-        async with self.conn.pipeline(transaction=True) as pipe:
-            await pipe.watch(full_queue_name)
-            names: List[bytes] = await pipe.immediate_execute_command(
-                "LRANGE", full_queue_name, -1, -1
-            )
-            if names and (msg_short_name := names[0].decode()):
-                pipe.multi()
-                pipe.rpop(full_queue_name)
-                pipe.zadd(self.processing_queue, {msg_short_name: str(unix_time())})
-                await pipe.execute()
-        return msg_short_name
-
-    async def __get_message(self, queue_name: str, priority: PrioritiesT) -> Union[Message, None]:
+    async def __get_message(
+        self,
+        queue_name: str,
+        priority: PrioritiesT,
+        topics: frozenset[str],
+    ) -> Message | None:
         # try delayed queue first...
-        msg_short_name = await self.__get_message_name_from_delayed_queue(
-            qnc(queue_name, priority, delayed=True)
+        msg_short_name = await self.__get_message_name(
+            qnc(queue_name, priority, delayed=True), topics, delayed=True
         )
         # if there is no message in delayed queue, try normal queue
         if msg_short_name is None:
-            msg_short_name = await self.__get_message_name_from_normal_queue(
-                qnc(queue_name, priority)
-            )
+            msg_short_name = await self.__get_message_name(qnc(queue_name, priority), topics)
         # no message found - return None
         if msg_short_name is None:
             return None
         # something found - try to parse the message
         msg_data = await self.conn.get(f"m:{queue_name}:{msg_short_name}")
         if msg_data is None:
-            # message was removed (but somehow was present in the queue :shrug:)
+            # message's data was removed (but somehow id was present in the queue :shrug:)
             # - put it to the dead queue
             async with self.conn.pipeline(transaction=True) as pipe:
                 pipe.zrem(self.processing_queue, msg_short_name)  # remove from the processing queue
                 pipe.lpush(qnc(queue_name, dead=True), msg_short_name)  # put to the dead queue
-            return await self.__get_message(queue_name, priority)
+            return await self.__get_message(queue_name, priority, topics)
         return MessageSerializer.decode(msg_data)
 
     def __put_in_queue(self, msg: Message, pipe: Pipeline, in_front: bool = False) -> None:
@@ -120,18 +155,15 @@ class RedisMessaging:
     def __unmark_processing(self, msg: Message, pipe: Pipeline) -> None:
         pipe.zrem(self.processing_queue, mnc(msg, short=True))
 
-    async def consume(self, queue_name: str, topics: FrozenSet[str]) -> Message:
+    async def consume(self, queue_name: str, topics: frozenset[str]) -> Message:
         logger.debug(f"Consuming from {queue_name = }; {topics = }.")
         while True:
             for priority in get_priorities_order(self._priorities):
-                message = await self.__get_message(queue_name, priority)
+                message = await self.__get_message(queue_name, priority, topics)
                 if message is None:
                     continue
                 if message.is_overdue:
                     await self.nack(message)
-                    continue
-                if message.topic not in topics:
-                    await self.reject(message)
                     continue
                 return message
 

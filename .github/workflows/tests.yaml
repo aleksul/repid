@@ -22,13 +22,10 @@ jobs:
           - "3.10"
 
     steps:
-      - name: Setup Python
-        uses: actions/setup-python@v4
+      - name: Setup PDM
+        uses: pdm-project/setup-pdm@v2
         with:
           python-version: ${{ matrix.python-version }}
-
-      - name: Setup Poetry
-        uses: Gr1N/setup-poetry@v7
 
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -36,14 +33,14 @@ jobs:
       - name: Cache dependencies
         uses: actions/cache@v3
         with:
-          path: ~/.cache/pypoetry/virtualenvs
-          key: ${{ runner.os }}-poetry-${{ hashFiles('poetry.lock') }}
+          path: .venv
+          key: ${{ runner.os }}-pdm-${{ hashFiles('pdm.lock') }}
 
       - name: Install dependencies
-        run: poetry install --no-root
+        run: pdm install --no-lock -d -G :all
 
       - name: Run tests
-        run: poetry run pytest tests/ --color=yes -rA
+        run: pdm run pytest tests/ --color=yes -rA
 
       - name: Upload code coverage
         if: matrix.python-version == '3.8'

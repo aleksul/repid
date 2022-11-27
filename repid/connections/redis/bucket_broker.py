@@ -1,42 +1,43 @@
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING
+
+from redis.asyncio.client import Redis
 
 from repid.connections.abc import BucketBrokerT
 from repid.data._buckets import ArgsBucket, ResultBucket
 from repid.logger import logger
 
 if TYPE_CHECKING:
-    from repid.data.protocols import BucketT
+    from repid.data import BucketT
 
 
-class DummyBucketBroker(BucketBrokerT):
-    def __init__(self, use_result_bucket: bool = False) -> None:
+class RedisBucketBroker(BucketBrokerT):
+    def __init__(self, dsn: str, use_result_bucket: bool = False):
         self.BUCKET_CLASS = ResultBucket if use_result_bucket else ArgsBucket
-        self.__storage: dict[str, BucketT] = {}
+        self.conn: Redis[bytes] = Redis.from_url(dsn)
 
     async def connect(self) -> None:
-        logger.info("Connecting to dummy bucket broker.")
-        await asyncio.sleep(0)
+        await self.conn.ping()
 
     async def disconnect(self) -> None:
-        logger.info("Disconnecting from dummy bucket broker.")
-        await asyncio.sleep(0)
+        await self.conn.close(close_connection_pool=True)
 
     async def get_bucket(self, id_: str) -> BucketT | None:
         logger.debug("Getting bucket with id: {id_}.", extra=dict(id_=id_))
-        await asyncio.sleep(0)
-        return self.__storage.get(id_, None)
+        data = await self.conn.get(id_)
+        if data is not None:
+            return self.BUCKET_CLASS.decode(data.decode())  # type: ignore[no-any-return]
+        return None
 
     async def store_bucket(self, id_: str, payload: BucketT) -> None:
         logger.debug("Storing bucket with id: {id_}.", extra=dict(id_=id_))
-        await asyncio.sleep(0)
-        self.__storage[id_] = payload
-        await asyncio.sleep(0)
+        await self.conn.set(
+            id_,
+            payload.encode(),
+            exat=payload.timestamp + payload.ttl if payload.ttl is not None else None,
+        )
 
     async def delete_bucket(self, id_: str) -> None:
         logger.debug("Deleting bucket with id: {id_}.", extra=dict(id_=id_))
-        await asyncio.sleep(0)
-        self.__storage.pop(id_, None)
-        await asyncio.sleep(0)
+        await self.conn.delete(id_)

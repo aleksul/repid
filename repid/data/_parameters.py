@@ -148,16 +148,17 @@ class Parameters:
 
     @property
     def compute_next_execution_time(self) -> Union[datetime, None]:
-        if self.delay is None:
-            return None
+        now = datetime.now()
+        if self.delay.delay_until is not None and self.delay.delay_until > now:
+            return self.delay.delay_until
         if self.delay.defer_by is not None:
-            defer_by_times = (datetime.now() - self.timestamp) // self.delay.defer_by + 1
+            defer_by_times = (now - self.timestamp) // self.delay.defer_by + 1
             time_offset = self.delay.defer_by * defer_by_times
             return self.timestamp + time_offset
-        elif self.delay.cron is not None:
+        if self.delay.cron is not None:
             if not CRON_SUPPORT:
                 raise ImportError("Croniter is not installed.")
-            return croniter(self.delay.cron, datetime.now()).get_next(ret_type=datetime)  # type: ignore[no-any-return]  # noqa: E501
+            return croniter(self.delay.cron, now).get_next(ret_type=datetime)  # type: ignore[no-any-return]  # noqa: E501
         return None
 
     def _prepare_reschedule(self) -> "Parameters":

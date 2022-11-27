@@ -1,0 +1,27 @@
+name: MyPy
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  mypy:
+    name: MyPy (Python 3.8)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup PDM
+        uses: pdm-project/setup-pdm@v3
+        with:
+          python-version: "3.8"
+          cache: true
+
+      - name: Install or update dependencies
+        run: pdm sync -G :all --clean
+
+      - name: Run MyPy
+        run: pdm run mypy .

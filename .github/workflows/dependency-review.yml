@@ -15,7 +15,16 @@ jobs:
   dependency-review:
     runs-on: ubuntu-latest
     steps:
-      - name: "Checkout Repository"
+      - name: Checkout Repository
         uses: actions/checkout@v3
-      - name: "Dependency Review"
+
+      - name: Setup PDM
+        uses: pdm-project/setup-pdm@v3
+        with:
+          python-version: "3.8"
+
+      - name: Export requirements
+        run: pdm export --group :all --format requirements --output requirements.txt
+
+      - name: Dependency Review
         uses: actions/dependency-review-action@v2

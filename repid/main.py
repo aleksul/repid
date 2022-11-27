@@ -1,27 +1,44 @@
 from __future__ import annotations
 
+import threading
 from contextlib import asynccontextmanager
-from contextvars import ContextVar
-from typing import TYPE_CHECKING, AsyncGenerator
+from typing import AsyncIterator
 
-if TYPE_CHECKING:
-    from repid.connection import Connection
-
-DEFAULT_CONNECTION: ContextVar[Connection] = ContextVar("DEFAULT_CONNECTION")
+from repid.connection import Connection
 
 
 class Repid:
-    def __init__(self, connection: Connection):
-        self._conn = connection
-        self.add_middleware = self._conn.middleware.add_middleware
+    __local = threading.local()
+
+    def __init__(self, connection: Connection, middlewares: list | None = None):
+        self.connection = connection
+
+        if middlewares is not None:
+            for middleware in middlewares:
+                self.connection.middleware.add_middleware(middleware)
+
+    @classmethod
+    def get_magic_connection(cls) -> Connection:
+        if hasattr(cls.__local, "connection") and isinstance(cls.__local.connection, Connection):
+            return cls.__local.connection
+        raise ValueError("Default connection isn't set.")
+
+    async def magic_connect(self) -> Connection:
+        if not self.connection.is_open:
+            await self.connection.connect()
+        Repid.__local.connection = self.connection
+        return self.connection
+
+    async def magic_disconnect(self) -> Connection:
+        await self.connection.disconnect()
+        delattr(Repid.__local, "connection")
+        return self.connection
 
     @asynccontextmanager
-    async def connect(self, disconnect: bool = True) -> AsyncGenerator[Connection, None]:
-        contextvar_token = DEFAULT_CONNECTION.set(self._conn)
-        await self._conn.connect()
+    async def magic(self, auto_disconnect: bool = False) -> AsyncIterator[Connection]:
+        await self.magic_connect()
         try:
-            yield self._conn
+            yield self.connection
         finally:
-            DEFAULT_CONNECTION.reset(contextvar_token)
-            if disconnect:
-                await self._conn.disconnect()
+            if auto_disconnect:
+                await self.magic_disconnect()

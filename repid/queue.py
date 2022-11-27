@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from repid.main import DEFAULT_CONNECTION
+from repid.main import Repid
 from repid.utils import VALID_NAME
 
 if TYPE_CHECKING:
@@ -17,14 +17,14 @@ class Queue:
         name: str = "default",
         _connection: Connection | None = None,
     ) -> None:
+        self._conn = _connection or Repid.get_magic_connection()
+
         self.name = name
         if not VALID_NAME.fullmatch(name):
             raise ValueError(
                 "Queue name must start with a letter or an underscore "
                 "followed by letters, digits, dashes or underscores."
             )
-
-        self._conn = _connection or DEFAULT_CONNECTION.get()
 
     async def declare(self) -> None:
         await self._conn.message_broker.queue_declare(self.name)

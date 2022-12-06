@@ -11,7 +11,7 @@ __all__ = [
 
 try:
     import aiormq  # noqa: F401
-except ImportError:
+except ImportError:  # pragma: no cover
     pass
 else:
     from repid.connections.rabbitmq import RabbitMessageBroker  # noqa: F401
@@ -20,7 +20,7 @@ else:
 
 try:
     import redis  # noqa: F401
-except ImportError:
+except ImportError:  # pragma: no cover
     pass
 else:
     from repid.connections.redis import (  # noqa: F401

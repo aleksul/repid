@@ -33,11 +33,11 @@ class ConsumerT(ABC):
 
     async def pause(self) -> None:
         """Pause message consumption. Depending on the implementation, may do nothing."""
-        return None
+        return None  # pragma: no cover
 
     async def unpause(self) -> None:
         """Unpause message consumption. Depending on the implementation, may do nothing."""
-        return None
+        return None  # pragma: no cover
 
     @abstractmethod
     async def finish(self) -> None:

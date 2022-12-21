@@ -4,7 +4,6 @@
         "ms-python.vscode-pylance",
         "matangover.mypy",
         "charliermarsh.ruff",
-        "ms-python.isort",
         "njpwerner.autodocstring",
         "ryanluker.vscode-coverage-gutters",
         "seatonjiang.gitmoji-vscode",

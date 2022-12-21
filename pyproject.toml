@@ -94,7 +94,7 @@ docs = ["mkdocs-material", "mike", "setuptools>=65.5.1"]
 asyncio_mode = "auto"
 
 [tool.ruff]
-select = ["F", "E", "M", "B", "A", "RUF", "S", "W"]
+select = ["F", "E", "B", "A", "RUF", "S", "W"]
 line-length = 100
-ignore = ["S101"]
-per-file-ignores = { "tests/*" = ["S"] }
+ignore = ["S101", "B905"]
+per-file-ignores = { "tests/*" = ["S"], "repid/connections/__init__.py" = ["F401"] }

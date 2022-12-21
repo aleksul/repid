@@ -53,26 +53,26 @@ async def consumer() -> AsyncIterator[ConcreteConsumer]:
 
 async def test_consumer_start(consumer: ConcreteConsumer) -> None:
     await consumer.start()
-    assert consumer.is_consuming == True
+    assert consumer.is_consuming is True
 
 
 async def test_consumer_pause(consumer: ConcreteConsumer) -> None:
     await consumer.start()
     await consumer.pause()
-    assert consumer.is_consuming == False
+    assert consumer.is_consuming is False
 
 
 async def test_consumer_unpause(consumer: ConcreteConsumer) -> None:
     await consumer.start()
     await consumer.pause()
     await consumer.unpause()
-    assert consumer.is_consuming == True
+    assert consumer.is_consuming is True
 
 
 async def test_consumer_finish(consumer: ConcreteConsumer) -> None:
     await consumer.start()
     await consumer.finish()
-    assert consumer.is_consuming == False
+    assert consumer.is_consuming is False
 
 
 async def test_consumer_consume(consumer: ConcreteConsumer) -> None:
@@ -83,13 +83,13 @@ async def test_consumer_consume(consumer: ConcreteConsumer) -> None:
 
 async def test_consumer_enter(consumer: ConcreteConsumer) -> None:
     async with consumer as c:
-        assert c.is_consuming == True  # type: ignore[attr-defined]
+        assert c.is_consuming is True  # type: ignore[attr-defined]
 
 
 async def test_consumer_exit(consumer: ConcreteConsumer) -> None:
     async with consumer:
         pass
-    assert consumer.is_consuming == False
+    assert consumer.is_consuming is False
 
 
 async def test_consumer_iter(consumer: ConcreteConsumer) -> None:

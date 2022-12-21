@@ -10,23 +10,20 @@ __all__ = [
 ]
 
 try:
-    import aiormq  # noqa: F401
+    import aiormq
 except ImportError:  # pragma: no cover
     pass
 else:
-    from repid.connections.rabbitmq import RabbitMessageBroker  # noqa: F401
+    from repid.connections.rabbitmq import RabbitMessageBroker
 
     __all__.append("RabbitMessageBroker")
 
 try:
-    import redis  # noqa: F401
+    import redis
 except ImportError:  # pragma: no cover
     pass
 else:
-    from repid.connections.redis import (  # noqa: F401
-        RedisBucketBroker,
-        RedisMessageBroker,
-    )
+    from repid.connections.redis import RedisBucketBroker, RedisMessageBroker
 
     __all__.append("RedisBucketBroker")
     __all__.append("RedisMessageBroker")

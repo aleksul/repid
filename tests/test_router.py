@@ -27,7 +27,7 @@ def test_router_includes_other_router() -> None:
     router = Router()
     other_router = Router()
 
-    fn = lambda x: x
+    fn = lambda x: x  # noqa: E731
     actor1 = ActorData(
         fn=fn,
         name="actor1",

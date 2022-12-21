@@ -36,7 +36,7 @@ def test_routing_key() -> None:
     assert isinstance(UUID(routing_key.id_), UUID)
 
     # Test invalid id
-    with pytest.raises(ValueError, match="Incorrect id.") as e:
+    with pytest.raises(ValueError, match="Incorrect id."):
         RoutingKey(topic="test_topic", id_="inva$*(lid_id")
 
     # Test invalid topic

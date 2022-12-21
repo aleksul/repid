@@ -174,7 +174,7 @@ class RedisMessageBroker(MessageBrokerT):
                     id_, topic, queue, priority = utils.parse_message_name(full_name.decode())
                     tasks.append(
                         asyncio.create_task(
-                            self.nack(
+                            self.reject(
                                 self.ROUTING_KEY_CLASS(
                                     id_=id_,
                                     topic=topic,

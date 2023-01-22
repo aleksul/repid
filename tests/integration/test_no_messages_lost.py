@@ -1,10 +1,8 @@
 import asyncio
+import multiprocessing
 from datetime import timedelta
 
-import multiprocessing
-
 from repid import Job, Queue, Repid, Router, Worker
-
 
 COUNTER1 = multiprocessing.Value("i", 0)
 COUNTER2 = multiprocessing.Value("i", 0)

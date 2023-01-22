@@ -1,4 +1,3 @@
-<!-- markdownlint-configure-file { "MD013": { "line_length": 100 } } -->
 # Contributing to repid
 
 Your contributions are invaluable to our community - thank you for being a part of the journey!

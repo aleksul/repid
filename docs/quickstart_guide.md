@@ -1,4 +1,3 @@
-<!-- markdownlint-configure-file { "MD013": { "line_length": 100 } } -->
 # Quickstart Guide
 
 ## Before we start

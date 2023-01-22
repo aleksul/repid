@@ -1,4 +1,3 @@
-<!-- markdownlint-configure-file { "MD013": { "line_length": 100 } } -->
 # Jobs, Actors and Workers
 
 Now, that you now how to properly set up a connection, let's focus on creation of jobs and

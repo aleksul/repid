@@ -1,4 +1,3 @@
-<!-- markdownlint-configure-file { "MD013": { "line_length": 100 } } -->
 # Deferred scheduling
 
 You can create a job with delayed and recurring execution.

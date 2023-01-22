@@ -1,6 +1,6 @@
 <!-- markdownlint-disable MD041 -->
 <!-- Thank you for your contribution! -->
-<!-- Unless your change is trivial, please create an issue to discuss the change before creating a PR. -->
+<!-- Unless your change is trivial, please create an issue to discuss it before creating a PR. -->
 
 ## Change Summary
 

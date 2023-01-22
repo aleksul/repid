@@ -9,7 +9,8 @@ from repid.connections.abc import ConsumerT
 
 if TYPE_CHECKING:
     from repid.connections.dummy.message_broker import DummyMessageBroker
-    from repid.data.protocols import MessageT, ParametersT, RoutingKeyT
+    from repid.connections.dummy.utils import Message
+    from repid.data.protocols import ParametersT, RoutingKeyT
 
 
 class _DummyConsumer(ConsumerT):
@@ -66,7 +67,7 @@ class _DummyConsumer(ConsumerT):
             raise RuntimeError("Consumer wasn't started.")
         while self._paused.locked():
             await asyncio.sleep(0.1)
-        msg: MessageT
+        msg: Message
         while True:
             await self.__update_delayed()
             with suppress(asyncio.TimeoutError):

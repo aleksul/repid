@@ -67,7 +67,8 @@ if __name__ == "__main__":
 
 1. Create a `repid` app with the dummy message broker.
 2. The main function, which will execute our async code.
-3. Inside of this context manager every object will be provided with the connection that is attached to the `repid` app which we've created.
+3. Inside of this context manager every object will be provided with the connection
+that is attached to the `repid` app which we've created.
 4. Create an instance of a worker. Don't forget to specify our router!
 5. Run the worker until it receives a `SIGINT` ( ++ctrl+c++ ) or a `SIGTERM`.
 
@@ -109,10 +110,12 @@ if __name__ == "__main__":
 ```
 
 1. Name of the job will be used to route it to the similarly named actor.
-2. Using dictionary to map arguments' names to values. The dictionary will be encoded with `orjson` by default.
+2. Using dictionary to map arguments' names to values.
+The dictionary will be encoded with `orjson` by default.
 3. You only need to declare a queue once. Ideally you would do that on application startup.
 
-This will enqueue a job to the default queue, which than worker will consume & route to the `string_length` function with argument `the_string` set to `"Hello world!"`.
+This will enqueue a job to the default queue, which than worker will consume
+& route to the `string_length` function with argument `the_string` set to `"Hello world!"`.
 
 After running the script, you should receive:
 

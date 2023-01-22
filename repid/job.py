@@ -193,7 +193,7 @@ class Job:
     @property
     def is_overdue(self) -> bool:
         if self.ttl is not None:
-            return datetime.now() > self.timestamp + self.ttl
+            return datetime.now(tz=self.timestamp.tzinfo) > self.timestamp + self.ttl
         return False
 
     @property

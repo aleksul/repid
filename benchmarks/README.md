@@ -25,4 +25,4 @@ python3.10 benchmark_celery.py
 ```
 
 Before running another benchmark you need to manually delete created queues in RabbitMQ.
-You can use web UI for that at http://localhost:15672.
+You can use web UI for that at <http://localhost:15672>.

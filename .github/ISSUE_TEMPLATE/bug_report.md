@@ -12,7 +12,8 @@ A clear and concise description of what the bug is.
 
 **To Reproduce**
 Steps to reproduce the behavior.
-Can be a description of your actions, which led to the bug, or a minimal bug-reproducing project.
+Can be a description of your actions, which led to the bug,
+or a minimal bug-reproducing project.
 
 **Expected behavior**
 A clear and concise description of what you expected to happen.
@@ -21,8 +22,9 @@ A clear and concise description of what you expected to happen.
 If applicable, add screenshots to help explain your problem.
 
 **Desktop (please complete the following information):**
- - OS information: [e.g. Ubuntu 22.04 LTS x86-64]
- - Repid version [e.g. v1.0.0]
+
+- OS information: [e.g. Ubuntu 22.04 LTS x86-64]
+- Repid version [e.g. v1.0.0]
 
 **Additional context**
 Add any other context about the problem here.

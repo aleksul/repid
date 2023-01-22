@@ -13,7 +13,7 @@ from repid.middlewares import middleware_wrapper
 
 if TYPE_CHECKING:
     from repid.connection import Connection
-    from repid.data import MessageT
+    from repid.data import ParametersT, RoutingKeyT
     from repid.data.protocols import ResultPropertiesT
 
 
@@ -37,15 +37,16 @@ class _Processor:
     @middleware_wrapper
     async def actor_run(
         actor: ActorData,
-        message: MessageT,
+        key: RoutingKeyT,
+        parameters: ParametersT,
         args: list,
         kwargs: dict,
     ) -> ActorResult:
-        time_limit = message.parameters.execution_timeout.total_seconds()
+        time_limit = parameters.execution_timeout.total_seconds()
 
         logger_extra = dict(
             actor_name=actor.name,
-            message_id=message.key.id_,
+            message_id=key.id_,
             time_limit=time_limit,
         )
 
@@ -85,31 +86,32 @@ class _Processor:
     async def report_to_broker(
         self,
         actor: ActorData,
-        message: MessageT,
+        key: RoutingKeyT,
+        payload: str,
+        parameters: ParametersT,
         result: ActorResult,
     ) -> None:
-        params = message.parameters
-        retry_number = params.retries.already_tried + 1
+        retry_number = parameters.retries.already_tried + 1
         # rescheduling (retry)
-        if not result.success and retry_number < params.retries.max_amount:
+        if not result.success and retry_number < parameters.retries.max_amount:
             await self._conn.message_broker.requeue(
-                message.key,
-                message.payload,
-                params._prepare_retry(actor.retry_policy(retry_number)),
+                key,
+                payload,
+                parameters._prepare_retry(actor.retry_policy(retry_number)),
             )
         # rescheduling (deferred)
-        elif params.delay.defer_by is not None or params.delay.cron is not None:
+        elif parameters.delay.defer_by is not None or parameters.delay.cron is not None:
             await self._conn.message_broker.requeue(
-                message.key,
-                message.payload,
-                params._prepare_reschedule(),
+                key,
+                payload,
+                parameters._prepare_reschedule(),
             )
         # ack
         elif result.success:
-            await self._conn.message_broker.ack(message.key)
+            await self._conn.message_broker.ack(key)
         # nack
         else:
-            await self._conn.message_broker.nack(message.key)
+            await self._conn.message_broker.nack(key)
 
     async def set_result_bucket(
         self,
@@ -134,14 +136,20 @@ class _Processor:
             ),
         )
 
-    async def process(self, actor: ActorData, message: MessageT) -> None:
-        raw_payload = await self.get_payload(message.payload)
+    async def process(
+        self,
+        actor: ActorData,
+        key: RoutingKeyT,
+        payload: str,
+        parameters: ParametersT,
+    ) -> None:
+        raw_payload = await self.get_payload(payload)
         args, kwargs = actor.converter.convert_inputs(raw_payload)
-        result = await self.actor_run(actor, message, args, kwargs)
-        await self.report_to_broker(actor, message, result)
+        result = await self.actor_run(actor, key, parameters, args, kwargs)
+        await self.report_to_broker(actor, key, payload, parameters, result)
         self._processed += 1
         returns = actor.converter.convert_outputs(result.data)
-        await self.set_result_bucket(message.parameters.result, returns, result)
+        await self.set_result_bucket(parameters.result, returns, result)
 
     @property
     def processed(self) -> int:

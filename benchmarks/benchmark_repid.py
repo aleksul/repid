@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
 from multiprocessing import Process
 from time import perf_counter
 
@@ -20,7 +19,7 @@ myredis = Redis.from_url("redis://:testtest@localhost:6379/0")
 r = Router()
 
 
-@r.actor(retry_policy=lambda retry_number: timedelta(seconds=0))
+@r.actor
 async def benchmark_task() -> None:
     await asyncio.sleep(1.0)
     await myredis.incr("tasks_done", 1)
@@ -31,7 +30,7 @@ async def prepare() -> None:
         q = Queue()
         await q.declare()
         await q.flush()
-        j = Job("benchmark_task", retries=2)
+        j = Job("benchmark_task")
         await asyncio.gather(*[j.enqueue() for _ in range(MESSAGES_AMOUNT)])
     await myredis.set("tasks_done", 0)
 
@@ -58,13 +57,6 @@ async def report(start: float) -> None:
         tasks_done = int(await myredis.get("tasks_done"))
 
 
-def one_process() -> None:
-    uvloop.install()
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(run())
-
-
 if __name__ == "__main__":
     uvloop.install()
     loop = asyncio.new_event_loop()
@@ -77,7 +69,7 @@ if __name__ == "__main__":
     processes: list[Process] = []
 
     for _ in range(PROCESSES):
-        processes.append(Process(target=one_process))
+        processes.append(Process(target=asyncio.run, args=(run(),)))
 
     print("Starting benchmark.")
 

@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, Coroutine, Dict, Iterable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    ClassVar,
+    Coroutine,
+    Dict,
+    Iterable,
+    TypeVar,
+)
 
 from repid.config import Config
 from repid.middlewares import middleware_wrapper
@@ -12,9 +21,34 @@ if TYPE_CHECKING:
 
 EncodedPayloadT = str
 SignalEmitterT = Callable[[str, Dict[str, Any]], Coroutine]
+WrappedABCSelf = TypeVar("WrappedABCSelf", bound="_WrappedABC")
 
 
-class ConsumerT(ABC):
+class _WrappedABC(ABC):
+    __WRAPPED_METHODS__: tuple[str, ...] = ()
+
+    def __new__(cls: type[WrappedABCSelf], *args: tuple, **kwargs: dict) -> WrappedABCSelf:
+        inst = super().__new__(cls)
+
+        for method in inst.__WRAPPED_METHODS__:
+            setattr(inst, method, middleware_wrapper(getattr(inst, method)))
+
+        return inst
+
+    @property
+    def _signal_emitter(self) -> SignalEmitterT | None:
+        if not hasattr(self, "_signal_emitter_var"):
+            return None
+        return self._signal_emitter_var
+
+    @_signal_emitter.setter
+    def _signal_emitter(self, signal_emitter: SignalEmitterT) -> None:
+        self._signal_emitter_var = signal_emitter
+        for method in self.__WRAPPED_METHODS__:
+            getattr(self, method)._repid_signal_emitter = signal_emitter
+
+
+class ConsumerT(_WrappedABC):
     __WRAPPED_METHODS__ = ("consume",)
 
     @abstractmethod
@@ -33,11 +67,11 @@ class ConsumerT(ABC):
 
     async def pause(self) -> None:
         """Pause message consumption. Depending on the implementation, may do nothing."""
-        return None
+        return None  # pragma: no cover
 
     async def unpause(self) -> None:
         """Unpause message consumption. Depending on the implementation, may do nothing."""
-        return None
+        return None  # pragma: no cover
 
     @abstractmethod
     async def finish(self) -> None:
@@ -62,28 +96,8 @@ class ConsumerT(ABC):
     async def __anext__(self) -> tuple[RoutingKeyT, EncodedPayloadT, ParametersT]:
         return await self.consume()
 
-    def __new__(cls: type[ConsumerT], *args: tuple, **kwargs: dict) -> ConsumerT:
-        inst = super().__new__(cls)
 
-        for method in inst.__WRAPPED_METHODS__:
-            setattr(inst, method, middleware_wrapper(getattr(inst, method)))
-
-        return inst
-
-    @property
-    def _signal_emitter(self) -> SignalEmitterT | None:
-        if not hasattr(self, "_signal_emitter_var"):
-            return None
-        return self._signal_emitter_var
-
-    @_signal_emitter.setter
-    def _signal_emitter(self, signal_emitter: SignalEmitterT) -> None:
-        self._signal_emitter_var = signal_emitter
-        for method in self.__WRAPPED_METHODS__:
-            getattr(self, method)._repid_signal_emitter = signal_emitter
-
-
-class MessageBrokerT(ABC):
+class MessageBrokerT(_WrappedABC):
     CONSUMER_CLASS: ClassVar[type[ConsumerT]]
 
     ROUTING_KEY_CLASS: ClassVar[type[RoutingKeyT]]
@@ -173,25 +187,10 @@ class MessageBrokerT(ABC):
 
         inst = super().__new__(cls)
 
-        for method in inst.__WRAPPED_METHODS__:
-            setattr(inst, method, middleware_wrapper(getattr(inst, method)))
-
         return inst
 
-    @property
-    def _signal_emitter(self) -> SignalEmitterT | None:
-        if not hasattr(self, "_signal_emitter_var"):
-            return None
-        return self._signal_emitter_var
 
-    @_signal_emitter.setter
-    def _signal_emitter(self, signal_emitter: SignalEmitterT) -> None:
-        self._signal_emitter_var = signal_emitter
-        for method in self.__WRAPPED_METHODS__:
-            getattr(self, method)._repid_signal_emitter = signal_emitter
-
-
-class BucketBrokerT(ABC):
+class BucketBrokerT(_WrappedABC):
     BUCKET_CLASS: type[BucketT | ResultBucketT]
 
     __WRAPPED_METHODS__ = (
@@ -225,19 +224,4 @@ class BucketBrokerT(ABC):
 
         inst = super().__new__(cls)
 
-        for method in inst.__WRAPPED_METHODS__:
-            setattr(inst, method, middleware_wrapper(getattr(inst, method)))
-
         return inst
-
-    @property
-    def _signal_emitter(self) -> SignalEmitterT | None:
-        if not hasattr(self, "_signal_emitter_var"):
-            return None
-        return self._signal_emitter_var
-
-    @_signal_emitter.setter
-    def _signal_emitter(self, signal_emitter: SignalEmitterT) -> None:
-        self._signal_emitter_var = signal_emitter
-        for method in self.__WRAPPED_METHODS__:
-            getattr(self, method)._repid_signal_emitter = signal_emitter

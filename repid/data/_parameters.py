@@ -46,7 +46,7 @@ class ResultProperties:
     def __orjson_default(obj: Any) -> str:
         if isinstance(obj, timedelta):
             return str(obj.total_seconds())
-        raise TypeError
+        raise TypeError  # pragma: no cover
 
     def encode(self) -> str:
         return orjson.dumps(self, default=self.__orjson_default).decode()
@@ -72,7 +72,7 @@ class DelayProperties:
     def __orjson_default(obj: Any) -> str:
         if isinstance(obj, timedelta):
             return str(obj.total_seconds())
-        raise TypeError
+        raise TypeError  # pragma: no cover
 
     def encode(self) -> str:
         return orjson.dumps(self, default=self.__orjson_default).decode()
@@ -109,11 +109,9 @@ class Parameters:
 
     @staticmethod
     def __orjson_default(obj: Any) -> str:
-        if isinstance(obj, (ResultProperties, RetriesProperties, DelayProperties)):
-            return obj.encode()
-        elif isinstance(obj, timedelta):
+        if isinstance(obj, timedelta):
             return str(obj.total_seconds())
-        raise TypeError
+        raise TypeError  # pragma: no cover
 
     def encode(self) -> str:
         return orjson.dumps(self, default=self.__orjson_default).decode()
@@ -144,7 +142,7 @@ class Parameters:
     def is_overdue(self) -> bool:
         if self.ttl is None:
             return False
-        return datetime.now() > self.timestamp + self.ttl
+        return datetime.now(tz=self.timestamp.tzinfo) > self.timestamp + self.ttl
 
     @property
     def compute_next_execution_time(self) -> Union[datetime, None]:
@@ -157,7 +155,7 @@ class Parameters:
             return self.timestamp + time_offset
         if self.delay.cron is not None:
             if not CRON_SUPPORT:
-                raise ImportError("Croniter is not installed.")
+                raise ImportError("Croniter is not installed.")  # pragma: no cover
             return croniter(self.delay.cron, now).get_next(ret_type=datetime)  # type: ignore[no-any-return]  # noqa: E501
         return None
 

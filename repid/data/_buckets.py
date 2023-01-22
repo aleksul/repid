@@ -18,7 +18,7 @@ class ArgsBucket:
     def __orjson_default(obj: Any) -> str:
         if isinstance(obj, timedelta):
             return str(obj.total_seconds())
-        raise TypeError
+        raise TypeError  # pragma: no cover
 
     def encode(self) -> str:
         return orjson.dumps(self, default=self.__orjson_default).decode()
@@ -41,7 +41,7 @@ class ArgsBucket:
     def is_overdue(self) -> bool:
         if self.ttl is None:
             return False
-        return datetime.now() > self.timestamp + self.ttl
+        return datetime.now(tz=self.timestamp.tzinfo) > self.timestamp + self.ttl
 
 
 @dataclass(**FROZEN_DATACLASS, **SLOTS_DATACLASS)
@@ -62,7 +62,7 @@ class ResultBucket:
     def __orjson_default(obj: Any) -> str:
         if isinstance(obj, timedelta):
             return str(obj.total_seconds())
-        raise TypeError
+        raise TypeError  # pragma: no cover
 
     def encode(self) -> str:
         return orjson.dumps(self, default=self.__orjson_default).decode()
@@ -85,4 +85,4 @@ class ResultBucket:
     def is_overdue(self) -> bool:
         if self.ttl is None:
             return False
-        return datetime.now() > self.timestamp + self.ttl
+        return datetime.now(tz=self.timestamp.tzinfo) > self.timestamp + self.ttl

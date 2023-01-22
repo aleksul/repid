@@ -6,9 +6,10 @@
         ".coverage": true,
         "coverage.xml": true,
         ".mypy_cache": true,
+        ".ruff_cache": true,
         "repid/py.typed": true,
         ".hypothesis": true,
-        ".venv": true,
+        "**/.venv": true,
     },
     "task.allowAutomaticTasks": "on",
     "python.languageServer": "Pylance",
@@ -25,7 +26,6 @@
     // Linting
     "python.linting.enabled": true,
     "python.linting.lintOnSave": true,
-    "python.linting.flake8Enabled": true,
     "python.linting.mypyEnabled": false,
     "mypy.runUsingActiveInterpreter": true,
     // Formatting

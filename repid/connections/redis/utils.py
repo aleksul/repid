@@ -24,7 +24,7 @@ def get_priorities_order(priorities_chanses: list[float]) -> list[PrioritiesT]:
     Returns:
         List[PrioritiesT]: 3 priorities in order of processing.
     """
-    rand = random.random()  # noqa: S311
+    rand = random.random()
     if rand <= priorities_chanses[0]:
         return [PrioritiesT.HIGH, PrioritiesT.MEDIUM, PrioritiesT.LOW]
     elif rand <= priorities_chanses[0] + priorities_chanses[1]:

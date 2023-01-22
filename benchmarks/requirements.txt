@@ -1,4 +1,4 @@
-repid[amqp]==1.0.0rc1
+repid[amqp]==1.0.0rc2
 uvloop==0.17.0
 redis==4.3.4
 dramatiq[rabbitmq]==1.13.0

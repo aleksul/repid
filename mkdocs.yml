@@ -8,6 +8,12 @@ repo_url: https://github.com/aleksul/repid
 nav:
 - Home: index.md
 - Quickstart Guide: quickstart_guide.md
+- Features: features.md
+- User Guide:
+  - Initial setup: user_guide/initial_setup.md
+  - Jobs, Actors and Workers: user_guide/jobs_actors_and_workers.md
+  - Deferred scheduling: user_guide/deferred_scheduling.md
+- Contributing guide: contributing.md
 
 theme:
   name: material
@@ -18,15 +24,15 @@ theme:
   palette:
   - media: '(prefers-color-scheme: light)'
     scheme: default
-    primary: indigo
-    accent: indigo
+    primary: deep orange
+    accent: amber
     toggle:
       icon: material/lightbulb-outline
       name: Switch to dark mode
   - media: '(prefers-color-scheme: dark)'
     scheme: slate
-    primary: red
-    accent: red
+    primary: deep orange
+    accent: amber
     toggle:
       icon: material/lightbulb
       name: Switch to light mode
@@ -39,9 +45,9 @@ markdown_extensions:
 - pymdownx.snippets
 - admonition
 - pymdownx.details
-- pymdownx.superfences
 - pymdownx.keys
-
+- attr_list
+- pymdownx.emoji
 extra:
   generator: false
   version:

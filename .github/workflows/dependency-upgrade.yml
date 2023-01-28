@@ -10,7 +10,7 @@ jobs:
   upgrade:
     name: Upgrade & Open Pull Request
     runs-on: ubuntu-latest
-    if: github.ref_type == "branch"
+    if: github.ref_type == 'branch'
     env:
       BRANCH_NAME: not-dependabot/${{ github.ref_name }}
     steps:

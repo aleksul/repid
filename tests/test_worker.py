@@ -47,7 +47,7 @@ async def test_worker_sigint() -> None:
     async def awesome_job() -> None:
         pass
 
-    myworker = Worker(routers=[r], gracefull_shutdown_time=1)
+    myworker = Worker(routers=[r], graceful_shutdown_time=1)
 
     task = asyncio.Task(myworker.run())
     await asyncio.sleep(0.3)
@@ -72,7 +72,7 @@ async def test_worker_long_task_reject() -> None:
         await asyncio.sleep(10.0)
         never_hit = True
 
-    myworker = Worker(routers=[r], gracefull_shutdown_time=1)
+    myworker = Worker(routers=[r], graceful_shutdown_time=1)
     task = asyncio.Task(myworker.run())
     await asyncio.sleep(0.9)
     assert not task.done()
@@ -98,7 +98,7 @@ async def test_worker_short_task_finishes() -> None:
         await asyncio.sleep(1.9)
         hit = True
 
-    myworker = Worker(routers=[r], gracefull_shutdown_time=2)
+    myworker = Worker(routers=[r], graceful_shutdown_time=2)
     task = asyncio.Task(myworker.run())
     await asyncio.sleep(0.9)
     assert not task.done()

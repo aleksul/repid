@@ -39,7 +39,7 @@ async def run() -> None:
     async with app.magic(auto_disconnect=True):
         await Worker(
             routers=[r],
-            gracefull_shutdown_time=0,
+            graceful_shutdown_time=0,
         ).run()
 
 

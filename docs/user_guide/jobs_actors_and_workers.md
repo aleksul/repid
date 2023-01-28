@@ -346,11 +346,11 @@ if __name__ == "__main__":
 ```
 
 After worker receives a signal it will attempt a graceful shutdown. It means that it will stop
-receiving new messages and wait for `gracefull_shutdown_time` (default: 25 seconds) to let already
+receiving new messages and wait for `graceful_shutdown_time` (default: 25 seconds) to let already
 running actors complete.
 
 !!! note
-    Default `gracefull_shutdown_time` is set to 25 seconds because default Kubernetes timeout
+    Default `graceful_shutdown_time` is set to 25 seconds because default Kubernetes timeout
     after sending `SIGTERM` and before sending `SIGKILL` is set to 30 seconds. 5 second buffer is
     provided to ensure that every uncompleted task will be rejected before ungraceful termination.
 
@@ -364,7 +364,7 @@ from signal import SIGQUIT
 # code above is omitted
 
 Worker(
-    gracefull_shutdown_time=100.0,  # seconds
+    graceful_shutdown_time=100.0,  # seconds
     messages_limit=10_000,
     handle_signals=[SIGQUIT],
 )

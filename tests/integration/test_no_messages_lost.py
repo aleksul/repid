@@ -26,7 +26,7 @@ async def run_worker(repid_conn: Repid) -> None:
         w = Worker(
             routers=[router],
             messages_limit=1,
-            gracefull_shutdown_time=0,
+            graceful_shutdown_time=0,
         )
 
         await w.run()
@@ -62,7 +62,7 @@ async def test_forced_worker_stop(autoconn: Repid) -> None:
     await asyncio.sleep(3)
 
     async with autoconn.magic(auto_disconnect=True):
-        w = Worker(routers=[router], messages_limit=1, gracefull_shutdown_time=0)
+        w = Worker(routers=[router], messages_limit=1, graceful_shutdown_time=0)
 
         runner = await asyncio.wait_for(w.run(), 5.0)
 

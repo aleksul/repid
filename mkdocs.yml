@@ -17,6 +17,7 @@ nav:
 
 theme:
   name: material
+  custom_dir: docs/overrides
   logo: https://gist.github.com/aleksul/2e4686cf9a4f027909fe43dc33039f10/raw/56935b8183682d1e46d68af70fec52cf647ab756/repid_logo.svg
   favicon: https://gist.github.com/aleksul/2e4686cf9a4f027909fe43dc33039f10/raw/56935b8183682d1e46d68af70fec52cf647ab756/repid_logo.svg
   features:
@@ -49,6 +50,8 @@ markdown_extensions:
 - attr_list
 - pymdownx.emoji
 extra:
+  analytics:
+    provider: custom
   generator: false
   version:
     provider: mike

@@ -133,7 +133,7 @@ async def test_dead(fake_connection: Connection) -> None:
 
 
 async def test_retries() -> None:
-    j = Job("awesome_job", retries=3)
+    j = Job("awesome_job", retries=2)
     await j.queue.declare()
     await j.enqueue()
 

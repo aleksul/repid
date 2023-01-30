@@ -68,7 +68,7 @@ class Job:
         deferred_until: datetime | None = None,
         deferred_by: timedelta | None = None,
         cron: str | None = None,
-        retries: int = 1,
+        retries: int = 0,
         timeout: timedelta = timedelta(minutes=10),  # noqa: B008
         ttl: timedelta | None = None,
         args_id: str | None = None,  # default: uuid4
@@ -106,8 +106,8 @@ class Job:
             raise ValueError("Deferred_by must be greater than or equal to 1 second.")
 
         self.retries = retries
-        if self.retries < 1:
-            raise ValueError("Retries must be greater than or equal to 1.")
+        if self.retries < 0:
+            raise ValueError("Retries must be greater than or equal to 0.")
 
         self.timeout = timeout
         if self.timeout.total_seconds() < 1:

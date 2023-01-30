@@ -25,7 +25,7 @@ except ImportError:  # pragma: no cover
 
 @dataclass(**FROZEN_DATACLASS, **SLOTS_DATACLASS)
 class RetriesProperties:
-    max_amount: int = 1
+    max_amount: int = 0
     already_tried: int = 0
 
     def encode(self) -> str:

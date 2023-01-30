@@ -140,7 +140,7 @@ print(Job("unique_job", id_="my_unique_id").is_unique)  # True
 ### Retries
 
 If you want a Job to be retried in case of a failure during the execution -
-specify `retries` argument. Default is set to `1`, which means that the Job will only be tried
+specify `retries` argument. Default is set to `0`, which means that the Job will only be executed
 once and put in a dead-letter queue in case of a failure.
 
 ```python

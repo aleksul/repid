@@ -55,7 +55,7 @@ def test_routing_key() -> None:
 def test_retries_properties() -> None:
     # Test default initialization
     retries = RetriesProperties()
-    assert retries.max_amount == 1
+    assert retries.max_amount == 0
     assert retries.already_tried == 0
 
     # Test initialization with custom values

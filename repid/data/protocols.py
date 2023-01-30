@@ -49,7 +49,7 @@ class RetriesPropertiesT(Protocol):
     def __init__(
         self,
         *,
-        max_amount: int = 1,
+        max_amount: int = 0,
         already_tried: int = 0,
     ) -> None:
         ...

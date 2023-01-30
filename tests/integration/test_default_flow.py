@@ -82,7 +82,7 @@ async def test_deferred_by_job(autoconn: Repid) -> None:
 
 async def test_retries(autoconn: Repid) -> None:
     async with autoconn.magic():
-        j = Job("awesome_job", retries=3)
+        j = Job("awesome_job", retries=2)
         await j.queue.declare()
         await j.queue.flush()
         await j.enqueue()

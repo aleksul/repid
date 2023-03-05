@@ -54,7 +54,7 @@ async def test_wrong_serializer() -> None:
 
     mymodel = MyBaseModel(arg1=str(randint(0, 1000)), arg2=randint(0, 1000))
 
-    j = Job("awesome_job", args=dict(a="b", c="d"))
+    j = Job("awesome_job", args={"a": "b", "c": "d"})
     assert j.args == ""
 
     with pytest.raises(ValueError, match="Catch me!"):

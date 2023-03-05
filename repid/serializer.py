@@ -15,7 +15,6 @@ class SerializerT(Protocol):
 
 
 def default_serializer(data: Any) -> str:
-    if PYDANTIC_IMPORTED:
-        if isinstance(data, pydantic.BaseModel):
-            return data.json()
+    if PYDANTIC_IMPORTED and isinstance(data, pydantic.BaseModel):
+        return data.json()
     return orjson.dumps(data).decode()

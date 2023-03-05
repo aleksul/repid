@@ -44,7 +44,9 @@ class _RabbitConsumer(ConsumerT):
             prefetch_count=self.max_unacked_messages,
         )
         confirmation = await self.broker._channel().basic_consume(
-            self.queue_name, self.on_new_message, no_ack=False
+            self.queue_name,
+            self.on_new_message,
+            no_ack=False,
         )
         if not isinstance(confirmation, Basic.ConsumeOk):
             logger.error("Consumer wasn't started properly.")
@@ -73,7 +75,7 @@ class _RabbitConsumer(ConsumerT):
         if not isinstance(confirmation, Basic.CancelOk):
             logger.error(
                 "Consumer (tag: {tag}) wasn't stopped properly.",
-                extra=dict(tag=self._consumer_tag),
+                extra={"tag": self._consumer_tag},
             )
         rejects = []
         while self.queue.qsize() > 0:
@@ -85,7 +87,7 @@ class _RabbitConsumer(ConsumerT):
                 logger.error(
                     "Can't reject unknown delivery tag for message ({routing_key}) "
                     "while finishing consumer.",
-                    extra=dict(routing_key=key),
+                    extra={"routing_key": key},
                 )
         await asyncio.gather(*rejects)
 
@@ -99,7 +101,7 @@ class _RabbitConsumer(ConsumerT):
         if message.delivery_tag is None:
             logger.error(
                 "Can't process message (id: {id_}) with unknown delivery tag.",
-                extra=dict(id_=msg_id),
+                extra={"id_": msg_id},
             )
             return
 
@@ -114,8 +116,8 @@ class _RabbitConsumer(ConsumerT):
 
         # get message topic and queue
         if message.header.properties.headers is not None:
-            msg_topic = message.header.properties.headers.get("topic", None)  # type: ignore[assignment]  # noqa: E501
-            msg_queue = message.header.properties.headers.get("queue", "default")  # type: ignore[assignment]  # noqa: E501
+            msg_topic = message.header.properties.headers.get("topic", None)  # type: ignore[assignment]
+            msg_queue = message.header.properties.headers.get("queue", "default")  # type: ignore[assignment]
 
         # reject the message with no topic set (== message wasn't scheduled by repid-like producer)
         if msg_topic is None:
@@ -152,5 +154,5 @@ class _RabbitConsumer(ConsumerT):
                 ),
                 decoded["payload"],
                 params,
-            )
+            ),
         )

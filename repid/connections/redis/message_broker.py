@@ -42,6 +42,7 @@ class RedisMessageBroker(MessageBrokerT):
         key: RoutingKeyT,
         pipe: Pipeline,
         delay_until: int | None = None,
+        *,
         in_front: bool = False,
     ) -> None:
         if delay_until is None:
@@ -67,7 +68,7 @@ class RedisMessageBroker(MessageBrokerT):
         payload: str = "",
         params: ParametersT | None = None,
     ) -> None:
-        logger.debug("Enqueueing message ({routing_key}).", extra=dict(routing_key=key))
+        logger.debug("Enqueueing message ({routing_key}).", extra={"routing_key": key})
         if params is None:
             params = self.PARAMETERS_CLASS()
         async with self.conn.pipeline(transaction=True) as pipe:
@@ -85,21 +86,21 @@ class RedisMessageBroker(MessageBrokerT):
             await pipe.execute()
 
     async def ack(self, key: RoutingKeyT) -> None:
-        logger.debug("Acking message ({routing_key}).", extra=dict(routing_key=key))
+        logger.debug("Acking message ({routing_key}).", extra={"routing_key": key})
         async with self.conn.pipeline(transaction=True) as pipe:
             pipe.delete(mnc(key))
             self.__unmark_processing(key, pipe)
             await pipe.execute()
 
     async def nack(self, key: RoutingKeyT) -> None:
-        logger.debug("Nacking message ({routing_key}).", extra=dict(routing_key=key))
+        logger.debug("Nacking message ({routing_key}).", extra={"routing_key": key})
         async with self.conn.pipeline(transaction=True) as pipe:
             self.__mark_dead(key, pipe)
             self.__unmark_processing(key, pipe)
             await pipe.execute()
 
     async def reject(self, key: RoutingKeyT) -> None:
-        logger.debug("Rejecting message ({routing_key}).", extra=dict(routing_key=key))
+        logger.debug("Rejecting message ({routing_key}).", extra={"routing_key": key})
         raw_params: bytes | None = await self.conn.hget(mnc(key), "parameters")
         if raw_params is not None:
             params = self.PARAMETERS_CLASS.decode(raw_params.decode())
@@ -121,11 +122,11 @@ class RedisMessageBroker(MessageBrokerT):
         payload: str = "",
         params: ParametersT | None = None,
     ) -> None:
-        logger.debug("Requeueing message ({routing_key}).", extra=dict(routing_key=key))
+        logger.debug("Requeueing message ({routing_key}).", extra={"routing_key": key})
         if params is None:
             params = self.PARAMETERS_CLASS()
         async with self.conn.pipeline(transaction=True) as pipe:
-            pipe.hset(mnc(key), mapping=dict(payload=payload, parameters=params.encode()))
+            pipe.hset(mnc(key), mapping={"payload": payload, "parameters": params.encode()})
             self.__put_in_queue(
                 key,
                 pipe,
@@ -136,11 +137,11 @@ class RedisMessageBroker(MessageBrokerT):
             await pipe.execute()
 
     async def queue_declare(self, queue_name: str) -> None:
-        logger.debug("Declaring queue '{queue_name}'.", extra=dict(queue_name=queue_name))
+        logger.debug("Declaring queue '{queue_name}'.", extra={"queue_name": queue_name})
         return
 
     async def queue_flush(self, queue_name: str) -> None:
-        logger.debug("Flushing queue '{queue_name}'.", extra=dict(queue_name=queue_name))
+        logger.debug("Flushing queue '{queue_name}'.", extra={"queue_name": queue_name})
         async with self.conn.pipeline(transaction=True) as pipe:
             async for msg in self.conn.scan_iter(match=f"m:{queue_name}:*"):
                 pipe.delete(msg)
@@ -149,7 +150,7 @@ class RedisMessageBroker(MessageBrokerT):
             await pipe.execute()
 
     async def queue_delete(self, queue_name: str) -> None:
-        logger.debug("Deleting queue '{queue_name}'.", extra=dict(queue_name=queue_name))
+        logger.debug("Deleting queue '{queue_name}'.", extra={"queue_name": queue_name})
         await self.queue_flush(queue_name)
 
     async def maintenance(self) -> None:
@@ -162,14 +163,20 @@ class RedisMessageBroker(MessageBrokerT):
                 if raw_params is None:
                     # drop message with no data
                     tasks.append(
-                        asyncio.create_task(self.conn.zrem(self.processing_queue, short_name))
+                        asyncio.create_task(self.conn.zrem(self.processing_queue, short_name)),
                     )
                     continue
                 params: ParametersT = self.PARAMETERS_CLASS.decode(raw_params.decode())
-                if now - datetime.fromtimestamp(processing_start_time) > params.execution_timeout:
+                if (
+                    now
+                    - datetime.fromtimestamp(
+                        processing_start_time,
+                    )
+                    > params.execution_timeout
+                ):
                     logger.warning(
                         "Message '{short_name}' timed out.",
-                        extra=dict(short_name=short_name),
+                        extra={"short_name": short_name},
                     )
                     id_, topic, queue, priority = utils.parse_message_name(full_name.decode())
                     tasks.append(
@@ -180,9 +187,9 @@ class RedisMessageBroker(MessageBrokerT):
                                     topic=topic,
                                     queue=queue,
                                     priority=priority,
-                                )
-                            )
-                        )
+                                ),
+                            ),
+                        ),
                     )
         await asyncio.gather(*tasks, return_exceptions=True)  # ignore exceptions
         logger.info("Maintenance done.")

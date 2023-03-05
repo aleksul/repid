@@ -36,7 +36,7 @@ class _RedisConsumer(ConsumerT):
         self.conn: Redis[bytes] = broker.conn
 
         self.queue: asyncio.Queue[tuple[RoutingKeyT, str, ParametersT]] = asyncio.Queue(
-            maxsize=0 if max_unacked_messages is None else max_unacked_messages
+            maxsize=0 if max_unacked_messages is None else max_unacked_messages,
         )
         self.pause_lock = asyncio.Lock()
         self.consume_task: asyncio.Task | None = None
@@ -92,6 +92,7 @@ class _RedisConsumer(ConsumerT):
         self,
         full_queue_name: str,
         startswith_topics: tuple[str, ...],
+        *,
         delayed: bool,
     ) -> str | None:
         names: list[bytes] = [b""]  # pre-populate with empty bytes to meet start condition
@@ -118,7 +119,7 @@ class _RedisConsumer(ConsumerT):
                         num=self.PREFETCH_AMOUNT,
                     )
                     offset += self.PREFETCH_AMOUNT
-            except Exception:
+            except Exception:  # noqa: BLE001
                 return None
 
             # check if any of the new message names is meeting `startswith_topics` condition
@@ -132,10 +133,15 @@ class _RedisConsumer(ConsumerT):
         self,
         full_queue_name: str,
         topics: frozenset[str],
+        *,
         delayed: bool = False,
     ) -> str | None:
-        new_topics = tuple(map(lambda x: x + ":", topics))
-        msg_short_name = await self.__fetch_message_name(full_queue_name, new_topics, delayed)
+        new_topics = tuple(x + ":" for x in topics)
+        msg_short_name = await self.__fetch_message_name(
+            full_queue_name,
+            new_topics,
+            delayed=delayed,
+        )
         if msg_short_name is None:
             return None
         async with self.conn.pipeline(transaction=True) as pipe:
@@ -148,21 +154,25 @@ class _RedisConsumer(ConsumerT):
             pipe.zadd(self.broker.processing_queue, {msg_short_name: str(unix_time())})
             try:
                 await pipe.execute()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 return None
         return msg_short_name
 
     async def __get_message(
-        self, priority: PrioritiesT
+        self,
+        priority: PrioritiesT,
     ) -> tuple[RoutingKeyT, str, ParametersT] | None:
         # try delayed queue first...
         msg_short_name = await self.__get_message_name(
-            qnc(self.queue_name, priority, delayed=True), self.topics, delayed=True
+            qnc(self.queue_name, priority, delayed=True),
+            self.topics,
+            delayed=True,
         )
         # if there is no message in delayed queue, try normal queue
         if msg_short_name is None:
             msg_short_name = await self.__get_message_name(
-                qnc(self.queue_name, priority), self.topics
+                qnc(self.queue_name, priority),
+                self.topics,
             )
         # no message found - return None
         if msg_short_name is None:

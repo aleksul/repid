@@ -44,11 +44,11 @@ class _Processor:
     ) -> ActorResult:
         time_limit = parameters.execution_timeout.total_seconds()
 
-        logger_extra = dict(
-            actor_name=actor.name,
-            message_id=key.id_,
-            time_limit=time_limit,
-        )
+        logger_extra = {
+            "actor_name": actor.name,
+            "message_id": key.id_,
+            "time_limit": time_limit,
+        }
 
         result: Any = None
         success: bool

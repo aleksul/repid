@@ -39,10 +39,6 @@ exclude_lines = [
 ]
 fail_under = 90
 
-[tool.isort]
-multi_line_output = 3
-profile = "black"
-
 [tool.mypy]
 check_untyped_defs = true
 disallow_any_unimported = true
@@ -94,7 +90,40 @@ tests = [
 asyncio_mode = "auto"
 
 [tool.ruff]
-ignore = ["S101", "B905"]
+ignore = ["E501", "N999", "PLR0913"]
 line-length = 100
-per-file-ignores = {"tests/*" = ["S"], "repid/connections/__init__.py" = ["F401"]}
-select = ["F", "E", "B", "A", "RUF", "S", "W"]
+per-file-ignores = {"tests/*" = ["S", "PLR2004", "FBT", "BLE", "S101"], "repid/connections/__init__.py" = ["F401"], "benchmarks/*" = ["T201"], "**/__init__.py" = ["PLC0414"]}
+select = [
+  "F",
+  "E",
+  "W",
+  "C90",
+  "I",
+  "N",
+  "UP",
+  "YTT",
+  "S",
+  "BLE",
+  "FBT",
+  "B",
+  "A",
+  "COM",
+  "C4",
+  "T10",
+  "ISC",
+  "ICN",
+  "G",
+  "PIE",
+  "T20",
+  "PYI",
+  "PT",
+  "RET",
+  "SIM",
+  "TID",
+  "ARG",
+  "PTH",
+  "PGH",
+  "PL",
+  "RUF"
+]
+target-version = "py38"

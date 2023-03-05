@@ -23,7 +23,7 @@ class Queue:
         if not VALID_NAME.fullmatch(name):
             raise ValueError(
                 "Queue name must start with a letter or an underscore "
-                "followed by letters, digits, dashes or underscores."
+                "followed by letters, digits, dashes or underscores.",
             )
 
     async def declare(self) -> None:

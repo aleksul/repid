@@ -5,7 +5,7 @@ if TYPE_CHECKING:
 
 
 class QueueNameConstructorT(Protocol):
-    def __call__(self, queue_name: str, delayed: bool = False, dead: bool = False) -> str:
+    def __call__(self, queue_name: str, *, delayed: bool = False, dead: bool = False) -> str:
         ...
 
 

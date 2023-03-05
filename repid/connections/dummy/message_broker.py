@@ -34,7 +34,7 @@ class DummyMessageBroker(MessageBrokerT):
         payload: str = "",
         params: ParametersT | None = None,
     ) -> None:
-        logger.debug("Enqueueing message with id: {id_}.", extra=dict(id_=key.id_))
+        logger.debug("Enqueueing message with id: {id_}.", extra={"id_": key.id_})
         await asyncio.sleep(0)
 
         delay: datetime | None = wait_until(params)
@@ -48,7 +48,7 @@ class DummyMessageBroker(MessageBrokerT):
         await asyncio.sleep(0)
 
     async def reject(self, key: RoutingKeyT) -> None:
-        logger.debug("Rejecting message with id: {id_}.", extra=dict(id_=key.id_))
+        logger.debug("Rejecting message with id: {id_}.", extra={"id_": key.id_})
         await asyncio.sleep(0)
 
         q = self.queues[key.queue]
@@ -61,7 +61,7 @@ class DummyMessageBroker(MessageBrokerT):
         await asyncio.sleep(0)
 
     async def ack(self, key: RoutingKeyT) -> None:
-        logger.debug("Acking message with id: {id_}.", extra=dict(id_=key.id_))
+        logger.debug("Acking message with id: {id_}.", extra={"id_": key.id_})
         await asyncio.sleep(0)
 
         q = self.queues[key.queue]
@@ -73,7 +73,7 @@ class DummyMessageBroker(MessageBrokerT):
         await asyncio.sleep(0)
 
     async def nack(self, key: RoutingKeyT) -> None:
-        logger.debug("Nacking message with id: {id_}.", extra=dict(id_=key.id_))
+        logger.debug("Nacking message with id: {id_}.", extra={"id_": key.id_})
         await asyncio.sleep(0)
 
         q = self.queues[key.queue]
@@ -91,12 +91,12 @@ class DummyMessageBroker(MessageBrokerT):
         payload: str = "",
         params: ParametersT | None = None,
     ) -> None:
-        logger.debug("Requeueing message with id: {id_}.", extra=dict(id_=key.id_))
+        logger.debug("Requeueing message with id: {id_}.", extra={"id_": key.id_})
         await self.ack(key)
         await self.enqueue(key, payload, params)
 
     async def queue_declare(self, queue_name: str) -> None:
-        logger.debug("Declaring queue '{queue_name}'.", extra=dict(queue_name=queue_name))
+        logger.debug("Declaring queue '{queue_name}'.", extra={"queue_name": queue_name})
         await asyncio.sleep(0)
 
         if queue_name not in self.queues:
@@ -105,7 +105,7 @@ class DummyMessageBroker(MessageBrokerT):
         await asyncio.sleep(0)
 
     async def queue_flush(self, queue_name: str) -> None:
-        logger.debug("Flushing queue '{queue_name}'.", extra=dict(queue_name=queue_name))
+        logger.debug("Flushing queue '{queue_name}'.", extra={"queue_name": queue_name})
         await asyncio.sleep(0)
 
         if queue_name in self.queues:
@@ -114,7 +114,7 @@ class DummyMessageBroker(MessageBrokerT):
         await asyncio.sleep(0)
 
     async def queue_delete(self, queue_name: str) -> None:
-        logger.debug("Deleting queue '{queue_name}'.", extra=dict(queue_name=queue_name))
+        logger.debug("Deleting queue '{queue_name}'.", extra={"queue_name": queue_name})
         await asyncio.sleep(0)
 
         self.queues.pop(queue_name, None)

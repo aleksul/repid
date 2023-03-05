@@ -33,7 +33,7 @@ async def test_args_job(autoconn: Repid) -> None:
     assertion2 = random()
 
     async with autoconn.magic():
-        j = Job("awesome_job", args=dict(my_arg1=assertion1, my_arg2=assertion2))
+        j = Job("awesome_job", args={"my_arg1": assertion1, "my_arg2": assertion2})
         await j.queue.declare()
         await j.queue.flush()
         await j.enqueue()
@@ -91,7 +91,7 @@ async def test_retries(autoconn: Repid) -> None:
 
     hit = 0
 
-    def zero_retry_policy(retry_number: int = 1) -> timedelta:
+    def zero_retry_policy(retry_number: int = 1) -> timedelta:  # noqa: ARG001
         return timedelta(seconds=0)
 
     @router.actor(retry_policy=zero_retry_policy)

@@ -57,7 +57,7 @@ def middleware_wrapper(
     return _middleware_wrapper(fn=fn, name=name)
 
 
-class _middleware_wrapper(Generic[FnP, FnR]):
+class _middleware_wrapper(Generic[FnP, FnR]):  # noqa: N801
     def __init__(
         self,
         fn: Callable[FnP, Coroutine[Any, Any, FnR]],
@@ -70,7 +70,7 @@ class _middleware_wrapper(Generic[FnP, FnR]):
         self._repid_signal_emitter: Callable[[str, dict[str, Any]], Coroutine] | None = None
 
     async def call_set_context(self, *args: FnP.args, **kwargs: FnP.kwargs) -> FnR:
-        IsInsideMiddleware.set(True)
+        IsInsideMiddleware.set(True)  # noqa: FBT003
         return await self.fn(*args, **kwargs)
 
     async def __call__(self, *args: FnP.args, **kwargs: FnP.kwargs) -> FnR:
@@ -90,7 +90,7 @@ class _middleware_wrapper(Generic[FnP, FnR]):
         # inside of this context IsInsideMiddleware variable will be set to True
         result = await create_task(self.call_set_context(*args, **kwargs))
         # whatever the function returns can be seen as `result` kwarg in `after` signal
-        signal_kwargs.update(dict(result=result))
+        signal_kwargs.update({"result": result})
 
         # emit `after` signal
         await self._repid_signal_emitter(f"after_{self.name}", signal_kwargs)

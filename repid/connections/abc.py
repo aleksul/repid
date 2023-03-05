@@ -27,7 +27,11 @@ WrappedABCSelf = TypeVar("WrappedABCSelf", bound="_WrappedABC")
 class _WrappedABC(ABC):
     __WRAPPED_METHODS__: tuple[str, ...] = ()
 
-    def __new__(cls: type[WrappedABCSelf], *args: tuple, **kwargs: dict) -> WrappedABCSelf:
+    def __new__(
+        cls: type[WrappedABCSelf],
+        *args: tuple,  # noqa: ARG003
+        **kwargs: dict,  # noqa: ARG003
+    ) -> WrappedABCSelf:
         inst = super().__new__(cls)
 
         for method in inst.__WRAPPED_METHODS__:
@@ -54,7 +58,7 @@ class ConsumerT(_WrappedABC):
     @abstractmethod
     def __init__(
         self,
-        broker: "MessageBrokerT",
+        broker: MessageBrokerT,
         queue_name: str,
         topics: Iterable[str] | None = None,
         max_unacked_messages: int | None = None,
@@ -67,11 +71,11 @@ class ConsumerT(_WrappedABC):
 
     async def pause(self) -> None:
         """Pause message consumption. Depending on the implementation, may do nothing."""
-        return None  # pragma: no cover
+        return  # pragma: no cover
 
     async def unpause(self) -> None:
         """Unpause message consumption. Depending on the implementation, may do nothing."""
-        return None  # pragma: no cover
+        return  # pragma: no cover
 
     @abstractmethod
     async def finish(self) -> None:
@@ -181,13 +185,15 @@ class MessageBrokerT(_WrappedABC):
     async def queue_delete(self, queue_name: str) -> None:
         """Deletes the queue with all of its messages."""
 
-    def __new__(cls: type[MessageBrokerT], *args: tuple, **kwargs: dict) -> MessageBrokerT:
+    def __new__(
+        cls: type[MessageBrokerT],
+        *args: tuple,  # noqa: ARG003
+        **kwargs: dict,  # noqa: ARG003s
+    ) -> MessageBrokerT:
         cls.ROUTING_KEY_CLASS = deepcopy(Config.ROUTING_KEY)
         cls.PARAMETERS_CLASS = deepcopy(Config.PARAMETERS)
 
-        inst = super().__new__(cls)
-
-        return inst
+        return super().__new__(cls)
 
 
 class BucketBrokerT(_WrappedABC):
@@ -219,9 +225,11 @@ class BucketBrokerT(_WrappedABC):
     async def delete_bucket(self, id_: str) -> None:
         """Deletes the bucket."""
 
-    def __new__(cls: type[BucketBrokerT], *args: tuple, **kwargs: dict) -> BucketBrokerT:
+    def __new__(
+        cls: type[BucketBrokerT],
+        *args: tuple,  # noqa: ARG003
+        **kwargs: dict,  # noqa: ARG003
+    ) -> BucketBrokerT:
         cls.BUCKET_CLASS = deepcopy(Config.BUCKET)
 
-        inst = super().__new__(cls)
-
-        return inst
+        return super().__new__(cls)

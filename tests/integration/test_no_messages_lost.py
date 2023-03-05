@@ -12,16 +12,12 @@ router = Router()
 
 @router.actor
 async def sleepy() -> None:
-    global COUNTER1, COUNTER2
-
     COUNTER1.value += 1  # type: ignore[attr-defined]
     await asyncio.sleep(3)
     COUNTER2.value += 1  # type: ignore[attr-defined]
 
 
 async def run_worker(repid_conn: Repid) -> None:
-    global router
-
     async with repid_conn.magic(auto_disconnect=True):
         w = Worker(
             routers=[router],
@@ -37,8 +33,6 @@ def run_worker_sync(repid_conn: Repid) -> None:
 
 
 async def test_forced_worker_stop(autoconn: Repid) -> None:
-    global COUNTER1, COUNTER2
-
     COUNTER1.value = 0  # type: ignore[attr-defined]
     COUNTER2.value = 0  # type: ignore[attr-defined]
 

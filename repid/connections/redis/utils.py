@@ -27,10 +27,9 @@ def get_priorities_order(priorities_chanses: list[float]) -> list[PrioritiesT]:
     rand = random.random()
     if rand <= priorities_chanses[0]:
         return [PrioritiesT.HIGH, PrioritiesT.MEDIUM, PrioritiesT.LOW]
-    elif rand <= priorities_chanses[0] + priorities_chanses[1]:
+    if rand <= priorities_chanses[0] + priorities_chanses[1]:
         return [PrioritiesT.MEDIUM, PrioritiesT.HIGH, PrioritiesT.LOW]
-    else:
-        return [PrioritiesT.LOW, PrioritiesT.HIGH, PrioritiesT.MEDIUM]
+    return [PrioritiesT.LOW, PrioritiesT.HIGH, PrioritiesT.MEDIUM]
 
 
 def parse_priorities_distribution(priorities_distribution: str) -> list[float]:
@@ -56,6 +55,7 @@ def parse_priorities_distribution(priorities_distribution: str) -> list[float]:
 def qnc(
     queue_name: str,
     priority: int = PrioritiesT.MEDIUM.value,
+    *,
     delayed: bool = False,
     dead: bool = False,
 ) -> str:
@@ -78,6 +78,7 @@ def qnc(
 
 def mnc(
     key: RoutingKeyT,
+    *,
     short: bool = False,
 ) -> str:
     """Message name constructor.

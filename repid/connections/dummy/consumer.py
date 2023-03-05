@@ -19,7 +19,7 @@ class _DummyConsumer(ConsumerT):
         broker: DummyMessageBroker,
         queue_name: str,
         topics: Iterable[str] | None,
-        max_unacked_messages: int | None = None,
+        max_unacked_messages: int | None = None,  # noqa: ARG002
     ):
         self.broker = broker
         self.queue_name = queue_name

@@ -17,4 +17,4 @@ class FormatWithExtraAdapter(logging.LoggerAdapter):
 
 logger = logging.getLogger("repid")
 logger.addHandler(logging.NullHandler())
-logger = FormatWithExtraAdapter(logger, dict())  # type: ignore[assignment]
+logger = FormatWithExtraAdapter(logger, {})  # type: ignore[assignment]

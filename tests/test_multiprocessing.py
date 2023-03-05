@@ -38,7 +38,7 @@ async def test_sync_process_with_args_job() -> None:
     arg1 = random()
     arg2 = random()
 
-    j = Job("job2", args=dict(arg1=arg1, arg2=arg2))
+    j = Job("job2", args={"arg1": arg1, "arg2": arg2})
     await j.queue.declare()
     await j.enqueue()
 

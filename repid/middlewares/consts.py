@@ -16,4 +16,4 @@ WRAPPED = (
     "actor_run",
 )
 
-SUBSCRIBERS_NAMES = set(map(lambda i: i[0] + i[1], product(("before_", "after_"), WRAPPED)))
+SUBSCRIBERS_NAMES = {i[0] + i[1] for i in product(("before_", "after_"), WRAPPED)}

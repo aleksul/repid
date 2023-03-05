@@ -43,7 +43,7 @@ class ConcreteConsumer(ConsumerT):
         return self._is_consuming
 
 
-@pytest.fixture
+@pytest.fixture()
 async def consumer() -> AsyncIterator[ConcreteConsumer]:
     c = ConcreteConsumer()
     c._messages.append(("", "", ""))  # type: ignore[arg-type]

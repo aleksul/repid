@@ -18,6 +18,7 @@ class Worker(Router):
     def __init__(
         self,
         routers: list[Router] | None = None,
+        *,
         graceful_shutdown_time: float = 25.0,
         messages_limit: int = float("inf"),  # type: ignore[assignment]
         tasks_limit: int = 1000,
@@ -77,14 +78,15 @@ class Worker(Router):
                     queue_name,
                     self.topics_by_queue[queue_name],
                     self.actors,
-                )
+                ),
             )
             consumer_tasks.add(t)
 
         consumers: set[ConsumerT] = set()
         if consumer_tasks:
             consumer_futures, _ = await asyncio.wait(
-                consumer_tasks, return_when=asyncio.ALL_COMPLETED
+                consumer_tasks,
+                return_when=asyncio.ALL_COMPLETED,
             )
             for ft in consumer_futures:
                 if ft.exception() is None:

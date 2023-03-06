@@ -137,3 +137,6 @@ dmypy.json
 # PDM
 
 .pdm.toml
+
+# rtx
+**/.tool-versions

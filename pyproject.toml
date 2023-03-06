@@ -1,6 +1,6 @@
 [build-system]
-build-backend = "pdm.pep517.api"
-requires = ["pdm-pep517>=1.0.0"]
+build-backend = "pdm.backend"
+requires = ["pdm-backend"]
 
 [project]
 authors = [{name = "aleksul", email = "me@aleksul.space"}]
@@ -65,7 +65,7 @@ includes = ["repid"]
 
 [tool.pdm.dev-dependencies]
 docs = ["mkdocs-material", "mike", "setuptools>=65.5.1"]
-format = ["black", "isort"]
+format = ["black"]
 lint = [
   "mypy",
   "types-orjson",

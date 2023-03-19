@@ -30,6 +30,7 @@ class Job:
         "ttl",
         "timestamp",
         "args_id",
+        "args_id_set",
         "args_ttl",
         "args",
         "use_args_bucketer",
@@ -51,6 +52,7 @@ class Job:
     ttl: timedelta | None
     timestamp: datetime
     args_id: str
+    args_id_set: bool
     args_ttl: timedelta | None
     args: str | None
     use_args_bucketer: bool
@@ -118,6 +120,7 @@ class Job:
             raise ValueError("TTL must be greater than or equal to 1 second.")
 
         self.args_id = args_id if isinstance(args_id, str) else uuid.uuid4().hex
+        self.args_id_set = bool(args_id)
         self.args_ttl = args_ttl
         if self.args_ttl is not None and self.args_ttl.total_seconds() < 1:
             raise ValueError("Args TTL must be greater than or equal to 1 second.")
@@ -175,6 +178,8 @@ class Job:
         if self.use_args_bucketer and self.args is not None:
             bucket = self._conn._ab.BUCKET_CLASS(data=self.args, ttl=self.args_ttl)
             await self._conn._ab.store_bucket(self.args_id, bucket)
+            return orjson.dumps({"__repid_payload_id": self.args_id}).decode()
+        if self.args_id_set:
             return orjson.dumps({"__repid_payload_id": self.args_id}).decode()
         return self.args or ""
 

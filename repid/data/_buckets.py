@@ -35,6 +35,10 @@ class ArgsBucket:
             elif key == "ttl":
                 loaded[key] = timedelta(seconds=float(value))
 
+        # drop keys of a result bucket if present
+        for key in ["started_when", "finished_when", "success", "exception"]:
+            loaded.pop(key, None)
+
         return cls(**loaded)
 
     @property

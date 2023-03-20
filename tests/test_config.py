@@ -74,7 +74,6 @@ pytestmark = pytest.mark.usefixtures("entry_points", "patch_config")
 
 
 def test_update_data_overrides() -> None:
-
     Config.update_data_overrides()
 
     assert Config.ROUTING_KEY is SomeClass.routing_key
@@ -84,21 +83,18 @@ def test_update_data_overrides() -> None:
 
 
 def test_update_serializer_override() -> None:
-
     Config.update_serializer_override()
 
     assert Config.SERIALIZER is SomeClass.serializer
 
 
 def test_update_converter_override() -> None:
-
     Config.update_converter_override()
 
     assert Config.CONVERTER is SomeClass.converter
 
 
 def test_update_all() -> None:
-
     Config.update_all()
 
     assert Config.ROUTING_KEY is SomeClass.routing_key

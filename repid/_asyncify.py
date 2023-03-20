@@ -35,7 +35,6 @@ def asyncify(
     fn: Callable[FnP, FnR] | Callable[FnP, Coroutine[Any, Any, FnR]],
     run_in_process: bool = False,
 ) -> Callable[FnP, Coroutine[Any, Any, FnR]]:
-
     if asyncio.iscoroutinefunction(fn):
         return fn
 

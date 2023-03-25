@@ -33,12 +33,13 @@ class _RabbitConsumer(ConsumerT):
         self.max_unacked_messages = 0 if max_unacked_messages is None else max_unacked_messages
         self._consumer_tag: str | None = None
         self.__is_paused: bool = False
+        self.__is_consuming: bool = False
 
     async def consume(self) -> tuple[RoutingKeyT, str, ParametersT]:
         return await self.queue.get()
 
     async def start(self) -> None:
-        self.__is_paused = False
+        self.__is_consuming = True
         await self.broker._channel().basic_qos(
             prefetch_size=0,
             prefetch_count=self.max_unacked_messages,
@@ -68,7 +69,7 @@ class _RabbitConsumer(ConsumerT):
         )
 
     async def finish(self) -> None:
-        self.__is_paused = True
+        self.__is_consuming = False
         if self._consumer_tag is None:
             return
         confirmation = await self.broker._channel().basic_cancel(self._consumer_tag)
@@ -105,8 +106,8 @@ class _RabbitConsumer(ConsumerT):
             )
             return
 
-        # if consumer is paused - reject the message
-        if self.__is_paused:
+        # if consumer is paused or is not set to consume messages - reject the message
+        if self.__is_paused or not self.__is_consuming:
             await asyncio.sleep(0.1)
             await self.broker._channel().basic_reject(message.delivery_tag)
             return

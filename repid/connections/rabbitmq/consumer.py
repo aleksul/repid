@@ -139,6 +139,7 @@ class _RabbitConsumer(ConsumerT):
         # put message to a dead queue if it's overdue
         if params.is_overdue:
             await self.broker._channel().basic_nack(message.delivery_tag, requeue=False)
+            return
 
         # save delivery tag for the future
         self.broker._id_to_delivery_tag[msg_id] = message.delivery_tag

@@ -23,7 +23,7 @@ repos:
   - id: black
 
 - repo: https://github.com/charliermarsh/ruff-pre-commit
-  rev: v0.0.254
+  rev: v0.0.259
   hooks:
   - id: ruff
     args: [--fix, --exit-non-zero-on-fix]
@@ -34,7 +34,7 @@ repos:
   - id: markdownlint-fix
 
 - repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
-  rev: v2.7.0
+  rev: v2.8.0
   hooks:
   - id: pretty-format-toml
     args: [--autofix]

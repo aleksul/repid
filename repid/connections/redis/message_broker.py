@@ -138,7 +138,6 @@ class RedisMessageBroker(MessageBrokerT):
 
     async def queue_declare(self, queue_name: str) -> None:
         logger.debug("Declaring queue '{queue_name}'.", extra={"queue_name": queue_name})
-        return
 
     async def queue_flush(self, queue_name: str) -> None:
         logger.debug("Flushing queue '{queue_name}'.", extra={"queue_name": queue_name})

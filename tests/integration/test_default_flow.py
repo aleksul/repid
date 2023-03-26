@@ -2,7 +2,7 @@ import asyncio
 from datetime import timedelta
 from random import random
 
-from repid import Job, Repid, Router, Worker
+from repid import Job, RabbitMessageBroker, RedisMessageBroker, Repid, Router, Worker
 
 
 async def test_simple_job(autoconn: Repid) -> None:
@@ -105,6 +105,42 @@ async def test_retries(autoconn: Repid) -> None:
         myworker = Worker(routers=[router], messages_limit=2)
         await asyncio.wait_for(myworker.run(), timeout=5.0)
     assert hit == 2
+
+
+async def test_dead_queue(autoconn: Repid) -> None:
+    async with autoconn.magic():
+        j = Job("awesome_job")
+        await j.queue.declare()
+        await j.queue.flush()
+        await j.enqueue()
+
+    router = Router()
+
+    hit = 0
+
+    @router.actor
+    async def awesome_job() -> None:
+        nonlocal hit
+        hit += 1
+        if hit == 1:
+            raise Exception("Only first.")
+
+    async with autoconn.magic():
+        myworker = Worker(routers=[router], messages_limit=1)
+        await asyncio.wait_for(myworker.run(), timeout=5.0)
+
+        assert hit == 1
+
+        broker = autoconn.connection.message_broker
+        if type(broker) is RedisMessageBroker:
+            assert await broker.conn.llen("q:default:dead") == 1
+        elif type(broker) is RabbitMessageBroker:
+            msg = await broker._channel.basic_get("default:dead")
+            assert msg is not None
+            assert msg.header.properties.headers is not None
+            assert msg.header.properties.headers.get("topic") == "awesome_job"
+        else:
+            raise Exception("This broker is not tested!")
 
 
 async def test_worker_no_routers(autoconn: Repid) -> None:

@@ -2,7 +2,7 @@ import asyncio
 import multiprocessing
 from datetime import timedelta
 
-from repid import Job, Queue, Repid, Router, Worker
+from repid import Job, Repid, Router, Worker
 
 COUNTER1 = multiprocessing.Value("i", 0)
 COUNTER2 = multiprocessing.Value("i", 0)
@@ -37,8 +37,10 @@ async def test_forced_worker_stop(autoconn: Repid) -> None:
     COUNTER2.value = 0  # type: ignore[attr-defined]
 
     async with autoconn.magic(auto_disconnect=True):
-        await Queue().declare()
-        await Job("sleepy", timeout=timedelta(seconds=4)).enqueue()
+        j = Job("sleepy", timeout=timedelta(seconds=4))
+        await j.queue.declare()
+        await j.queue.flush()
+        await j.enqueue()
 
     process = multiprocessing.Process(target=run_worker_sync, args=(autoconn,))
     process.start()

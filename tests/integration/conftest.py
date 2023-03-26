@@ -99,3 +99,15 @@ def rabbitmq_with_redis_connection(
 )
 def autoconn(request: pytest.FixtureRequest) -> Any:
     return request.param
+
+
+@pytest.fixture(
+    scope="session",
+    params=[
+        lazy_fixture("fake_repid"),
+        lazy_fixture("redis_connection"),
+        lazy_fixture("rabbitmq_with_redis_connection"),
+    ],
+)
+def autoconn_with_buckets(request: pytest.FixtureRequest) -> Any:
+    return request.param

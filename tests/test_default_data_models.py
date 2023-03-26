@@ -184,16 +184,16 @@ def test_parameters() -> None:
 
 
 @pytest.mark.parametrize(
-    ("timestamp", "ttl", "is_overdue"),
+    ("ttl", "is_overdue"),
     [
-        (datetime.now(), timedelta(seconds=1), False),
-        (datetime.now(), None, False),
-        (datetime.now(), timedelta(seconds=-1), True),
+        (timedelta(seconds=1), False),
+        (None, False),
+        (timedelta(seconds=-1), True),
     ],
 )
-def test_parameters_is_overdue(timestamp: datetime, ttl: timedelta, is_overdue: bool) -> None:
+def test_parameters_is_overdue(ttl: timedelta, is_overdue: bool) -> None:
     # Test that the is_overdue property works as expected
-    assert Parameters(timestamp=timestamp, ttl=ttl).is_overdue == is_overdue
+    assert Parameters(timestamp=datetime.now(), ttl=ttl).is_overdue == is_overdue
 
 
 @pytest.mark.parametrize(
@@ -239,37 +239,22 @@ def test_bucket_encode_decode(
 
 
 @pytest.mark.parametrize(
-    ("bucket", "timestamp", "ttl", "is_overdue"),
+    ("bucket", "ttl", "is_overdue"),
     [
-        (ArgsBucket, datetime.now(), timedelta(seconds=1), False),
-        (ArgsBucket, datetime.now(), None, False),
-        (ArgsBucket, datetime.now(), timedelta(seconds=-1), True),
-        (
-            ResultBucket,
-            datetime.now(),
-            timedelta(seconds=1),
-            False,
-        ),
-        (
-            ResultBucket,
-            datetime.now(),
-            None,
-            False,
-        ),
-        (
-            ResultBucket,
-            datetime.now(),
-            timedelta(seconds=-1),
-            True,
-        ),
+        (ArgsBucket, timedelta(seconds=1), False),
+        (ArgsBucket, None, False),
+        (ArgsBucket, timedelta(seconds=-1), True),
+        (ResultBucket, timedelta(seconds=1), False),
+        (ResultBucket, None, False),
+        (ResultBucket, timedelta(seconds=-1), True),
     ],
 )
 def test_bucket_is_overdue(
     bucket: type[BucketT | ResultBucketT],
-    timestamp: datetime,
     ttl: timedelta,
     is_overdue: bool,
 ) -> None:
+    timestamp = datetime.now()
     # Test that the is_overdue property works as expected
     if bucket is ArgsBucket:
         bucket_instance = bucket(data="foo", timestamp=timestamp, ttl=ttl)

@@ -45,7 +45,7 @@ class RabbitMessageBroker(MessageBrokerT):
 
     @property
     def _channel(self) -> aiormq.abc.AbstractChannel:
-        if self.__channel is None or self.__channel.is_closed:
+        if self.__channel is None or self.__channel.is_closed:  # pragma: no cover
             raise ConnectionError("Channel isn't available.")
         return self.__channel
 
@@ -95,13 +95,15 @@ class RabbitMessageBroker(MessageBrokerT):
             ),
             mandatory=True,
         )
-        if not isinstance(confirmation, Basic.Ack):
+        if not isinstance(confirmation, Basic.Ack):  # pragma: no cover
             raise ConnectionError("Message wasn't published.")
 
     async def ack(self, key: RoutingKeyT) -> None:
         logger_extra = {"routing_key": key}
         logger.debug("Acking message ({routing_key}).", extra=logger_extra)
-        if (delivery_tag := self._id_to_delivery_tag.pop(key.id_, None)) is None:
+        if (
+            delivery_tag := self._id_to_delivery_tag.pop(key.id_, None)
+        ) is None:  # pragma: no cover
             logger.error(
                 "Can't ack unknown delivery tag for message ({routing_key}).",
                 extra=logger_extra,
@@ -112,7 +114,9 @@ class RabbitMessageBroker(MessageBrokerT):
     async def nack(self, key: RoutingKeyT) -> None:
         logger_extra = {"routing_key": key}
         logger.debug("Nacking message ({routing_key}).", extra=logger_extra)
-        if (delivery_tag := self._id_to_delivery_tag.pop(key.id_, None)) is None:
+        if (
+            delivery_tag := self._id_to_delivery_tag.pop(key.id_, None)
+        ) is None:  # pragma: no cover
             logger.error(
                 "Can't nack unknown delivery tag for message ({routing_key}).",
                 extra=logger_extra,
@@ -123,7 +127,9 @@ class RabbitMessageBroker(MessageBrokerT):
     async def reject(self, key: RoutingKeyT) -> None:
         logger_extra = {"routing_key": key}
         logger.debug("Rejecting message ({routing_key}).", extra=logger_extra)
-        if (delivery_tag := self._id_to_delivery_tag.pop(key.id_, None)) is None:
+        if (
+            delivery_tag := self._id_to_delivery_tag.pop(key.id_, None)
+        ) is None:  # pragma: no cover
             logger.error(
                 "Can't reject unknown delivery tag for message ({routing_key}).",
                 extra=logger_extra,

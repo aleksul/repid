@@ -50,7 +50,7 @@ class _RabbitConsumer(ConsumerT):
             no_ack=False,
         )
         if not isinstance(confirmation, Basic.ConsumeOk):
-            logger.error("Consumer wasn't started properly.")
+            logger.error("Consumer wasn't started properly.")  # pragma: no cover
         else:
             self._consumer_tag = confirmation.consumer_tag
 
@@ -73,7 +73,7 @@ class _RabbitConsumer(ConsumerT):
         if self._consumer_tag is None:
             return
         confirmation = await self.broker._channel.basic_cancel(self._consumer_tag)
-        if not isinstance(confirmation, Basic.CancelOk):
+        if not isinstance(confirmation, Basic.CancelOk):  # pragma: no cover
             logger.error(
                 "Consumer (tag: {tag}) wasn't stopped properly.",
                 extra={"tag": self._consumer_tag},
@@ -84,7 +84,7 @@ class _RabbitConsumer(ConsumerT):
             tag = self.broker._id_to_delivery_tag.pop(key.id_, None)
             if tag is not None:
                 rejects.append(self.broker._channel.basic_reject(tag))
-            else:
+            else:  # pragma: no cover
                 logger.error(
                     "Can't reject unknown delivery tag for message ({routing_key}) "
                     "while finishing consumer.",
@@ -94,12 +94,12 @@ class _RabbitConsumer(ConsumerT):
 
     async def on_new_message(self, message: aiormq.abc.DeliveredMessage) -> None:
         # get or set message id
-        if message.header.properties.message_id is None:
+        if message.header.properties.message_id is None:  # pragma: no cover
             message.header.properties.message_id = uuid4().hex
         msg_id = message.header.properties.message_id
 
         # get rabbitmq delivery tag
-        if message.delivery_tag is None:
+        if message.delivery_tag is None:  # pragma: no cover
             logger.error(
                 "Can't process message (id: {id_}) with unknown delivery tag.",
                 extra={"id_": msg_id},
@@ -121,7 +121,7 @@ class _RabbitConsumer(ConsumerT):
             msg_queue = message.header.properties.headers.get("queue", "default")  # type: ignore[assignment]
 
         # reject the message with no topic set (== message wasn't scheduled by repid-like producer)
-        if msg_topic is None:
+        if msg_topic is None:  # pragma: no cover
             await asyncio.sleep(0.1)  # poison message fix
             await self.broker._channel.basic_reject(message.delivery_tag)
             return

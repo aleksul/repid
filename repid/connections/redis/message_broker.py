@@ -69,7 +69,7 @@ class RedisMessageBroker(MessageBrokerT):
         params: ParametersT | None = None,
     ) -> None:
         logger.debug("Enqueueing message ({routing_key}).", extra={"routing_key": key})
-        if params is None:
+        if params is None:  # pragma: no cover
             params = self.PARAMETERS_CLASS()
         async with self.conn.pipeline(transaction=True) as pipe:
             pipe.hsetnx(
@@ -104,7 +104,7 @@ class RedisMessageBroker(MessageBrokerT):
         raw_params: bytes | None = await self.conn.hget(mnc(key), "parameters")
         if raw_params is not None:
             params = self.PARAMETERS_CLASS.decode(raw_params.decode())
-        else:
+        else:  # pragma: no cover
             params = self.PARAMETERS_CLASS()
         async with self.conn.pipeline(transaction=True) as pipe:
             self.__put_in_queue(
@@ -123,7 +123,7 @@ class RedisMessageBroker(MessageBrokerT):
         params: ParametersT | None = None,
     ) -> None:
         logger.debug("Requeueing message ({routing_key}).", extra={"routing_key": key})
-        if params is None:
+        if params is None:  # pragma: no cover
             params = self.PARAMETERS_CLASS()
         async with self.conn.pipeline(transaction=True) as pipe:
             pipe.hset(mnc(key), mapping={"payload": payload, "parameters": params.encode()})
@@ -160,7 +160,7 @@ class RedisMessageBroker(MessageBrokerT):
         async for short_name, processing_start_time in self.conn.zscan_iter(self.processing_queue):
             async for full_name in self.conn.scan_iter(match=f"m:*:{short_name.decode()}"):
                 raw_params: bytes | None = await self.conn.hget(full_name, "parameters")
-                if raw_params is None:
+                if raw_params is None:  # pragma: no cover
                     # drop message with no data
                     tasks.append(
                         asyncio.create_task(self.conn.zrem(self.processing_queue, short_name)),

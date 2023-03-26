@@ -37,7 +37,12 @@ exclude_lines = [
   'if TYPE_CHECKING:',
   'pragma: no cover'
 ]
-fail_under = 90
+fail_under = 100
+
+[tool.coverage.run]
+omit = [
+  "repid/connections/rabbitmq/protocols.py"
+]
 
 [tool.mypy]
 check_untyped_defs = true

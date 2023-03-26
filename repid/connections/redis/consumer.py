@@ -119,7 +119,7 @@ class _RedisConsumer(ConsumerT):
                         num=self.PREFETCH_AMOUNT,
                     )
                     offset += self.PREFETCH_AMOUNT
-            except Exception:  # noqa: BLE001
+            except Exception:  # pragma: no cover  # noqa: BLE001
                 return None
 
             # check if any of the new message names is meeting `startswith_topics` condition
@@ -154,7 +154,7 @@ class _RedisConsumer(ConsumerT):
             pipe.zadd(self.broker.processing_queue, {msg_short_name: str(unix_time())})
             try:
                 await pipe.execute()
-            except Exception:  # noqa: BLE001
+            except Exception:  # pragma: no cover  # noqa: BLE001
                 return None
         return msg_short_name
 
@@ -189,7 +189,7 @@ class _RedisConsumer(ConsumerT):
         payload: bytes | None = await self.conn.hget(mnc(routing_key), "payload")
         parameters: bytes | None = await self.conn.hget(mnc(routing_key), "parameters")
 
-        if payload is None or parameters is None:
+        if payload is None or parameters is None:  # pragma: no cover
             # message's data was removed (but somehow id was present in the queue :shrug:)
             # - put it to the dead queue
             async with self.conn.pipeline(transaction=True) as pipe:

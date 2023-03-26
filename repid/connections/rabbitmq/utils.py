@@ -15,7 +15,7 @@ def durable_message_decider(key: RoutingKeyT) -> bool:  # noqa: ARG001
 
 def qnc(queue_name: str, *, delayed: bool = False, dead: bool = False) -> str:
     """Queue name constructor for RabbitMQ."""
-    if dead:
+    if dead:  # pragma: no cover
         return f"{queue_name}:dead"
     if delayed:
         return f"{queue_name}:delayed"

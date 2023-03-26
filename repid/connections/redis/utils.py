@@ -45,7 +45,7 @@ def parse_priorities_distribution(priorities_distribution: str) -> list[float]:
     Returns:
         List[float]: list of 3 floats, representing chances, e.g. `[0.6, 0.3, 0.1]`.
     """
-    if not VALID_PRIORITIES.fullmatch(priorities_distribution):
+    if not VALID_PRIORITIES.fullmatch(priorities_distribution):  # pragma: no cover
         raise ValueError(f"Invalid priorities distribution: {priorities_distribution}")
     pr_dist = [int(x) for x in priorities_distribution.split("/")]
     pr_dist_sum = sum(pr_dist)

@@ -69,13 +69,13 @@ class ConsumerT(_WrappedABC):
     async def start(self) -> None:
         """Start to consume messages from the queue."""
 
+    @abstractmethod
     async def pause(self) -> None:
-        """Pause message consumption. Depending on the implementation, may do nothing."""
-        return  # pragma: no cover
+        """Pause message consumption."""
 
+    @abstractmethod
     async def unpause(self) -> None:
-        """Unpause message consumption. Depending on the implementation, may do nothing."""
-        return  # pragma: no cover
+        """Unpause message consumption."""
 
     @abstractmethod
     async def finish(self) -> None:

@@ -43,12 +43,10 @@ class RabbitMessageBroker(MessageBrokerT):
         self.__channel: aiormq.abc.AbstractChannel | None = None
         self._id_to_delivery_tag: dict[str, int] = {}
 
+    @property
     def _channel(self) -> aiormq.abc.AbstractChannel:
-        if self.__channel is None:
-            raise ConnectionError("Channel isn't set.")
-        if self.__channel.is_closed:
-            coro = asyncio.run_coroutine_threadsafe(self.__channel.open(), asyncio.get_event_loop())
-            coro.result(timeout=100)
+        if self.__channel is None or self.__channel.is_closed:
+            raise ConnectionError("Channel isn't available.")
         return self.__channel
 
     async def connect(self) -> None:
@@ -84,7 +82,7 @@ class RabbitMessageBroker(MessageBrokerT):
             if millis > 0:
                 exp = str(millis)
 
-        confirmation = await self._channel().basic_publish(
+        confirmation = await self._channel.basic_publish(
             body=orjson.dumps(body),
             routing_key=self.qnc(key.queue, delayed=exp is not None),
             properties=aiormq.spec.Basic.Properties(
@@ -109,7 +107,7 @@ class RabbitMessageBroker(MessageBrokerT):
                 extra=logger_extra,
             )
             return
-        await self._channel().basic_ack(delivery_tag)
+        await self._channel.basic_ack(delivery_tag)
 
     async def nack(self, key: RoutingKeyT) -> None:
         logger_extra = {"routing_key": key}
@@ -120,7 +118,7 @@ class RabbitMessageBroker(MessageBrokerT):
                 extra=logger_extra,
             )
             return
-        await self._channel().basic_nack(delivery_tag, requeue=False)  # will trigger dlx
+        await self._channel.basic_nack(delivery_tag, requeue=False)  # will trigger dlx
 
     async def reject(self, key: RoutingKeyT) -> None:
         logger_extra = {"routing_key": key}
@@ -131,7 +129,7 @@ class RabbitMessageBroker(MessageBrokerT):
                 extra=logger_extra,
             )
             return
-        await self._channel().basic_reject(delivery_tag, requeue=True)
+        await self._channel.basic_reject(delivery_tag, requeue=True)
 
     async def requeue(
         self,
@@ -146,7 +144,7 @@ class RabbitMessageBroker(MessageBrokerT):
 
     async def queue_declare(self, queue_name: str) -> None:
         logger.debug("Declaring queue '{queue_name}'.", extra={"queue_name": queue_name})
-        channel = self._channel()
+        channel = self._channel
         await channel.queue_declare(
             f"{queue_name}:dead",
             durable=True,
@@ -175,7 +173,7 @@ class RabbitMessageBroker(MessageBrokerT):
 
     async def queue_flush(self, queue_name: str) -> None:
         logger.debug("Flushing queue '{queue_name}'.", extra={"queue_name": queue_name})
-        channel = self._channel()
+        channel = self._channel
 
         await asyncio.gather(
             *[
@@ -187,7 +185,7 @@ class RabbitMessageBroker(MessageBrokerT):
 
     async def queue_delete(self, queue_name: str) -> None:
         logger.debug("Deleting queue '{queue_name}'.", extra={"queue_name": queue_name})
-        channel = self._channel()
+        channel = self._channel
         await asyncio.gather(
             *[
                 channel.queue_delete(queue_name),

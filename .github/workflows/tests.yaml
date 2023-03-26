@@ -39,8 +39,8 @@ jobs:
     - name: Run tests
       run: |
         pdm run pytest tests/ --diff-symbols \
-        --hypothesis-show-statistics --hypothesis-verbosity=normal \
-        --color=yes --cov-report=xml --cov=repid
+        --hypothesis-verbosity=normal \
+        --color=yes --cov-report=xml --cov-report=term-missing --cov=repid
 
     - name: Upload code coverage
       if: matrix.python-version == '3.8'

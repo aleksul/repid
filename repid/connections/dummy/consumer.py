@@ -19,7 +19,7 @@ class _DummyConsumer(ConsumerT):
         broker: DummyMessageBroker,
         queue_name: str,
         topics: Iterable[str] | None,
-        max_unacked_messages: int | None = None,
+        max_unacked_messages: int | None = None,  # noqa: ARG002
     ):
         self.broker = broker
         self.queue_name = queue_name
@@ -44,9 +44,8 @@ class _DummyConsumer(ConsumerT):
     async def finish(self) -> None:
         await asyncio.sleep(0)
         self._started = False
-        for msg in self._queue.processing:
-            self._queue.processing.remove(msg)
-            self._queue.simple.put_nowait(msg)
+        while self._queue.processing:
+            await self._queue.simple.put(self._queue.processing.pop())
         await asyncio.sleep(0)
 
     async def __update_delayed(self) -> None:
@@ -75,10 +74,10 @@ class _DummyConsumer(ConsumerT):
                 if msg.parameters.is_overdue:
                     self._queue.dead.append(msg)
                 elif self.topics and msg.key.topic not in self.topics:
-                    self._queue.simple.put_nowait(msg)
+                    await self._queue.simple.put(msg)
                 else:
                     break
-            await asyncio.sleep(0)
+            await asyncio.sleep(0.001)
         self._queue.processing.add(msg)
 
         await asyncio.sleep(0)

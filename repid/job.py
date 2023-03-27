@@ -30,6 +30,7 @@ class Job:
         "ttl",
         "timestamp",
         "args_id",
+        "args_id_set",
         "args_ttl",
         "args",
         "use_args_bucketer",
@@ -51,6 +52,7 @@ class Job:
     ttl: timedelta | None
     timestamp: datetime
     args_id: str
+    args_id_set: bool
     args_ttl: timedelta | None
     args: str | None
     use_args_bucketer: bool
@@ -59,7 +61,7 @@ class Job:
     store_result: bool
     _conn: Connection
 
-    def __init__(
+    def __init__(  # noqa: C901
         self,
         name: str,
         queue: str | Queue = "default",
@@ -68,7 +70,7 @@ class Job:
         deferred_until: datetime | None = None,
         deferred_by: timedelta | None = None,
         cron: str | None = None,
-        retries: int = 1,
+        retries: int = 0,
         timeout: timedelta = timedelta(minutes=10),  # noqa: B008
         ttl: timedelta | None = None,
         args_id: str | None = None,  # default: uuid4
@@ -86,7 +88,7 @@ class Job:
         if not VALID_NAME.fullmatch(self.name):
             raise ValueError(
                 "Job name must start with a letter or an underscore "
-                "followed by letters, digits, dashes or underscores."
+                "followed by letters, digits, dashes or underscores.",
             )
 
         self.queue = queue if isinstance(queue, Queue) else Queue(queue, self._conn)
@@ -106,8 +108,8 @@ class Job:
             raise ValueError("Deferred_by must be greater than or equal to 1 second.")
 
         self.retries = retries
-        if self.retries < 1:
-            raise ValueError("Retries must be greater than or equal to 1.")
+        if self.retries < 0:
+            raise ValueError("Retries must be greater than or equal to 0.")
 
         self.timeout = timeout
         if self.timeout.total_seconds() < 1:
@@ -118,6 +120,7 @@ class Job:
             raise ValueError("TTL must be greater than or equal to 1 second.")
 
         self.args_id = args_id if isinstance(args_id, str) else uuid.uuid4().hex
+        self.args_id_set = bool(args_id)
         self.args_ttl = args_ttl
         if self.args_ttl is not None and self.args_ttl.total_seconds() < 1:
             raise ValueError("Args TTL must be greater than or equal to 1 second.")
@@ -132,7 +135,7 @@ class Job:
         self.result_ttl = result_ttl
         if self.result_id is not None and not VALID_ID.fullmatch(self.result_id):
             raise ValueError(
-                "Result id must contain only letters, numbers, dashes and underscores."
+                "Result id must contain only letters, numbers, dashes and underscores.",
             )
         if self.result_ttl is not None and self.result_ttl.total_seconds() < 1:
             raise ValueError("Result TTL must be greater than or equal to 1 second.")
@@ -154,15 +157,18 @@ class Job:
         return self._conn.message_broker.PARAMETERS_CLASS(
             execution_timeout=self.timeout,
             retries=self._conn.message_broker.PARAMETERS_CLASS.RETRIES_CLASS(
-                max_amount=self.retries
+                max_amount=self.retries,
             ),
             result=self._conn.message_broker.PARAMETERS_CLASS.RESULT_CLASS(
-                id_=self.result_id, ttl=self.result_ttl
+                id_=self.result_id,
+                ttl=self.result_ttl,
             )
             if self.store_result
             else None,
             delay=self._conn.message_broker.PARAMETERS_CLASS.DELAY_CLASS(
-                delay_until=self.deferred_until, defer_by=self.deferred_by, cron=self.cron
+                delay_until=self.deferred_until,
+                defer_by=self.deferred_by,
+                cron=self.cron,
             ),
             timestamp=self.timestamp,
             ttl=self.ttl,
@@ -172,7 +178,9 @@ class Job:
         if self.use_args_bucketer and self.args is not None:
             bucket = self._conn._ab.BUCKET_CLASS(data=self.args, ttl=self.args_ttl)
             await self._conn._ab.store_bucket(self.args_id, bucket)
-            return orjson.dumps(dict(__repid_payload_id=self.args_id)).decode()
+            return orjson.dumps({"__repid_payload_id": self.args_id}).decode()
+        if self.args_id_set:
+            return orjson.dumps({"__repid_payload_id": self.args_id}).decode()
         return self.args or ""
 
     async def enqueue(self) -> tuple[RoutingKeyT, str, ParametersT]:

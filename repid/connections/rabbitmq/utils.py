@@ -8,14 +8,14 @@ if TYPE_CHECKING:
     from repid.data.protocols import ParametersT, RoutingKeyT
 
 
-def durable_message_decider(key: RoutingKeyT) -> bool:
+def durable_message_decider(key: RoutingKeyT) -> bool:  # noqa: ARG001
     """Decides if queue is set as durable in RabbitMQ."""
     return True
 
 
-def qnc(queue_name: str, delayed: bool = False, dead: bool = False) -> str:
+def qnc(queue_name: str, *, delayed: bool = False, dead: bool = False) -> str:
     """Queue name constructor for RabbitMQ."""
-    if dead:
+    if dead:  # pragma: no cover
         return f"{queue_name}:dead"
     if delayed:
         return f"{queue_name}:delayed"

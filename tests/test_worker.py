@@ -47,7 +47,7 @@ async def test_worker_sigint() -> None:
     async def awesome_job() -> None:
         pass
 
-    myworker = Worker(routers=[r], gracefull_shutdown_time=1)
+    myworker = Worker(routers=[r], graceful_shutdown_time=1)
 
     task = asyncio.Task(myworker.run())
     await asyncio.sleep(0.3)
@@ -72,7 +72,7 @@ async def test_worker_long_task_reject() -> None:
         await asyncio.sleep(10.0)
         never_hit = True
 
-    myworker = Worker(routers=[r], gracefull_shutdown_time=1)
+    myworker = Worker(routers=[r], graceful_shutdown_time=1)
     task = asyncio.Task(myworker.run())
     await asyncio.sleep(0.9)
     assert not task.done()
@@ -98,7 +98,7 @@ async def test_worker_short_task_finishes() -> None:
         await asyncio.sleep(1.9)
         hit = True
 
-    myworker = Worker(routers=[r], gracefull_shutdown_time=2)
+    myworker = Worker(routers=[r], graceful_shutdown_time=2)
     task = asyncio.Task(myworker.run())
     await asyncio.sleep(0.9)
     assert not task.done()
@@ -129,11 +129,11 @@ async def test_dead(fake_connection: Connection) -> None:
 
     assert hit == 1
 
-    assert fake_connection.message_broker.queues["default"].dead[0].key.topic == "awesome_job"  # type: ignore[attr-defined]  # noqa: E501
+    assert fake_connection.message_broker.queues["default"].dead[0].key.topic == "awesome_job"  # type: ignore[attr-defined]
 
 
 async def test_retries() -> None:
-    j = Job("awesome_job", retries=3)
+    j = Job("awesome_job", retries=2)
     await j.queue.declare()
     await j.enqueue()
 
@@ -141,7 +141,7 @@ async def test_retries() -> None:
 
     hit = 0
 
-    def zero_retry_policy(retry_number: int = 1) -> timedelta:
+    def zero_retry_policy(retry_number: int = 1) -> timedelta:  # noqa: ARG001
         return timedelta(seconds=0)
 
     @router.actor(retry_policy=zero_retry_policy)
@@ -187,7 +187,7 @@ async def test_args_job() -> None:
     assertion1 = random()
     assertion2 = random()
 
-    j = Job("awesome_job", args=dict(my_arg1=assertion1, my_arg2=assertion2))
+    j = Job("awesome_job", args={"my_arg1": assertion1, "my_arg2": assertion2})
     await j.queue.declare()
     await j.enqueue()
 
@@ -212,7 +212,7 @@ async def test_all_args_job() -> None:
     assertion1 = random()
     assertion2 = random()
 
-    j = Job("awesome_job", args=dict(my_arg1=assertion1, my_arg2=assertion2))
+    j = Job("awesome_job", args={"my_arg1": assertion1, "my_arg2": assertion2})
     await j.queue.declare()
     await j.enqueue()
 
@@ -237,7 +237,7 @@ async def test_all_kwargs_job() -> None:
     assertion1 = random()
     assertion2 = random()
 
-    j = Job("awesome_job", args=dict(my_arg1=assertion1, my_arg2=assertion2))
+    j = Job("awesome_job", args={"my_arg1": assertion1, "my_arg2": assertion2})
     await j.queue.declare()
     await j.enqueue()
 

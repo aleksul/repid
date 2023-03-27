@@ -24,7 +24,7 @@ class Middleware:
         """
         name = fn.__name__
 
-        logger_extra = dict(fn_name=name, fn=fn)
+        logger_extra = {"fn_name": name, "fn": fn}
 
         # check if there is a corresponding signal for the subscriber
         if name not in SUBSCRIBERS_NAMES:
@@ -75,10 +75,10 @@ class Middleware:
         for _, fn in getmembers(middleware, predicate=lambda x: isfunction(x) or ismethod(x)):
             logger.debug(
                 "Subscribing '{middleware_name}.{fn_name}' to signals.",
-                extra=dict(
-                    middleware_name=middleware.__class__.__name__,
-                    fn_name=fn.__name__,
-                ),
+                extra={
+                    "middleware_name": middleware.__class__.__name__,
+                    "fn_name": fn.__name__,
+                },
             )
             self.add_subscriber(fn)
 
@@ -91,7 +91,7 @@ class Middleware:
         """
         if name not in self.subscribers:
             return
-        logger_extra = dict(signal_name=name)
+        logger_extra = {"signal_name": name}
         logger.debug("Emitting signal '{signal_name}'.", extra=logger_extra)
         await asyncio.gather(*[fn(**kwargs) for fn in self.subscribers[name]])
         logger.debug("Done emitting signal '{signal_name}'.", extra=logger_extra)

@@ -44,11 +44,11 @@ class _Processor:
     ) -> ActorResult:
         time_limit = parameters.execution_timeout.total_seconds()
 
-        logger_extra = dict(
-            actor_name=actor.name,
-            message_id=key.id_,
-            time_limit=time_limit,
-        )
+        logger_extra = {
+            "actor_name": actor.name,
+            "message_id": key.id_,
+            "time_limit": time_limit,
+        }
 
         result: Any = None
         success: bool
@@ -91,13 +91,12 @@ class _Processor:
         parameters: ParametersT,
         result: ActorResult,
     ) -> None:
-        retry_number = parameters.retries.already_tried + 1
         # rescheduling (retry)
-        if not result.success and retry_number < parameters.retries.max_amount:
+        if not result.success and parameters.retries.already_tried < parameters.retries.max_amount:
             await self._conn.message_broker.requeue(
                 key,
                 payload,
-                parameters._prepare_retry(actor.retry_policy(retry_number)),
+                parameters._prepare_retry(actor.retry_policy(parameters.retries.already_tried + 1)),
             )
         # rescheduling (deferred)
         elif parameters.delay.defer_by is not None or parameters.delay.cron is not None:

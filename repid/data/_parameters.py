@@ -25,7 +25,7 @@ except ImportError:  # pragma: no cover
 
 @dataclass(**FROZEN_DATACLASS, **SLOTS_DATACLASS)
 class RetriesProperties:
-    max_amount: int = 1
+    max_amount: int = 0
     already_tried: int = 0
 
     def encode(self) -> str:
@@ -129,9 +129,7 @@ class Parameters:
                 loaded[key] = RetriesProperties.decode(value)
             elif key == "delay":
                 loaded[key] = DelayProperties.decode(value)
-            elif key == "execution_timeout":
-                loaded[key] = timedelta(seconds=float(value))
-            elif key == "ttl":
+            elif key in ["execution_timeout", "ttl"]:
                 loaded[key] = timedelta(seconds=float(value))
             elif key == "timestamp":
                 loaded[key] = datetime.fromisoformat(value)
@@ -156,7 +154,7 @@ class Parameters:
         if self.delay.cron is not None:
             if not CRON_SUPPORT:
                 raise ImportError("Croniter is not installed.")  # pragma: no cover
-            return croniter(self.delay.cron, now).get_next(ret_type=datetime)  # type: ignore[no-any-return]  # noqa: E501
+            return croniter(self.delay.cron, now).get_next(ret_type=datetime)  # type: ignore[no-any-return]
         return None
 
     def _prepare_reschedule(self) -> "Parameters":
@@ -169,5 +167,9 @@ class Parameters:
     def _prepare_retry(self, next_retry: timedelta) -> "Parameters":
         copy = deepcopy(self)
         object.__setattr__(copy.retries, "already_tried", copy.retries.already_tried + 1)
-        object.__setattr__(copy.delay, "next_execution_time", datetime.now() + next_retry)
+        object.__setattr__(
+            copy.delay,
+            "next_execution_time",
+            datetime.now() + next_retry,
+        )
         return copy

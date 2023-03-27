@@ -6,7 +6,6 @@ from typing import Iterator
 from unittest.mock import patch
 
 import pytest
-from pytest import MonkeyPatch
 
 from repid.config import Config
 
@@ -31,8 +30,8 @@ class SomeClass:
         return "serializer"
 
 
-@pytest.fixture
-def entry_points(monkeypatch: MonkeyPatch) -> None:
+@pytest.fixture()
+def _entry_points(monkeypatch: pytest.MonkeyPatch) -> None:
     def mock_entry_points() -> dict[str, list[EntryPoint]]:
         return {
             "repid_data": [
@@ -40,24 +39,28 @@ def entry_points(monkeypatch: MonkeyPatch) -> None:
                 EntryPoint("parameters", "tests:test_config.SomeClass.parameters", "repid_data"),
                 EntryPoint("bucket", "tests:test_config.SomeClass.bucket", "repid_data"),
                 EntryPoint(
-                    "result_bucket", "tests:test_config.SomeClass.result_bucket", "repid_data"
+                    "result_bucket",
+                    "tests:test_config.SomeClass.result_bucket",
+                    "repid_data",
                 ),
             ],
             "repid_serializer": [
                 EntryPoint(
-                    "serializer", "tests:test_config.SomeClass.serializer", "repid_serializer"
-                )
+                    "serializer",
+                    "tests:test_config.SomeClass.serializer",
+                    "repid_serializer",
+                ),
             ],
             "repid_converter": [
-                EntryPoint("converter", "tests:test_config.SomeClass.converter", "repid_converter")
+                EntryPoint("converter", "tests:test_config.SomeClass.converter", "repid_converter"),
             ],
         }
 
     monkeypatch.setattr(importlib.metadata, "entry_points", mock_entry_points)
 
 
-@pytest.fixture
-def patch_config() -> Iterator[None]:
+@pytest.fixture()
+def _patch_config() -> Iterator[None]:
     with patch.multiple(
         Config,
         ROUTING_KEY=Config.ROUTING_KEY,
@@ -70,11 +73,10 @@ def patch_config() -> Iterator[None]:
         yield
 
 
-pytestmark = pytest.mark.usefixtures("entry_points", "patch_config")
+pytestmark = pytest.mark.usefixtures("_entry_points", "_patch_config")
 
 
 def test_update_data_overrides() -> None:
-
     Config.update_data_overrides()
 
     assert Config.ROUTING_KEY is SomeClass.routing_key
@@ -84,21 +86,18 @@ def test_update_data_overrides() -> None:
 
 
 def test_update_serializer_override() -> None:
-
     Config.update_serializer_override()
 
     assert Config.SERIALIZER is SomeClass.serializer
 
 
 def test_update_converter_override() -> None:
-
     Config.update_converter_override()
 
     assert Config.CONVERTER is SomeClass.converter
 
 
 def test_update_all() -> None:
-
     Config.update_all()
 
     assert Config.ROUTING_KEY is SomeClass.routing_key

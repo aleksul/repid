@@ -28,9 +28,9 @@ class Connection:
                     self.results_bucket_broker,
                 ]
                 if broker is not None
-            ]
+            ],
         )
-        object.__setattr__(self, "is_open", True)
+        object.__setattr__(self, "is_open", True)  # noqa: FBT003
 
     async def disconnect(self) -> None:
         """Disconnect from all set brokers. Marks connection as closed."""
@@ -43,9 +43,9 @@ class Connection:
                     self.results_bucket_broker,
                 ]
                 if broker is not None
-            ]
+            ],
         )
-        object.__setattr__(self, "is_open", False)
+        object.__setattr__(self, "is_open", False)  # noqa: FBT003
 
     @property
     def _ab(self) -> "BucketBrokerT":
@@ -74,10 +74,11 @@ class Connection:
                     success=True,
                     exception=None,
                 )
-                assert isinstance(test_subject, ResultBucketT)
-            except Exception as exc:
+                if not isinstance(test_subject, ResultBucketT):
+                    raise  # pragma: no cover
+            except Exception as exc:  # noqa: BLE001
                 raise ValueError(
-                    "Results bucket broker's BUCKET_CLASS must be compatible with ResultBucketT."
+                    "Results bucket broker's BUCKET_CLASS must be compatible with ResultBucketT.",
                 ) from exc
 
         # set _signal_emitter for every submitted protocol

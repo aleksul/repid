@@ -49,7 +49,7 @@ unfinished_job_st = partial(
     priority=sampled_from(PrioritiesT),
     id_=one_of(from_regex(VALID_ID, fullmatch=True), none()),
     deferred_until=one_of(datetimes(), none()),
-    retries=integers(min_value=1, max_value=MAX),
+    retries=integers(min_value=0, max_value=MAX),
     timeout=timedeltas(min_value=timedelta(seconds=1)),
     ttl=one_of(timedeltas(min_value=timedelta(seconds=1)), none()),
     args_id=one_of(from_regex(VALID_ID, fullmatch=True), none()),

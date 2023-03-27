@@ -43,21 +43,20 @@ rabbitmq_container_2 = container(
 def rabbitmq_connection(rabbitmq_container: "wrappers.Container") -> Repid:
     while not rabbitmq_container.ready():
         sleep(0.1)
-    repid = Repid(
+    return Repid(
         Connection(
             RabbitMessageBroker(
-                f"amqp://user:testtest@localhost:{rabbitmq_container.ports['5672/tcp'][0]}"
-            )
-        )
+                f"amqp://user:testtest@localhost:{rabbitmq_container.ports['5672/tcp'][0]}",
+            ),
+        ),
     )
-    return repid
 
 
 @pytest.fixture(scope="session")
 def redis_connection(redis_container: "wrappers.Container") -> Repid:
     while not redis_container.ready():
         sleep(0.1)
-    repid = Repid(
+    return Repid(
         Connection(
             RedisMessageBroker(f"redis://:test@localhost:{redis_container.ports['6379/tcp'][0]}/0"),
             RedisBucketBroker(f"redis://:test@localhost:{redis_container.ports['6379/tcp'][0]}/1"),
@@ -65,9 +64,8 @@ def redis_connection(redis_container: "wrappers.Container") -> Repid:
                 f"redis://:test@localhost:{redis_container.ports['6379/tcp'][0]}/1",
                 use_result_bucket=True,
             ),
-        )
+        ),
     )
-    return repid
 
 
 @pytest.fixture(scope="session")
@@ -77,19 +75,18 @@ def rabbitmq_with_redis_connection(
 ) -> Repid:
     while not rabbitmq_container_2.ready() or not redis_container.ready():
         sleep(0.1)
-    repid = Repid(
+    return Repid(
         Connection(
             RabbitMessageBroker(
-                f"amqp://user:testtest@localhost:{rabbitmq_container_2.ports['5672/tcp'][0]}"
+                f"amqp://user:testtest@localhost:{rabbitmq_container_2.ports['5672/tcp'][0]}",
             ),
             RedisBucketBroker(f"redis://:test@localhost:{redis_container.ports['6379/tcp'][0]}/2"),
             RedisBucketBroker(
                 f"redis://:test@localhost:{redis_container.ports['6379/tcp'][0]}/2",
                 use_result_bucket=True,
             ),
-        )
+        ),
     )
-    return repid
 
 
 @pytest.fixture(
@@ -101,4 +98,16 @@ def rabbitmq_with_redis_connection(
     ],
 )
 def autoconn(request: pytest.FixtureRequest) -> Any:
+    return request.param
+
+
+@pytest.fixture(
+    scope="session",
+    params=[
+        lazy_fixture("fake_repid"),
+        lazy_fixture("redis_connection"),
+        lazy_fixture("rabbitmq_with_redis_connection"),
+    ],
+)
+def autoconn_with_buckets(request: pytest.FixtureRequest) -> Any:
     return request.param

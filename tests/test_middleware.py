@@ -20,50 +20,53 @@ if TYPE_CHECKING:
     from repid.data.protocols import ParametersT, RoutingKeyT
 
 
+class RecursiveConnection(MessageBrokerT):
+    """queue_delete calls queue_flush. Middleware should only be called once."""
+
+    async def queue_flush(self, queue_name: str) -> None:
+        pass
+
+    async def queue_delete(self, queue_name: str) -> None:
+        await self.queue_flush(queue_name)
+
+    async def connect(self) -> None:
+        pass
+
+    async def disconnect(self) -> None:
+        pass
+
+    async def enqueue(
+        self,
+        key: RoutingKeyT,
+        payload: str = "",
+        params: ParametersT | None = None,
+    ) -> None:
+        raise NotImplementedError
+
+    async def reject(self, key: RoutingKeyT) -> None:
+        raise NotImplementedError
+
+    async def ack(self, key: RoutingKeyT) -> None:
+        raise NotImplementedError
+
+    async def nack(self, key: RoutingKeyT) -> None:
+        raise NotImplementedError
+
+    async def requeue(
+        self,
+        key: RoutingKeyT,
+        payload: str = "",
+        params: ParametersT | None = None,
+    ) -> None:
+        raise NotImplementedError
+
+    async def queue_declare(self, queue_name: str) -> None:
+        raise NotImplementedError
+
+
 @pytest.fixture()
 async def dummy_recursive_connection() -> AsyncIterator[Connection]:
-    class TestRecursiveConnection(MessageBrokerT):
-        async def queue_flush(self, queue_name: str) -> None:
-            pass
-
-        async def queue_delete(self, queue_name: str) -> None:
-            await self.queue_flush(queue_name)
-
-        async def connect(self) -> None:
-            pass
-
-        async def disconnect(self) -> None:
-            pass
-
-        async def enqueue(
-            self,
-            key: RoutingKeyT,
-            payload: str = "",
-            params: ParametersT | None = None,
-        ) -> None:
-            raise NotImplementedError
-
-        async def reject(self, key: RoutingKeyT) -> None:
-            raise NotImplementedError
-
-        async def ack(self, key: RoutingKeyT) -> None:
-            raise NotImplementedError
-
-        async def nack(self, key: RoutingKeyT) -> None:
-            raise NotImplementedError
-
-        async def requeue(
-            self,
-            key: RoutingKeyT,
-            payload: str = "",
-            params: ParametersT | None = None,
-        ) -> None:
-            raise NotImplementedError
-
-        async def queue_declare(self, queue_name: str) -> None:
-            raise NotImplementedError
-
-    repid_app = Repid(Connection(TestRecursiveConnection()))
+    repid_app = Repid(Connection(RecursiveConnection()))
     async with repid_app.magic(auto_disconnect=True) as conn:
         yield conn
 
@@ -73,7 +76,7 @@ async def test_add_middleware(dummy_recursive_connection: Connection) -> None:
 
     class TestMiddleware:
         @staticmethod
-        async def before_queue_delete(queue_name: str) -> None:
+        async def before_queue_delete(queue_name: str) -> None:  # noqa: ARG004
             nonlocal counter
             counter += 1
 
@@ -99,14 +102,14 @@ async def test_middleware_double_call(dummy_recursive_connection: Connection) ->
     counter = 0
 
     class TestMiddleware:
-        async def before_queue_flush(self, queue_name: str) -> None:
+        async def before_queue_flush(self, queue_name: str) -> None:  # noqa: ARG002
             raise Exception("This should not be called")
 
         async def after_queue_flush(self) -> None:
             raise Exception("This should not be called")
 
         @staticmethod
-        async def before_queue_delete(queue_name: str) -> None:
+        async def before_queue_delete(queue_name: str) -> None:  # noqa: ARG004
             nonlocal counter
             counter += 1
 
@@ -128,21 +131,21 @@ async def test_error_in_middleware(
     dummy_recursive_connection: Connection,
 ) -> None:
     class TestMiddleware:
-        async def before_queue_flush(self, queue_name: str) -> None:
+        async def before_queue_flush(self, queue_name: str) -> None:  # noqa: ARG002
             raise Exception("Some random exception")
 
     dummy_recursive_connection.middleware.add_middleware(TestMiddleware())
     await Queue("test_queue_name").flush()
     assert any(
-        map(
-            lambda x: all(
+        (
+            all(
                 (
                     "ERROR" in x,
                     "Subscriber 'before_queue_flush'" in x,
-                )
-            ),
-            caplog.text.splitlines(),
-        )
+                ),
+            )
+            for x in caplog.text.splitlines()
+        ),
     )
 
 
@@ -174,15 +177,15 @@ async def test_add_subscriber(caplog: pytest.LogCaptureFixture) -> None:
     assert foo.__name__ not in middleware.subscribers
 
     assert any(
-        map(
-            lambda x: all(
+        (
+            all(
                 (
                     "WARNING" in x,
                     "Function 'foo' wasn't subscribed, as there is no corresponding signal." in x,
-                )
-            ),
-            caplog.text.splitlines(),
-        )
+                ),
+            )
+            for x in caplog.text.splitlines()
+        ),
     )
 
 

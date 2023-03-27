@@ -1,6 +1,6 @@
 [build-system]
-build-backend = "pdm.pep517.api"
-requires = ["pdm-pep517>=1.0.0"]
+build-backend = "pdm.backend"
+requires = ["pdm-backend"]
 
 [project]
 authors = [{name = "aleksul", email = "me@aleksul.space"}]
@@ -37,11 +37,12 @@ exclude_lines = [
   'if TYPE_CHECKING:',
   'pragma: no cover'
 ]
-fail_under = 90
+fail_under = 100
 
-[tool.isort]
-multi_line_output = 3
-profile = "black"
+[tool.coverage.run]
+omit = [
+  "repid/connections/rabbitmq/protocols.py"
+]
 
 [tool.mypy]
 check_untyped_defs = true
@@ -69,7 +70,7 @@ includes = ["repid"]
 
 [tool.pdm.dev-dependencies]
 docs = ["mkdocs-material", "mike", "setuptools>=65.5.1"]
-format = ["black", "isort"]
+format = ["black"]
 lint = [
   "mypy",
   "types-orjson",
@@ -94,7 +95,40 @@ tests = [
 asyncio_mode = "auto"
 
 [tool.ruff]
-ignore = ["S101", "B905"]
+ignore = ["E501", "N999", "PLR0913"]
 line-length = 100
-per-file-ignores = {"tests/*" = ["S"], "repid/connections/__init__.py" = ["F401"]}
-select = ["F", "E", "B", "A", "RUF", "S", "W"]
+per-file-ignores = {"tests/*" = ["S", "PLR2004", "FBT", "BLE", "S101"], "repid/connections/__init__.py" = ["F401"], "benchmarks/*" = ["T201"], "**/__init__.py" = ["PLC0414"]}
+select = [
+  "F",
+  "E",
+  "W",
+  "C90",
+  "I",
+  "N",
+  "UP",
+  "YTT",
+  "S",
+  "BLE",
+  "FBT",
+  "B",
+  "A",
+  "COM",
+  "C4",
+  "T10",
+  "ISC",
+  "ICN",
+  "G",
+  "PIE",
+  "T20",
+  "PYI",
+  "PT",
+  "RET",
+  "SIM",
+  "TID",
+  "ARG",
+  "PTH",
+  "PGH",
+  "PL",
+  "RUF"
+]
+target-version = "py38"

@@ -30,7 +30,7 @@ class Router:
     __slots__ = ("actors", "defaults", "topics_by_queue")
 
     def __init__(self, *, defaults: RouterDefaults | None = None) -> None:
-        self.actors: dict[str, ActorData] = dict()
+        self.actors: dict[str, ActorData] = {}
         self.topics_by_queue: defaultdict[str, set[str]] = defaultdict(set)
         self.defaults = defaults or RouterDefaults()
 
@@ -130,12 +130,12 @@ class Router:
         if not VALID_NAME.fullmatch(a.name):
             raise ValueError(
                 "Actor name must start with a letter or an underscore"
-                "followed by letters, digits, dashes or underscores."
+                "followed by letters, digits, dashes or underscores.",
             )
         if not VALID_NAME.fullmatch(a.queue):
             raise ValueError(
                 "Queue name must start with a letter or an underscore"
-                "followed by letters, digits, dashes or underscores."
+                "followed by letters, digits, dashes or underscores.",
             )
 
         self.actors[a.name] = a

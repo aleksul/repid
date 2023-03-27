@@ -18,7 +18,8 @@ class Worker(Router):
     def __init__(
         self,
         routers: list[Router] | None = None,
-        gracefull_shutdown_time: float = 25.0,
+        *,
+        graceful_shutdown_time: float = 25.0,
         messages_limit: int = float("inf"),  # type: ignore[assignment]
         tasks_limit: int = 1000,
         handle_signals: list[signal.Signals] | None = None,
@@ -35,7 +36,7 @@ class Worker(Router):
                 self.include_router(router)
 
         self.tasks_limit = tasks_limit
-        self.gracefull_shutdown_time = gracefull_shutdown_time
+        self.graceful_shutdown_time = graceful_shutdown_time
         self.messages_limit = messages_limit
         self.handle_signals = (
             [signal.SIGINT, signal.SIGTERM] if handle_signals is None else handle_signals
@@ -77,14 +78,15 @@ class Worker(Router):
                     queue_name,
                     self.topics_by_queue[queue_name],
                     self.actors,
-                )
+                ),
             )
             consumer_tasks.add(t)
 
         consumers: set[ConsumerT] = set()
         if consumer_tasks:
             consumer_futures, _ = await asyncio.wait(
-                consumer_tasks, return_when=asyncio.ALL_COMPLETED
+                consumer_tasks,
+                return_when=asyncio.ALL_COMPLETED,
             )
             for ft in consumer_futures:
                 if ft.exception() is None:
@@ -109,7 +111,7 @@ class Worker(Router):
             runner.stop_consume_event.set()
 
             async def wait_before_cancel() -> None:
-                await asyncio.sleep(self.gracefull_shutdown_time)
+                await asyncio.sleep(self.graceful_shutdown_time)
                 runner.cancel_event.set()
 
             t = asyncio.create_task(wait_before_cancel())

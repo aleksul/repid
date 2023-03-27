@@ -13,10 +13,21 @@ nav:
   - Initial setup: user_guide/initial_setup.md
   - Jobs, Actors and Workers: user_guide/jobs_actors_and_workers.md
   - Deferred scheduling: user_guide/deferred_scheduling.md
+  - Arguments & Results: user_guide/arguments_and_results.md
+- Cookbook:
+  - Use with FastAPI & Pydantic: cookbook/fastapi_and_pydantic.md
+- Advanced User Guide:
+  - Middlewares: advanced_user_guide/middlewares.md
+  - Your own brokers: advanced_user_guide/your_own_brokers.md
+  - Configuring overrides: advanced_user_guide/configuring_overrides.md
+  - Your own data models: advanced_user_guide/your_own_data_models.md
+  - Your own serializer: advanced_user_guide/your_own_serializer.md
+  - Your own converter: advanced_user_guide/your_own_converter.md
 - Contributing guide: contributing.md
 
 theme:
   name: material
+  custom_dir: docs/overrides
   logo: https://gist.github.com/aleksul/2e4686cf9a4f027909fe43dc33039f10/raw/56935b8183682d1e46d68af70fec52cf647ab756/repid_logo.svg
   favicon: https://gist.github.com/aleksul/2e4686cf9a4f027909fe43dc33039f10/raw/56935b8183682d1e46d68af70fec52cf647ab756/repid_logo.svg
   features:
@@ -49,6 +60,8 @@ markdown_extensions:
 - attr_list
 - pymdownx.emoji
 extra:
+  analytics:
+    provider: custom
   generator: false
   version:
     provider: mike

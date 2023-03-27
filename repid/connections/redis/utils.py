@@ -24,13 +24,12 @@ def get_priorities_order(priorities_chanses: list[float]) -> list[PrioritiesT]:
     Returns:
         List[PrioritiesT]: 3 priorities in order of processing.
     """
-    rand = random.random()
+    rand = random.random()  # noqa: S311
     if rand <= priorities_chanses[0]:
         return [PrioritiesT.HIGH, PrioritiesT.MEDIUM, PrioritiesT.LOW]
-    elif rand <= priorities_chanses[0] + priorities_chanses[1]:
+    if rand <= priorities_chanses[0] + priorities_chanses[1]:
         return [PrioritiesT.MEDIUM, PrioritiesT.HIGH, PrioritiesT.LOW]
-    else:
-        return [PrioritiesT.LOW, PrioritiesT.HIGH, PrioritiesT.MEDIUM]
+    return [PrioritiesT.LOW, PrioritiesT.HIGH, PrioritiesT.MEDIUM]
 
 
 def parse_priorities_distribution(priorities_distribution: str) -> list[float]:
@@ -46,7 +45,7 @@ def parse_priorities_distribution(priorities_distribution: str) -> list[float]:
     Returns:
         List[float]: list of 3 floats, representing chances, e.g. `[0.6, 0.3, 0.1]`.
     """
-    if not VALID_PRIORITIES.fullmatch(priorities_distribution):
+    if not VALID_PRIORITIES.fullmatch(priorities_distribution):  # pragma: no cover
         raise ValueError(f"Invalid priorities distribution: {priorities_distribution}")
     pr_dist = [int(x) for x in priorities_distribution.split("/")]
     pr_dist_sum = sum(pr_dist)
@@ -56,6 +55,7 @@ def parse_priorities_distribution(priorities_distribution: str) -> list[float]:
 def qnc(
     queue_name: str,
     priority: int = PrioritiesT.MEDIUM.value,
+    *,
     delayed: bool = False,
     dead: bool = False,
 ) -> str:
@@ -78,6 +78,7 @@ def qnc(
 
 def mnc(
     key: RoutingKeyT,
+    *,
     short: bool = False,
 ) -> str:
     """Message name constructor.

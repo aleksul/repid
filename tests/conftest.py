@@ -16,8 +16,13 @@ def event_loop() -> Iterator[asyncio.AbstractEventLoop]:
 
 @pytest.fixture()
 def fake_repid() -> Repid:
-    repid = Repid(Connection(DummyMessageBroker(), DummyBucketBroker(), DummyBucketBroker(True)))
-    return repid
+    return Repid(
+        Connection(
+            DummyMessageBroker(),
+            DummyBucketBroker(),
+            DummyBucketBroker(use_result_bucket=True),
+        ),
+    )
 
 
 @pytest.fixture()

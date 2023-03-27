@@ -56,7 +56,7 @@ def test_sets_middleware() -> None:
     msg_broker, args_broker, result_broker = (
         DummyMessageBroker(),
         DummyBucketBroker(),
-        DummyBucketBroker(True),
+        DummyBucketBroker(use_result_bucket=True),
     )
 
     assert msg_broker._signal_emitter is None

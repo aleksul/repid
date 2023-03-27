@@ -8,7 +8,7 @@ from typing import Any, Callable, Coroutine, TypeVar, overload
 
 if sys.version_info >= (3, 10):  # pragma: no cover
     from typing import ParamSpec
-else:
+else:  # pragma: no cover
     from typing_extensions import ParamSpec
 
 FnP = ParamSpec("FnP")
@@ -18,6 +18,7 @@ FnR = TypeVar("FnR")
 @overload
 def asyncify(
     fn: Callable[FnP, Coroutine[Any, Any, FnR]],
+    *,
     run_in_process: bool = False,
 ) -> Callable[FnP, Coroutine[Any, Any, FnR]]:
     ...
@@ -26,6 +27,7 @@ def asyncify(
 @overload
 def asyncify(
     fn: Callable[FnP, FnR],
+    *,
     run_in_process: bool = False,
 ) -> Callable[FnP, Coroutine[Any, Any, FnR]]:
     ...
@@ -33,9 +35,9 @@ def asyncify(
 
 def asyncify(
     fn: Callable[FnP, FnR] | Callable[FnP, Coroutine[Any, Any, FnR]],
+    *,
     run_in_process: bool = False,
 ) -> Callable[FnP, Coroutine[Any, Any, FnR]]:
-
     if asyncio.iscoroutinefunction(fn):
         return fn
 

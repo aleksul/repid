@@ -21,7 +21,9 @@ from repid.data.priorities import PrioritiesT
 def test_routing_key() -> None:
     # Test valid values
     routing_key = RoutingKey(
-        topic="test_topic", queue="test_queue", priority=PrioritiesT.HIGH.value
+        topic="test_topic",
+        queue="test_queue",
+        priority=PrioritiesT.HIGH.value,
     )
     assert routing_key.topic == "test_topic"
     assert routing_key.queue == "test_queue"
@@ -55,7 +57,7 @@ def test_routing_key() -> None:
 def test_retries_properties() -> None:
     # Test default initialization
     retries = RetriesProperties()
-    assert retries.max_amount == 1
+    assert retries.max_amount == 0
     assert retries.already_tried == 0
 
     # Test initialization with custom values
@@ -182,20 +184,20 @@ def test_parameters() -> None:
 
 
 @pytest.mark.parametrize(
-    "timestamp,ttl,is_overdue",
+    ("ttl", "is_overdue"),
     [
-        (datetime.now(), timedelta(seconds=1), False),
-        (datetime.now(), None, False),
-        (datetime.now(), timedelta(seconds=-1), True),
+        (timedelta(seconds=1), False),
+        (None, False),
+        (timedelta(seconds=-1), True),
     ],
 )
-def test_parameters_is_overdue(timestamp: datetime, ttl: timedelta, is_overdue: bool) -> None:
+def test_parameters_is_overdue(ttl: timedelta, is_overdue: bool) -> None:
     # Test that the is_overdue property works as expected
-    assert Parameters(timestamp=timestamp, ttl=ttl).is_overdue == is_overdue
+    assert Parameters(timestamp=datetime.now(), ttl=ttl).is_overdue == is_overdue
 
 
 @pytest.mark.parametrize(
-    "bucket,data,timestamp,ttl,expected_encoded",
+    ("bucket", "data", "timestamp", "ttl", "expected_encoded"),
     [
         (
             ArgsBucket,
@@ -226,50 +228,43 @@ def test_bucket_encode_decode(
         bucket_instance = bucket(data=data, timestamp=timestamp, ttl=ttl)
     else:
         bucket_instance = bucket(  # type: ignore[call-arg]
-            data=data, started_when=1, finished_when=2, timestamp=timestamp, ttl=ttl
+            data=data,
+            started_when=1,
+            finished_when=2,
+            timestamp=timestamp,
+            ttl=ttl,
         )
     assert bucket_instance.encode() == expected_encoded
     assert bucket.decode(expected_encoded) == bucket_instance
 
 
 @pytest.mark.parametrize(
-    "bucket,timestamp,ttl,is_overdue",
+    ("bucket", "ttl", "is_overdue"),
     [
-        (ArgsBucket, datetime.now(), timedelta(seconds=1), False),
-        (ArgsBucket, datetime.now(), None, False),
-        (ArgsBucket, datetime.now(), timedelta(seconds=-1), True),
-        (
-            ResultBucket,
-            datetime.now(),
-            timedelta(seconds=1),
-            False,
-        ),
-        (
-            ResultBucket,
-            datetime.now(),
-            None,
-            False,
-        ),
-        (
-            ResultBucket,
-            datetime.now(),
-            timedelta(seconds=-1),
-            True,
-        ),
+        (ArgsBucket, timedelta(seconds=1), False),
+        (ArgsBucket, None, False),
+        (ArgsBucket, timedelta(seconds=-1), True),
+        (ResultBucket, timedelta(seconds=1), False),
+        (ResultBucket, None, False),
+        (ResultBucket, timedelta(seconds=-1), True),
     ],
 )
 def test_bucket_is_overdue(
     bucket: type[BucketT | ResultBucketT],
-    timestamp: datetime,
     ttl: timedelta,
     is_overdue: bool,
 ) -> None:
+    timestamp = datetime.now()
     # Test that the is_overdue property works as expected
     if bucket is ArgsBucket:
         bucket_instance = bucket(data="foo", timestamp=timestamp, ttl=ttl)
     else:
         bucket_instance = bucket(  # type: ignore[call-arg]
-            data="foo", started_when=1, finished_when=2, timestamp=timestamp, ttl=ttl
+            data="foo",
+            started_when=1,
+            finished_when=2,
+            timestamp=timestamp,
+            ttl=ttl,
         )
     assert bucket_instance.is_overdue == is_overdue
 
@@ -281,13 +276,15 @@ def test_bucket_default_timestamp(bucket: type[BucketT | ResultBucketT]) -> None
         bucket_instance = bucket(data="foo")
     else:
         bucket_instance = bucket(  # type: ignore[call-arg]
-            data="foo", started_when=1, finished_when=2
+            data="foo",
+            started_when=1,
+            finished_when=2,
         )
     assert bucket_instance.timestamp <= datetime.now()
 
 
 @pytest.mark.parametrize(
-    "bucket,ttl",
+    ("bucket", "ttl"),
     [
         (ArgsBucket, None),
         (ResultBucket, None),
@@ -299,7 +296,10 @@ def test_bucket_none_ttl(bucket: type[BucketT | ResultBucketT], ttl: timedelta |
         bucket_instance = bucket(data="foo", ttl=ttl)
     else:
         bucket_instance = bucket(  # type: ignore[call-arg]
-            data="foo", started_when=1, finished_when=2, ttl=ttl
+            data="foo",
+            started_when=1,
+            finished_when=2,
+            ttl=ttl,
         )
     assert bucket_instance.ttl is None
 

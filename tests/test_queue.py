@@ -12,7 +12,7 @@ def test_inappropriate_queue_name() -> None:
 
 def test_different_types_not_equal() -> None:
     q = Queue()
-    assert not (q == 123)
+    assert q != 123
 
 
 def test_str() -> None:

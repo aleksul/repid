@@ -39,12 +39,46 @@ jobs:
     - name: Run tests
       run: |
         pdm run pytest tests/ --diff-symbols \
-        --hypothesis-show-statistics --hypothesis-verbosity=normal \
-        --color=yes --cov-report=xml --cov=repid
+        --hypothesis-verbosity=normal \
+        --color=yes --cov-report=term-missing --cov=repid --cov-fail-under=0
+
+    - name: Rename .coverage file
+      run: |
+        mkdir coverage && \
+        mv .coverage ./coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}
+
+    - name: Store coverage files
+      uses: actions/upload-artifact@v3
+      with:
+        name: coverage
+        path: coverage
+
+  coverage-combine:
+    needs: [tests]
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - uses: actions/setup-python@v4
+      with:
+        python-version: '3.8'
+        cache: pip
+
+    - name: Get coverage files
+      uses: actions/download-artifact@v3
+      with:
+        name: coverage
+        path: coverage
+
+    - run: pip install coverage[toml]
+
+    - run: ls -la coverage
+    - run: coverage combine coverage
+    - run: coverage report --skip-covered --show-missing
+    - run: coverage xml
 
     - name: Upload code coverage
-      if: matrix.python-version == '3.8'
       uses: codecov/codecov-action@v3
       with:
         files: ./coverage.xml
-        flags: unittests

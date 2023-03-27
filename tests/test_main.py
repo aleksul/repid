@@ -8,8 +8,8 @@ async def test_connection() -> None:
         Connection(
             DummyMessageBroker(),
             DummyBucketBroker(),
-            DummyBucketBroker(True),
-        )
+            DummyBucketBroker(use_result_bucket=True),
+        ),
     )
 
     assert app.connection.is_open is False

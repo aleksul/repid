@@ -46,7 +46,7 @@ class Repid:
         return self.connection
 
     @asynccontextmanager
-    async def magic(self, auto_disconnect: bool = False) -> AsyncIterator[Connection]:
+    async def magic(self, *, auto_disconnect: bool = False) -> AsyncIterator[Connection]:
         await self.magic_connect()
         try:
             yield self.connection

@@ -70,7 +70,7 @@ def test_router_decorator_overrides_actor_name() -> None:
 
 
 @pytest.mark.parametrize(
-    "queue, retry_policy, converter",
+    ("queue", "retry_policy", "converter"),
     [
         (None, None, None),
         ("actor1_queue", default_retry_policy_factory(), DefaultConverter),
@@ -79,7 +79,9 @@ def test_router_decorator_overrides_actor_name() -> None:
     ],
 )
 def test_router_decorator_registers_actor_with_defaults(
-    queue: str | None, retry_policy: RetryPolicyT | None, converter: type[DefaultConverter] | None
+    queue: str | None,
+    retry_policy: RetryPolicyT | None,
+    converter: type[DefaultConverter] | None,
 ) -> None:
     router = Router()
     defaults = RouterDefaults(queue="default_queue")

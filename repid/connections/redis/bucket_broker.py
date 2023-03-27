@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 
 class RedisBucketBroker(BucketBrokerT):
-    def __init__(self, dsn: str, use_result_bucket: bool = False):
+    def __init__(self, dsn: str, *, use_result_bucket: bool = False):
         self.BUCKET_CLASS = ResultBucket if use_result_bucket else ArgsBucket
         self.conn: Redis[bytes] = Redis.from_url(dsn)
 
@@ -24,14 +24,14 @@ class RedisBucketBroker(BucketBrokerT):
         await self.conn.close(close_connection_pool=True)
 
     async def get_bucket(self, id_: str) -> BucketT | None:
-        logger.debug("Getting bucket with id: {id_}.", extra=dict(id_=id_))
+        logger.debug("Getting bucket with id: {id_}.", extra={"id_": id_})
         data = await self.conn.get(id_)
         if data is not None:
             return self.BUCKET_CLASS.decode(data.decode())  # type: ignore[no-any-return]
         return None
 
     async def store_bucket(self, id_: str, payload: BucketT) -> None:
-        logger.debug("Storing bucket with id: {id_}.", extra=dict(id_=id_))
+        logger.debug("Storing bucket with id: {id_}.", extra={"id_": id_})
         await self.conn.set(
             id_,
             payload.encode(),
@@ -39,5 +39,5 @@ class RedisBucketBroker(BucketBrokerT):
         )
 
     async def delete_bucket(self, id_: str) -> None:
-        logger.debug("Deleting bucket with id: {id_}.", extra=dict(id_=id_))
+        logger.debug("Deleting bucket with id: {id_}.", extra={"id_": id_})
         await self.conn.delete(id_)

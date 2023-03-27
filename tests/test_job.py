@@ -16,7 +16,7 @@ def test_not_deferred_job() -> None:
 
 
 @pytest.mark.parametrize(
-    "deferred_until,deferred_by,cron",
+    ("deferred_until", "deferred_by", "cron"),
     [
         (None, timedelta(minutes=1), None),
         (None, None, "5 4 * * *"),
@@ -35,7 +35,7 @@ def test_deferred_job_ok(
 
 
 @pytest.mark.parametrize(
-    "deferred_until,deferred_by,cron",
+    ("deferred_until", "deferred_by", "cron"),
     [
         (None, 60, "5 4 * * *"),
         (None, timedelta(minutes=1), "5 4 * * *"),
@@ -47,7 +47,7 @@ def test_deferred_job_fail(
     deferred_by: timedelta | None,
     cron: str | None,
 ) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError):  # noqa: PT011
         Job("awesome_job", deferred_until=deferred_until, deferred_by=deferred_by, cron=cron)
 
 

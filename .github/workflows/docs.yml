@@ -33,7 +33,7 @@ jobs:
       run: pdm sync -G docs --no-default --no-self --clean
 
     - name: Get current package version
-      run: echo "VER=$(pdm show --version)" >> $GITHUB_ENV
+      run: echo "VER=$(pdm show --version repid)" >> $GITHUB_ENV
 
     - name: Mike update version
       run: pdm run mike deploy --push --force --update-aliases ${{ env.VER }} latest

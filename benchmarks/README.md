@@ -2,8 +2,10 @@
 
 ## Preparation
 
+Benchmarks are meant to be executed on Python 3.11.
+
 ```bash
-python3.10 -m venv .venv
+python -m venv .venv
 
 source .venv/bin/activate
 
@@ -17,11 +19,13 @@ docker compose up -d
 Each benchmark has a set of constants after the import. Feel free to tweak those.
 
 ```bash
-python3.10 benchmark_repid.py
+python benchmark_repid.py
 
-python3.10 benchmark_dramatiq.py
+python benchmark_arq.py
 
-python3.10 benchmark_celery.py
+python benchmark_dramatiq.py
+
+python benchmark_celery.py
 ```
 
 Before running another benchmark you need to manually delete created queues in RabbitMQ.

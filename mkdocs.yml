@@ -9,6 +9,7 @@ nav:
 - Home: index.md
 - Quickstart Guide: quickstart_guide.md
 - Features: features.md
+- Benchmarks: benchmarks.md
 - User Guide:
   - Initial setup: user_guide/initial_setup.md
   - Jobs, Actors and Workers: user_guide/jobs_actors_and_workers.md
@@ -65,3 +66,6 @@ extra:
   generator: false
   version:
     provider: mike
+plugins:
+- search
+- glightbox

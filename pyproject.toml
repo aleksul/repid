@@ -69,7 +69,12 @@ version = {source = "scm"}
 includes = ["repid"]
 
 [tool.pdm.dev-dependencies]
-docs = ["mkdocs-material", "mike", "setuptools>=65.5.1"]
+docs = [
+  "mkdocs-material",
+  "mike",
+  "mkdocs-glightbox",
+  "setuptools>=65.5.1"
+]
 format = ["black"]
 lint = [
   "mypy",

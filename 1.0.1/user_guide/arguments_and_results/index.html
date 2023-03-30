@@ -1,0 +1,576 @@
+
+<!DOCTYPE html>
+
+<html class="no-js" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<meta content="Repid framework: simple to use, fast to run and extensible to adopt job scheduler" name="description"/>
+<link href="https://repid.aleksul.space/1.0.1/user_guide/arguments_and_results/" rel="canonical"/>
+<link href="../deferred_scheduling/" rel="prev"/>
+<link href="../../cookbook/fastapi_and_pydantic/" rel="next"/>
+<link href="https://gist.github.com/aleksul/2e4686cf9a4f027909fe43dc33039f10/raw/56935b8183682d1e46d68af70fec52cf647ab756/repid_logo.svg" rel="icon"/>
+<meta content="mkdocs-1.4.2, mkdocs-material-9.1.4" name="generator"/>
+<title>Arguments &amp; Results - Repid</title>
+<link href="../../assets/stylesheets/main.240905d7.min.css" rel="stylesheet"/>
+<link href="../../assets/stylesheets/palette.a0c5b2b5.min.css" rel="stylesheet"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback" rel="stylesheet"/>
+<style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+<script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce((e,_)=>(e<<5)-e+_.charCodeAt(0),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+<script data-domain="repid.aleksul.space" defer="" src="https://analytics.aleksul.space/js/script.js"></script>
+<script>"undefined"!=typeof __md_analytics&&__md_analytics()</script>
+<link href="../../assets/stylesheets/glightbox.min.css" rel="stylesheet"/><style>
+            html.glightbox-open { overflow: initial; height: 100%; }
+            .gslide-title { margin-top: 0px; user-select: text; }
+            .gslide-desc { color: #666; user-select: text; }
+            .gslide-image img { background: white; }
+            
+                .gscrollbar-fixer { padding-right: 15px; }
+                .gdesc-inner { font-size: 0.75rem; }
+                body[data-md-color-scheme="slate"] .gdesc-inner { background: var(--md-default-bg-color);}
+                body[data-md-color-scheme="slate"] .gslide-title { color: var(--md-default-fg-color);}
+                body[data-md-color-scheme="slate"] .gslide-desc { color: var(--md-default-fg-color);}
+                </style><script src="../../assets/javascripts/glightbox.min.js"></script></head>
+<body data-md-color-accent="amber" data-md-color-primary="deep-orange" data-md-color-scheme="default" dir="ltr">
+<script>var palette=__md_get("__palette");if(palette&&"object"==typeof palette.color)for(var key of Object.keys(palette.color))document.body.setAttribute("data-md-color-"+key,palette.color[key])</script>
+<input autocomplete="off" class="md-toggle" data-md-toggle="drawer" id="__drawer" type="checkbox"/>
+<input autocomplete="off" class="md-toggle" data-md-toggle="search" id="__search" type="checkbox"/>
+<label class="md-overlay" for="__drawer"></label>
+<div data-md-component="skip">
+<a class="md-skip" href="#arguments-results">
+          Skip to content
+        </a>
+</div>
+<div data-md-component="announce">
+</div>
+<div data-md-color-scheme="default" data-md-component="outdated" hidden="">
+</div>
+<header class="md-header md-header--shadow" data-md-component="header">
+<nav aria-label="Header" class="md-header__inner md-grid">
+<a aria-label="Repid" class="md-header__button md-logo" data-md-component="logo" href="../.." title="Repid">
+<img alt="logo" src="https://gist.github.com/aleksul/2e4686cf9a4f027909fe43dc33039f10/raw/56935b8183682d1e46d68af70fec52cf647ab756/repid_logo.svg"/>
+</a>
+<label class="md-header__button md-icon" for="__drawer">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2Z"></path></svg>
+</label>
+<div class="md-header__title" data-md-component="header-title">
+<div class="md-header__ellipsis">
+<div class="md-header__topic">
+<span class="md-ellipsis">
+            Repid
+          </span>
+</div>
+<div class="md-header__topic" data-md-component="header-topic">
+<span class="md-ellipsis">
+            
+              Arguments &amp; Results
+            
+          </span>
+</div>
+</div>
+</div>
+<form class="md-header__option" data-md-component="palette">
+<input aria-label="Switch to dark mode" class="md-option" data-md-color-accent="amber" data-md-color-media="(prefers-color-scheme: light)" data-md-color-primary="deep-orange" data-md-color-scheme="default" id="__palette_1" name="__palette" type="radio"/>
+<label class="md-header__button md-icon" for="__palette_2" hidden="" title="Switch to dark mode">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7M9 21v-1h6v1a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1m3-17a5 5 0 0 0-5 5c0 2.05 1.23 3.81 3 4.58V16h4v-2.42c1.77-.77 3-2.53 3-4.58a5 5 0 0 0-5-5Z"></path></svg>
+</label>
+<input aria-label="Switch to light mode" class="md-option" data-md-color-accent="amber" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-primary="deep-orange" data-md-color-scheme="slate" id="__palette_2" name="__palette" type="radio"/>
+<label class="md-header__button md-icon" for="__palette_1" hidden="" title="Switch to light mode">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 2a7 7 0 0 0-7 7c0 2.38 1.19 4.47 3 5.74V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.26c1.81-1.27 3-3.36 3-5.74a7 7 0 0 0-7-7M9 21a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1v-1H9v1Z"></path></svg>
+</label>
+</form>
+<label class="md-header__button md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5Z"></path></svg>
+</label>
+<div class="md-search" data-md-component="search" role="dialog">
+<label class="md-search__overlay" for="__search"></label>
+<div class="md-search__inner" role="search">
+<form class="md-search__form" name="search">
+<input aria-label="Search" autocapitalize="off" autocomplete="off" autocorrect="off" class="md-search__input" data-md-component="search-query" name="query" placeholder="Search" required="" spellcheck="false" type="text"/>
+<label class="md-search__icon md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5Z"></path></svg>
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12Z"></path></svg>
+</label>
+<nav aria-label="Search" class="md-search__options">
+<button aria-label="Clear" class="md-search__icon md-icon" tabindex="-1" title="Clear" type="reset">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41Z"></path></svg>
+</button>
+</nav>
+</form>
+<div class="md-search__output">
+<div class="md-search__scrollwrap" data-md-scrollfix="">
+<div class="md-search-result" data-md-component="search-result">
+<div class="md-search-result__meta">
+            Initializing search
+          </div>
+<ol class="md-search-result__list" role="presentation"></ol>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="md-header__source">
+<a class="md-source" data-md-component="source" href="https://github.com/aleksul/repid" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 6.3.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2023 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81z"></path></svg>
+</div>
+<div class="md-source__repository">
+    aleksul/repid
+  </div>
+</a>
+</div>
+</nav>
+</header>
+<div class="md-container" data-md-component="container">
+<main class="md-main" data-md-component="main">
+<div class="md-main__inner md-grid">
+<div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Navigation" class="md-nav md-nav--primary" data-md-level="0">
+<label class="md-nav__title" for="__drawer">
+<a aria-label="Repid" class="md-nav__button md-logo" data-md-component="logo" href="../.." title="Repid">
+<img alt="logo" src="https://gist.github.com/aleksul/2e4686cf9a4f027909fe43dc33039f10/raw/56935b8183682d1e46d68af70fec52cf647ab756/repid_logo.svg"/>
+</a>
+    Repid
+  </label>
+<div class="md-nav__source">
+<a class="md-source" data-md-component="source" href="https://github.com/aleksul/repid" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 6.3.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2023 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81z"></path></svg>
+</div>
+<div class="md-source__repository">
+    aleksul/repid
+  </div>
+</a>
+</div>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../..">
+        Home
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../quickstart_guide/">
+        Quickstart Guide
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/">
+        Features
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../benchmarks/">
+        Benchmarks
+      </a>
+</li>
+<li class="md-nav__item md-nav__item--active md-nav__item--nested">
+<input checked="" class="md-nav__toggle md-toggle" id="__nav_5" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+          User Guide
+          <span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="true" aria-labelledby="__nav_5_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_5">
+<span class="md-nav__icon md-icon"></span>
+          User Guide
+        </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../initial_setup/">
+        Initial setup
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../jobs_actors_and_workers/">
+        Jobs, Actors and Workers
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../deferred_scheduling/">
+        Deferred scheduling
+      </a>
+</li>
+<li class="md-nav__item md-nav__item--active">
+<input class="md-nav__toggle md-toggle" id="__toc" type="checkbox"/>
+<label class="md-nav__link md-nav__link--active" for="__toc">
+          Arguments &amp; Results
+          <span class="md-nav__icon md-icon"></span>
+</label>
+<a class="md-nav__link md-nav__link--active" href="./">
+        Arguments &amp; Results
+      </a>
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#preparation">
+    Preparation
+  </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#arguments">
+    Arguments
+  </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#results">
+    Results
+  </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ids">
+    IDs
+  </a>
+<nav aria-label="IDs" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#chaining-jobs">
+    Chaining jobs
+  </a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ttl">
+    TTL
+  </a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle" id="__nav_6" type="checkbox"/>
+<label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+          Cookbook
+          <span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_6_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_6">
+<span class="md-nav__icon md-icon"></span>
+          Cookbook
+        </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../cookbook/fastapi_and_pydantic/">
+        Use with FastAPI &amp; Pydantic
+      </a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle" id="__nav_7" type="checkbox"/>
+<label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+          Advanced User Guide
+          <span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_7_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_7">
+<span class="md-nav__icon md-icon"></span>
+          Advanced User Guide
+        </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../advanced_user_guide/middlewares/">
+        Middlewares
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../advanced_user_guide/your_own_brokers/">
+        Your own brokers
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../advanced_user_guide/configuring_overrides/">
+        Configuring overrides
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../advanced_user_guide/your_own_data_models/">
+        Your own data models
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../advanced_user_guide/your_own_serializer/">
+        Your own serializer
+      </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../advanced_user_guide/your_own_converter/">
+        Your own converter
+      </a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../contributing/">
+        Contributing guide
+      </a>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#preparation">
+    Preparation
+  </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#arguments">
+    Arguments
+  </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#results">
+    Results
+  </a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ids">
+    IDs
+  </a>
+<nav aria-label="IDs" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#chaining-jobs">
+    Chaining jobs
+  </a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ttl">
+    TTL
+  </a>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-content" data-md-component="content">
+<article class="md-content__inner md-typeset">
+<h1 id="arguments-results">Arguments &amp; Results</h1>
+<p>Repid provides mechanisms to pass arguments to a job and retrieve the job's result.</p>
+<h2 id="preparation">Preparation</h2>
+<p>First of all, you will have to define what will be used to store the data. Arguments can either be
+stored inside of a message (so you only need message broker) or inside of a bucket broker.
+Results, on the other hand, can only be stored in a result bucket broker.</p>
+<p>For example, let's create a connection with DummyBucketBroker.</p>
+<div class="highlight"><pre><span></span><code><a href="#__codelineno-0-1" id="__codelineno-0-1" name="__codelineno-0-1"></a><span class="kn">from</span> <span class="nn">repid</span> <span class="kn">import</span> <span class="n">Connection</span><span class="p">,</span> <span class="n">DummyMessageBroker</span><span class="p">,</span> <span class="n">DummyBucketBroker</span>
+<a href="#__codelineno-0-2" id="__codelineno-0-2" name="__codelineno-0-2"></a>
+<a href="#__codelineno-0-3" id="__codelineno-0-3" name="__codelineno-0-3"></a><span class="n">my_connection</span> <span class="o">=</span> <span class="n">Connection</span><span class="p">(</span>
+<a href="#__codelineno-0-4" id="__codelineno-0-4" name="__codelineno-0-4"></a>    <span class="n">message_broker</span><span class="o">=</span><span class="n">DummyMessageBroker</span><span class="p">(),</span>
+<a href="#__codelineno-0-5" id="__codelineno-0-5" name="__codelineno-0-5"></a><span class="hll">    <span class="n">args_bucket_broker</span><span class="o">=</span><span class="n">DummyBucketBroker</span><span class="p">(),</span>
+</span><a href="#__codelineno-0-6" id="__codelineno-0-6" name="__codelineno-0-6"></a><span class="hll">    <span class="n">results_bucket_broker</span><span class="o">=</span><span class="n">DummyBucketBroker</span><span class="p">(,</span>
+</span><a href="#__codelineno-0-7" id="__codelineno-0-7" name="__codelineno-0-7"></a><span class="hll">        <span class="n">use_result_bucket</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><a href="#__codelineno-0-8" id="__codelineno-0-8" name="__codelineno-0-8"></a><span class="hll">    <span class="p">),</span>
+</span><a href="#__codelineno-0-9" id="__codelineno-0-9" name="__codelineno-0-9"></a><span class="p">)</span>
+</code></pre></div>
+<p>We can then experiment with storing of our buckets.</p>
+<h2 id="arguments">Arguments</h2>
+<p>First of all, let's create an actor with some arguments.</p>
+<div class="highlight"><pre><span></span><code><a href="#__codelineno-1-1" id="__codelineno-1-1" name="__codelineno-1-1"></a><span class="kn">from</span> <span class="nn">repid</span> <span class="kn">import</span> <span class="n">Router</span>
+<a href="#__codelineno-1-2" id="__codelineno-1-2" name="__codelineno-1-2"></a>
+<a href="#__codelineno-1-3" id="__codelineno-1-3" name="__codelineno-1-3"></a><span class="n">router</span> <span class="o">=</span> <span class="n">Router</span><span class="p">()</span>
+<a href="#__codelineno-1-4" id="__codelineno-1-4" name="__codelineno-1-4"></a>
+<a href="#__codelineno-1-5" id="__codelineno-1-5" name="__codelineno-1-5"></a>
+<a href="#__codelineno-1-6" id="__codelineno-1-6" name="__codelineno-1-6"></a><span class="nd">@router</span><span class="o">.</span><span class="n">actor</span>
+<a href="#__codelineno-1-7" id="__codelineno-1-7" name="__codelineno-1-7"></a><span class="k">async</span> <span class="k">def</span> <span class="nf">actor_with_args</span><span class="p">(</span><span class="n">user_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">user_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">user_messages</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<a href="#__codelineno-1-8" id="__codelineno-1-8" name="__codelineno-1-8"></a>    <span class="n">user_message</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"Hi </span><span class="si">{</span><span class="n">user_name</span><span class="si">}</span><span class="s2">! Your id is: </span><span class="si">{</span><span class="n">user_id</span><span class="si">}</span><span class="s2">."</span>
+<a href="#__codelineno-1-9" id="__codelineno-1-9" name="__codelineno-1-9"></a>    <span class="n">user_messages</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">user_message</span><span class="p">)</span>
+<a href="#__codelineno-1-10" id="__codelineno-1-10" name="__codelineno-1-10"></a>    <span class="k">return</span> <span class="n">user_messages</span>
+</code></pre></div>
+<p>Now we would like to schedule a job, which will pass those arguments to the actor.</p>
+<div class="highlight"><pre><span></span><code><a href="#__codelineno-2-1" id="__codelineno-2-1" name="__codelineno-2-1"></a><span class="kn">from</span> <span class="nn">repid</span> <span class="kn">import</span> <span class="n">Job</span>
+<a href="#__codelineno-2-2" id="__codelineno-2-2" name="__codelineno-2-2"></a>
+<a href="#__codelineno-2-3" id="__codelineno-2-3" name="__codelineno-2-3"></a><span class="c1"># code above is omitted</span>
+<a href="#__codelineno-2-4" id="__codelineno-2-4" name="__codelineno-2-4"></a>
+<a href="#__codelineno-2-5" id="__codelineno-2-5" name="__codelineno-2-5"></a><span class="k">await</span> <span class="n">Job</span><span class="p">(</span>
+<a href="#__codelineno-2-6" id="__codelineno-2-6" name="__codelineno-2-6"></a>    <span class="s2">"actor_with_args"</span><span class="p">,</span>
+<a href="#__codelineno-2-7" id="__codelineno-2-7" name="__codelineno-2-7"></a>    <span class="n">args</span><span class="o">=</span><span class="nb">dict</span><span class="p">(</span><span class="n">user_id</span><span class="o">=</span><span class="mi">123</span><span class="p">,</span> <span class="n">user_name</span><span class="o">=</span><span class="s2">"Alex"</span><span class="p">,</span> <span class="n">user_messages</span><span class="o">=</span><span class="p">[</span><span class="s2">"This is your first message!"</span><span class="p">]),</span>
+<a href="#__codelineno-2-8" id="__codelineno-2-8" name="__codelineno-2-8"></a><span class="p">)</span><span class="o">.</span><span class="n">enqueue</span><span class="p">()</span>
+<a href="#__codelineno-2-9" id="__codelineno-2-9" name="__codelineno-2-9"></a>
+<a href="#__codelineno-2-10" id="__codelineno-2-10" name="__codelineno-2-10"></a><span class="c1"># code below is omitted</span>
+</code></pre></div>
+<p>What will happen under the hood?</p>
+<ol>
+<li><code>Job.args</code> will be serialized using <code>Config.SERIALIZER</code></li>
+<li>The serialized string will be<ul>
+<li>encoded into the message or</li>
+<li>passed to arguments bucket broker if <code>Job.use_args_bucketer</code> is set to True<ul>
+<li>defaults to True if the current connection contains arguments bucket broker</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>When the message will be received by the actor, arguments will be decoded and mapped to
+the function arguments using actor's <code>Converter.convert_inputs</code></li>
+<li>The return of the actor will be encoded using actor's <code>Converter.convert_outputs</code></li>
+</ol>
+<h2 id="results">Results</h2>
+<p>You can define whether to store result of a job or not using <code>Job.store_result</code> argument.</p>
+<div class="highlight"><pre><span></span><code><a href="#__codelineno-3-1" id="__codelineno-3-1" name="__codelineno-3-1"></a><span class="n">Job</span><span class="p">(</span><span class="s2">"some_job"</span><span class="p">,</span> <span class="n">store_result</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<p>The default is to store result, if connection contains result bucket broker,
+and not to store result otherwise.</p>
+<p>You can access result of a job using <code>Job.result</code> async property.</p>
+<div class="highlight"><pre><span></span><code><a href="#__codelineno-4-1" id="__codelineno-4-1" name="__codelineno-4-1"></a><span class="kn">import</span> <span class="nn">asyncio</span>
+<a href="#__codelineno-4-2" id="__codelineno-4-2" name="__codelineno-4-2"></a><span class="kn">from</span> <span class="nn">repid</span> <span class="kn">import</span> <span class="n">Job</span>
+<a href="#__codelineno-4-3" id="__codelineno-4-3" name="__codelineno-4-3"></a>
+<a href="#__codelineno-4-4" id="__codelineno-4-4" name="__codelineno-4-4"></a><span class="c1"># code above is omitted</span>
+<a href="#__codelineno-4-5" id="__codelineno-4-5" name="__codelineno-4-5"></a>
+<a href="#__codelineno-4-6" id="__codelineno-4-6" name="__codelineno-4-6"></a><span class="n">myjob</span> <span class="o">=</span> <span class="n">Job</span><span class="p">(</span>
+<a href="#__codelineno-4-7" id="__codelineno-4-7" name="__codelineno-4-7"></a>    <span class="s2">"actor_with_args"</span><span class="p">,</span>
+<a href="#__codelineno-4-8" id="__codelineno-4-8" name="__codelineno-4-8"></a>    <span class="n">args</span><span class="o">=</span><span class="nb">dict</span><span class="p">(</span><span class="n">user_id</span><span class="o">=</span><span class="mi">123</span><span class="p">,</span> <span class="n">user_name</span><span class="o">=</span><span class="s2">"Alex"</span><span class="p">,</span> <span class="n">user_messages</span><span class="o">=</span><span class="p">[</span><span class="s2">"This is your first message!"</span><span class="p">]),</span>
+<a href="#__codelineno-4-9" id="__codelineno-4-9" name="__codelineno-4-9"></a><span class="p">)</span>
+<a href="#__codelineno-4-10" id="__codelineno-4-10" name="__codelineno-4-10"></a>
+<a href="#__codelineno-4-11" id="__codelineno-4-11" name="__codelineno-4-11"></a><span class="k">await</span> <span class="n">myjob</span><span class="o">.</span><span class="n">enqueue</span><span class="p">()</span>
+<a href="#__codelineno-4-12" id="__codelineno-4-12" name="__codelineno-4-12"></a>
+<a href="#__codelineno-4-13" id="__codelineno-4-13" name="__codelineno-4-13"></a><span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>  <span class="c1"># wait for the job to complete</span>
+<a href="#__codelineno-4-14" id="__codelineno-4-14" name="__codelineno-4-14"></a>
+<a href="#__codelineno-4-15" id="__codelineno-4-15" name="__codelineno-4-15"></a><span class="n">result_bucket</span> <span class="o">=</span> <span class="k">await</span> <span class="n">myjob</span><span class="o">.</span><span class="n">result</span>
+<a href="#__codelineno-4-16" id="__codelineno-4-16" name="__codelineno-4-16"></a><span class="nb">print</span><span class="p">(</span><span class="n">result_bucket</span><span class="p">)</span>
+<a href="#__codelineno-4-17" id="__codelineno-4-17" name="__codelineno-4-17"></a>
+<a href="#__codelineno-4-18" id="__codelineno-4-18" name="__codelineno-4-18"></a><span class="c1"># code below is omitted</span>
+</code></pre></div>
+<div class="admonition info">
+<p class="admonition-title">Info</p>
+<p>Results of recurring jobs will be overwritten.</p>
+</div>
+<h2 id="ids">IDs</h2>
+<p>By default, an UUID4 will be generated upon creation of a job,
+both in case of an arguments bucket and a result bucket.</p>
+<p>You can pass your own IDs using appropriate arguments:</p>
+<div class="highlight"><pre><span></span><code><a href="#__codelineno-5-1" id="__codelineno-5-1" name="__codelineno-5-1"></a><span class="n">Job</span><span class="p">(</span><span class="s2">"some_job"</span><span class="p">,</span> <span class="n">args_id</span><span class="o">=</span><span class="s2">"my_args_id"</span><span class="p">,</span> <span class="n">result_id</span><span class="o">=</span><span class="s2">"my_result_id"</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="chaining-jobs">Chaining jobs</h3>
+<p>As a result bucket is technically backwards compatible with arguments bucket (result bucket just
+holds more fields), you can use it to chain multiple jobs.</p>
+<div class="highlight"><pre><span></span><code><a href="#__codelineno-6-1" id="__codelineno-6-1" name="__codelineno-6-1"></a><span class="n">Job</span><span class="p">(</span><span class="s2">"job1"</span><span class="p">,</span> <span class="n">result_id</span><span class="o">=</span><span class="s2">"my_chained_id"</span><span class="p">)</span>
+<a href="#__codelineno-6-2" id="__codelineno-6-2" name="__codelineno-6-2"></a><span class="n">Job</span><span class="p">(</span><span class="s2">"job2"</span><span class="p">,</span> <span class="n">args_id</span><span class="o">=</span><span class="s2">"my_chained_id"</span><span class="p">)</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Keep in mind that you will have to ensure order of the execution of those jobs and availability
+of the result bucket to the arguments bucket broker of the second job.</p>
+</div>
+<p>Example:</p>
+<div class="highlight"><pre><span></span><code><a href="#__codelineno-7-1" id="__codelineno-7-1" name="__codelineno-7-1"></a><span class="kn">import</span> <span class="nn">asyncio</span>
+<a href="#__codelineno-7-2" id="__codelineno-7-2" name="__codelineno-7-2"></a><span class="kn">import</span> <span class="nn">os</span>
+<a href="#__codelineno-7-3" id="__codelineno-7-3" name="__codelineno-7-3"></a>
+<a href="#__codelineno-7-4" id="__codelineno-7-4" name="__codelineno-7-4"></a><span class="kn">from</span> <span class="nn">repid</span> <span class="kn">import</span> <span class="n">Connection</span><span class="p">,</span> <span class="n">Job</span><span class="p">,</span> <span class="n">RedisBucketBroker</span><span class="p">,</span> <span class="n">RedisMessageBroker</span><span class="p">,</span> <span class="n">Repid</span><span class="p">,</span> <span class="n">Router</span><span class="p">,</span> <span class="n">Worker</span>
+<a href="#__codelineno-7-5" id="__codelineno-7-5" name="__codelineno-7-5"></a>
+<a href="#__codelineno-7-6" id="__codelineno-7-6" name="__codelineno-7-6"></a><span class="n">redis_messages_dsn</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"REDIS_CONNECTION"</span><span class="p">)</span>
+<a href="#__codelineno-7-7" id="__codelineno-7-7" name="__codelineno-7-7"></a><span class="n">redis_args_and_results_dsn</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"REDIS_ARGS_CONNECTION"</span><span class="p">)</span>
+<a href="#__codelineno-7-8" id="__codelineno-7-8" name="__codelineno-7-8"></a>
+<a href="#__codelineno-7-9" id="__codelineno-7-9" name="__codelineno-7-9"></a><span class="n">my_connection</span> <span class="o">=</span> <span class="n">Connection</span><span class="p">(</span>
+<a href="#__codelineno-7-10" id="__codelineno-7-10" name="__codelineno-7-10"></a>    <span class="n">message_broker</span><span class="o">=</span><span class="n">RedisMessageBroker</span><span class="p">(</span><span class="n">redis_messages_dsn</span><span class="p">),</span>
+<a href="#__codelineno-7-11" id="__codelineno-7-11" name="__codelineno-7-11"></a>    <span class="n">args_bucket_broker</span><span class="o">=</span><span class="n">RedisBucketBroker</span><span class="p">(</span><span class="n">redis_args_and_results_dsn</span><span class="p">),</span>
+<a href="#__codelineno-7-12" id="__codelineno-7-12" name="__codelineno-7-12"></a>    <span class="n">results_bucket_broker</span><span class="o">=</span><span class="n">RedisBucketBroker</span><span class="p">(</span>
+<a href="#__codelineno-7-13" id="__codelineno-7-13" name="__codelineno-7-13"></a>        <span class="n">redis_args_and_results_dsn</span><span class="p">,</span>
+<a href="#__codelineno-7-14" id="__codelineno-7-14" name="__codelineno-7-14"></a>        <span class="n">use_result_bucket</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<a href="#__codelineno-7-15" id="__codelineno-7-15" name="__codelineno-7-15"></a>    <span class="p">),</span>
+<a href="#__codelineno-7-16" id="__codelineno-7-16" name="__codelineno-7-16"></a><span class="p">)</span>
+<a href="#__codelineno-7-17" id="__codelineno-7-17" name="__codelineno-7-17"></a>
+<a href="#__codelineno-7-18" id="__codelineno-7-18" name="__codelineno-7-18"></a><span class="n">app</span> <span class="o">=</span> <span class="n">Repid</span><span class="p">(</span><span class="n">my_connection</span><span class="p">)</span>
+<a href="#__codelineno-7-19" id="__codelineno-7-19" name="__codelineno-7-19"></a>
+<a href="#__codelineno-7-20" id="__codelineno-7-20" name="__codelineno-7-20"></a><span class="n">my_router</span> <span class="o">=</span> <span class="n">Router</span><span class="p">()</span>
+<a href="#__codelineno-7-21" id="__codelineno-7-21" name="__codelineno-7-21"></a>
+<a href="#__codelineno-7-22" id="__codelineno-7-22" name="__codelineno-7-22"></a>
+<a href="#__codelineno-7-23" id="__codelineno-7-23" name="__codelineno-7-23"></a><span class="nd">@my_router</span><span class="o">.</span><span class="n">actor</span>
+<a href="#__codelineno-7-24" id="__codelineno-7-24" name="__codelineno-7-24"></a><span class="k">async</span> <span class="k">def</span> <span class="nf">add_hello</span><span class="p">(</span><span class="n">user_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">user_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">messages</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<a href="#__codelineno-7-25" id="__codelineno-7-25" name="__codelineno-7-25"></a>    <span class="n">message</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"Hello </span><span class="si">{</span><span class="n">user_name</span><span class="si">}</span><span class="s2">!"</span>
+<a href="#__codelineno-7-26" id="__codelineno-7-26" name="__codelineno-7-26"></a>    <span class="n">messages</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">message</span><span class="p">)</span>
+<a href="#__codelineno-7-27" id="__codelineno-7-27" name="__codelineno-7-27"></a>    <span class="k">return</span> <span class="nb">dict</span><span class="p">(</span><span class="n">user_id</span><span class="o">=</span><span class="n">user_id</span><span class="p">,</span> <span class="n">messages</span><span class="o">=</span><span class="n">messages</span><span class="p">)</span>
+<a href="#__codelineno-7-28" id="__codelineno-7-28" name="__codelineno-7-28"></a>
+<a href="#__codelineno-7-29" id="__codelineno-7-29" name="__codelineno-7-29"></a>
+<a href="#__codelineno-7-30" id="__codelineno-7-30" name="__codelineno-7-30"></a><span class="nd">@my_router</span><span class="o">.</span><span class="n">actor</span>
+<a href="#__codelineno-7-31" id="__codelineno-7-31" name="__codelineno-7-31"></a><span class="k">async</span> <span class="k">def</span> <span class="nf">add_id</span><span class="p">(</span><span class="n">user_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">messages</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<a href="#__codelineno-7-32" id="__codelineno-7-32" name="__codelineno-7-32"></a>    <span class="n">message</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"Your id is </span><span class="si">{</span><span class="n">user_id</span><span class="si">}</span><span class="s2">."</span>
+<a href="#__codelineno-7-33" id="__codelineno-7-33" name="__codelineno-7-33"></a>    <span class="n">messages</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">message</span><span class="p">)</span>
+<a href="#__codelineno-7-34" id="__codelineno-7-34" name="__codelineno-7-34"></a>    <span class="k">return</span> <span class="n">messages</span>
+<a href="#__codelineno-7-35" id="__codelineno-7-35" name="__codelineno-7-35"></a>
+<a href="#__codelineno-7-36" id="__codelineno-7-36" name="__codelineno-7-36"></a>
+<a href="#__codelineno-7-37" id="__codelineno-7-37" name="__codelineno-7-37"></a><span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a href="#__codelineno-7-38" id="__codelineno-7-38" name="__codelineno-7-38"></a>    <span class="k">async</span> <span class="k">with</span> <span class="n">app</span><span class="o">.</span><span class="n">magic</span><span class="p">(</span><span class="n">auto_disconnect</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+<a href="#__codelineno-7-39" id="__codelineno-7-39" name="__codelineno-7-39"></a>        <span class="n">w</span> <span class="o">=</span> <span class="n">Worker</span><span class="p">(</span><span class="n">routers</span><span class="o">=</span><span class="p">[</span><span class="n">my_router</span><span class="p">],</span> <span class="n">messages_limit</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<a href="#__codelineno-7-40" id="__codelineno-7-40" name="__codelineno-7-40"></a>
+<a href="#__codelineno-7-41" id="__codelineno-7-41" name="__codelineno-7-41"></a>        <span class="k">await</span> <span class="n">Job</span><span class="p">(</span>
+<a href="#__codelineno-7-42" id="__codelineno-7-42" name="__codelineno-7-42"></a>            <span class="s2">"add_hello"</span><span class="p">,</span>
+<a href="#__codelineno-7-43" id="__codelineno-7-43" name="__codelineno-7-43"></a>            <span class="n">args</span><span class="o">=</span><span class="nb">dict</span><span class="p">(</span><span class="n">user_name</span><span class="o">=</span><span class="s2">"Alex"</span><span class="p">,</span> <span class="n">user_id</span><span class="o">=</span><span class="mi">123</span><span class="p">,</span> <span class="n">messages</span><span class="o">=</span><span class="p">[</span><span class="s2">"This is your first message!"</span><span class="p">]),</span>
+<a href="#__codelineno-7-44" id="__codelineno-7-44" name="__codelineno-7-44"></a>            <span class="n">result_id</span><span class="o">=</span><span class="s2">"chained_id"</span><span class="p">,</span>
+<a href="#__codelineno-7-45" id="__codelineno-7-45" name="__codelineno-7-45"></a>        <span class="p">)</span><span class="o">.</span><span class="n">enqueue</span><span class="p">()</span>
+<a href="#__codelineno-7-46" id="__codelineno-7-46" name="__codelineno-7-46"></a>
+<a href="#__codelineno-7-47" id="__codelineno-7-47" name="__codelineno-7-47"></a>        <span class="k">await</span> <span class="n">w</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
+<a href="#__codelineno-7-48" id="__codelineno-7-48" name="__codelineno-7-48"></a>
+<a href="#__codelineno-7-49" id="__codelineno-7-49" name="__codelineno-7-49"></a>        <span class="n">second_job</span> <span class="o">=</span> <span class="n">Job</span><span class="p">(</span><span class="s2">"add_id"</span><span class="p">,</span> <span class="n">args_id</span><span class="o">=</span><span class="s2">"chained_id"</span><span class="p">)</span>
+<a href="#__codelineno-7-50" id="__codelineno-7-50" name="__codelineno-7-50"></a>
+<a href="#__codelineno-7-51" id="__codelineno-7-51" name="__codelineno-7-51"></a>        <span class="k">await</span> <span class="n">second_job</span><span class="o">.</span><span class="n">enqueue</span><span class="p">()</span>
+<a href="#__codelineno-7-52" id="__codelineno-7-52" name="__codelineno-7-52"></a>
+<a href="#__codelineno-7-53" id="__codelineno-7-53" name="__codelineno-7-53"></a>        <span class="k">await</span> <span class="n">w</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
+<a href="#__codelineno-7-54" id="__codelineno-7-54" name="__codelineno-7-54"></a>
+<a href="#__codelineno-7-55" id="__codelineno-7-55" name="__codelineno-7-55"></a>        <span class="n">result_bucket</span> <span class="o">=</span> <span class="k">await</span> <span class="n">second_job</span><span class="o">.</span><span class="n">result</span>
+<a href="#__codelineno-7-56" id="__codelineno-7-56" name="__codelineno-7-56"></a>        <span class="nb">print</span><span class="p">(</span><span class="n">result_bucket</span><span class="o">.</span><span class="n">data</span><span class="p">)</span>
+<a href="#__codelineno-7-57" id="__codelineno-7-57" name="__codelineno-7-57"></a>
+<a href="#__codelineno-7-58" id="__codelineno-7-58" name="__codelineno-7-58"></a>
+<a href="#__codelineno-7-59" id="__codelineno-7-59" name="__codelineno-7-59"></a><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
+<a href="#__codelineno-7-60" id="__codelineno-7-60" name="__codelineno-7-60"></a>    <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre></div>
+<h2 id="ttl">TTL</h2>
+<p>Repid also supports specifying Time-To-Live for both arguments and result buckets.</p>
+<div class="highlight"><pre><span></span><code><a href="#__codelineno-8-1" id="__codelineno-8-1" name="__codelineno-8-1"></a><span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">timedelta</span>
+<a href="#__codelineno-8-2" id="__codelineno-8-2" name="__codelineno-8-2"></a>
+<a href="#__codelineno-8-3" id="__codelineno-8-3" name="__codelineno-8-3"></a><span class="n">Job</span><span class="p">(</span><span class="s2">"some_job"</span><span class="p">,</span> <span class="n">args_ttl</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">weeks</span><span class="o">=</span><span class="mi">2</span><span class="p">),</span> <span class="n">result_ttl</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="mi">5</span><span class="p">))</span>
+</code></pre></div>
+<p>You can also set TTL to None, which equals to no expiration.</p>
+<div class="highlight"><pre><span></span><code><a href="#__codelineno-9-1" id="__codelineno-9-1" name="__codelineno-9-1"></a><span class="n">Job</span><span class="p">(</span><span class="s2">"some_job"</span><span class="p">,</span> <span class="n">args_ttl</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">result_ttl</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</code></pre></div>
+<p>By default, arguments buckets have no TTL, while result buckets have TTL of one day.</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Not all bucket brokers may have native support for TTL, so be careful not to run out of memory.</p>
+</div>
+</article>
+</div>
+</div>
+</main>
+<footer class="md-footer">
+<div class="md-footer-meta md-typeset">
+<div class="md-footer-meta__inner md-grid">
+<div class="md-copyright">
+</div>
+</div>
+</div>
+</footer>
+</div>
+<div class="md-dialog" data-md-component="dialog">
+<div class="md-dialog__inner md-typeset"></div>
+</div>
+<script id="__config" type="application/json">{"base": "../..", "features": ["content.code.annotate"], "search": "../../assets/javascripts/workers/search.208ed371.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+<script src="../../assets/javascripts/bundle.19047be9.min.js"></script>
+<script>document$.subscribe(() => {const lightbox = GLightbox({"touchNavigation": true, "loop": false, "zoomable": true, "draggable": true, "openEffect": "zoom", "closeEffect": "zoom", "slideEffect": "slide"});})</script></body>
+</html>

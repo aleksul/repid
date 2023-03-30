@@ -5,7 +5,7 @@ import celery
 from redis import Redis
 
 MESSAGES_AMOUNT = 80000
-USE_GREEN_THREADS = True
+USE_GREEN_THREADS = False
 EVENTLETS = 750
 PROCESSES = 8
 
@@ -21,8 +21,9 @@ def latency_bench() -> None:
 
 
 def prepare() -> None:
-    for _ in range(MESSAGES_AMOUNT):
+    for i in range(MESSAGES_AMOUNT):
         latency_bench.delay()
+        print(f"Enqueued: {i}", end="\r", flush=True)
     myredis.set("tasks_done", 0)
 
 
@@ -31,10 +32,10 @@ def report(start: float) -> None:
 
     while tasks_done < MESSAGES_AMOUNT:
         print(
-            f"Tasks done: {tasks_done}/{MESSAGES_AMOUNT} msg.",
+            f"Tasks done: {tasks_done}/{MESSAGES_AMOUNT}.",
             f"Time elapsed: {time.perf_counter() - start:.2f} sec.",
-            sep="\n",
-            end="\n\n",
+            end="\r",
+            flush=True,
         )
         time.sleep(0.1)
         tasks_done = int(myredis.get("tasks_done"))
@@ -64,6 +65,7 @@ if __name__ == "__main__":
     proc.wait()
 
     print(
+        "",
         "Benchmark ended.",
         f"Took {duration:.2f} sec.",
         f"Rate {MESSAGES_AMOUNT / (duration):.2f} msg/sec.",

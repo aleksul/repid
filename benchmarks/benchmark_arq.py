@@ -32,7 +32,7 @@ async def report(start: float) -> None:
 
     while tasks_done < MESSAGES_AMOUNT:
         print(
-            f"Tasks done: {tasks_done}/{MESSAGES_AMOUNT} msg.",
+            f"Tasks done: {tasks_done}/{MESSAGES_AMOUNT}.",
             f"Time elapsed: {perf_counter() - start:.2f} sec.",
             end="\r",
             flush=True,

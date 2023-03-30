@@ -48,10 +48,10 @@ async def report(start: float) -> None:
 
     while tasks_done < MESSAGES_AMOUNT:
         print(
-            f"Tasks done: {tasks_done}/{MESSAGES_AMOUNT} msg.",
+            f"Tasks done: {tasks_done}/{MESSAGES_AMOUNT}.",
             f"Time elapsed: {perf_counter() - start:.2f} sec.",
-            sep="\n",
-            end="\n\n",
+            end="\r",
+            flush=True,
         )
         await asyncio.sleep(0.1)
         tasks_done = int(await myredis.get("tasks_done"))
@@ -69,7 +69,7 @@ if __name__ == "__main__":
     processes: list[Process] = []
 
     for _ in range(PROCESSES):
-        processes.append(Process(target=asyncio.run, args=(run(),)))
+        processes.append(Process(target=lambda: asyncio.run(run())))
 
     print("Starting benchmark.")
 
@@ -83,6 +83,7 @@ if __name__ == "__main__":
     end = perf_counter()
 
     print(
+        "",
         "Benchmark ended.",
         f"Took {end - start:.2f} sec.",
         f"Rate {MESSAGES_AMOUNT / (end - start):.2f} msg/sec.",

@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from uuid import UUID
 
-import orjson
 import pytest
 
 from repid.data import BucketT, ResultBucketT
@@ -16,6 +15,7 @@ from repid.data._parameters import (
     RetriesProperties,
 )
 from repid.data.priorities import PrioritiesT
+from repid.utils import JSON_ENCODER
 
 
 def test_routing_key() -> None:
@@ -311,7 +311,7 @@ def test_resultbucket_exception() -> None:
     exception = "Test exception"
     expected_encoded = (
         '{"data":"foo","started_when":1,"finished_when":2,'
-        f'"success":false,"exception":"Test exception","timestamp":{orjson.dumps(now).decode()},'
+        f'"success":false,"exception":"Test exception","timestamp":{JSON_ENCODER.encode(now)},'
         '"ttl":null}'
     )
     bucket = ResultBucket(

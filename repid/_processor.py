@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
-
-import orjson
 
 from repid.actor import ActorData, ActorResult
 from repid.logger import logger
@@ -27,7 +26,7 @@ class _Processor:
 
     async def get_payload(self, initial_payload: str) -> str:
         if initial_payload.find("__repid_payload_id", 0, 20) != -1:
-            bucket_id: str = orjson.loads(initial_payload).get("__repid_payload_id")
+            bucket_id: str = json.loads(initial_payload).get("__repid_payload_id")
             bucket = await self._conn._ab.get_bucket(bucket_id)
             if bucket is not None:
                 return bucket.data

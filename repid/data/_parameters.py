@@ -1,12 +1,11 @@
+import json
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, ClassVar, Dict, Type, Union
 from uuid import uuid4
 
-import orjson
-
-from repid.utils import FROZEN_DATACLASS, SLOTS_DATACLASS
+from repid.utils import FROZEN_DATACLASS, JSON_ENCODER, SLOTS_DATACLASS
 
 if TYPE_CHECKING:
     from repid.data.protocols import (
@@ -29,11 +28,11 @@ class RetriesProperties:
     already_tried: int = 0
 
     def encode(self) -> str:
-        return orjson.dumps(self).decode()
+        return JSON_ENCODER.encode(asdict(self))
 
     @classmethod
     def decode(cls, data: str) -> "RetriesProperties":
-        loaded: Dict[str, Any] = orjson.loads(data) if not isinstance(data, Dict) else data
+        loaded: Dict[str, Any] = json.loads(data) if not isinstance(data, Dict) else data
         return cls(**loaded)
 
 
@@ -42,18 +41,12 @@ class ResultProperties:
     id_: str = field(default_factory=lambda: uuid4().hex)
     ttl: Union[timedelta, None] = None
 
-    @staticmethod
-    def __orjson_default(obj: Any) -> str:
-        if isinstance(obj, timedelta):
-            return str(obj.total_seconds())
-        raise TypeError  # pragma: no cover
-
     def encode(self) -> str:
-        return orjson.dumps(self, default=self.__orjson_default).decode()
+        return JSON_ENCODER.encode(asdict(self))
 
     @classmethod
     def decode(cls, data: str) -> "ResultProperties":
-        loaded: Dict[str, Any] = orjson.loads(data) if not isinstance(data, Dict) else data
+        loaded: Dict[str, Any] = json.loads(data) if not isinstance(data, Dict) else data
 
         if (ttl := loaded.get("ttl", None)) is not None:
             loaded["ttl"] = timedelta(seconds=float(ttl))
@@ -68,18 +61,12 @@ class DelayProperties:
     cron: Union[str, None] = None
     next_execution_time: Union[datetime, None] = None
 
-    @staticmethod
-    def __orjson_default(obj: Any) -> str:
-        if isinstance(obj, timedelta):
-            return str(obj.total_seconds())
-        raise TypeError  # pragma: no cover
-
     def encode(self) -> str:
-        return orjson.dumps(self, default=self.__orjson_default).decode()
+        return JSON_ENCODER.encode(asdict(self))
 
     @classmethod
     def decode(cls, data: str) -> "DelayProperties":
-        loaded: Dict[str, Any] = orjson.loads(data) if not isinstance(data, Dict) else data
+        loaded: Dict[str, Any] = json.loads(data) if not isinstance(data, Dict) else data
 
         for key, value in loaded.items():
             if value is None:
@@ -107,18 +94,12 @@ class Parameters:
     timestamp: datetime = field(default_factory=datetime.now)
     ttl: Union[timedelta, None] = None
 
-    @staticmethod
-    def __orjson_default(obj: Any) -> str:
-        if isinstance(obj, timedelta):
-            return str(obj.total_seconds())
-        raise TypeError  # pragma: no cover
-
     def encode(self) -> str:
-        return orjson.dumps(self, default=self.__orjson_default).decode()
+        return JSON_ENCODER.encode(asdict(self))
 
     @classmethod
     def decode(cls, data: str) -> "Parameters":
-        loaded: Dict[str, Any] = orjson.loads(data)
+        loaded: Dict[str, Any] = json.loads(data)
 
         for key, value in loaded.items():
             if value is None:

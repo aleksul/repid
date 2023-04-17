@@ -16,7 +16,6 @@ classifiers = [
   "Typing :: Typed"
 ]
 dependencies = [
-  "orjson>=3.7.11,<4.0.0",
   "typing-extensions>=4.3.0,<5.0.0; python_version < \"3.10\""
 ]
 description = "Repid framework: simple to use, fast to run and extensible to adopt job scheduler"
@@ -89,7 +88,6 @@ docs = [
 format = ["black"]
 lint = [
   "mypy",
-  "types-orjson",
   "types-redis",
   "types-croniter",
   "ruff"

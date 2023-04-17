@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import inspect
+import json
 from typing import Any, Callable, Coroutine, Dict, List, Protocol, Tuple, TypeVar
 
-import orjson
+from repid.utils import JSON_ENCODER
 
 FnR = TypeVar("FnR", contravariant=True)
 Params = Tuple[List, Dict]
@@ -44,7 +45,7 @@ class DefaultConverter:
     def convert_inputs(self, data: str) -> Params:
         if not data:
             return ([], {})
-        loaded: dict[str, Any] = orjson.loads(data)
+        loaded: dict[str, Any] = json.loads(data)
         args = [loaded.pop(name, self.args[name]) for name in self.args]
         kwargs = {name: loaded.pop(name, self.kwargs[name]) for name in self.kwargs}
         if self.all_kwargs:
@@ -54,4 +55,4 @@ class DefaultConverter:
         return (args, kwargs)
 
     def convert_outputs(self, data: FnR) -> str:
-        return orjson.dumps(data).decode()
+        return JSON_ENCODER.encode(data)

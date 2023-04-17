@@ -1,6 +1,7 @@
+from dataclasses import asdict, is_dataclass
 from typing import Any, Protocol
 
-import orjson
+from repid.utils import JSON_ENCODER
 
 PYDANTIC_IMPORTED = True
 try:
@@ -17,4 +18,6 @@ class SerializerT(Protocol):
 def default_serializer(data: Any) -> str:
     if PYDANTIC_IMPORTED and isinstance(data, pydantic.BaseModel):
         return data.json()
-    return orjson.dumps(data).decode()
+    if is_dataclass(data) and not isinstance(data, type):
+        return JSON_ENCODER.encode(asdict(data))
+    return JSON_ENCODER.encode(data)

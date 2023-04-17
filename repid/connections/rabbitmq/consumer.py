@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import TYPE_CHECKING, Iterable
 from uuid import uuid4
 
 import aiormq
-import orjson
 from aiormq.abc import Basic
 
 from repid.connections.abc import ConsumerT
@@ -133,7 +133,7 @@ class _RabbitConsumer(ConsumerT):
             return
 
         # decode message payload (rabbitmq abstraction level)
-        decoded: MessageContent = orjson.loads(message.body)
+        decoded: MessageContent = json.loads(message.body)
         # decode message params (repid abstraction level)
         params = self.broker.PARAMETERS_CLASS.decode(decoded["parameters"])
 

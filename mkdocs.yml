@@ -8,6 +8,7 @@ repo_url: https://github.com/aleksul/repid
 nav:
 - Home: index.md
 - Quickstart Guide: quickstart_guide.md
+- Playground: playground.md
 - Features: features.md
 - Benchmarks: benchmarks.md
 - User Guide:
@@ -69,3 +70,5 @@ extra:
 plugins:
 - search
 - glightbox
+extra_css:
+- https://pyscript.net/latest/pyscript.css

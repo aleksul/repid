@@ -54,7 +54,7 @@ class Middleware:
             try:
                 return await asyncified(**kwargs)
             # ignore the exception and pass it to the logger
-            except Exception:
+            except Exception:  # noqa: BLE001
                 logger.exception(
                     "Subscriber '{fn_name}' ({fn}) raised an exception.",
                     extra=logger_extra,

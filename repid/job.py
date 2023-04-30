@@ -69,14 +69,14 @@ class Job:
         deferred_by: timedelta | None = None,
         cron: str | None = None,
         retries: int = 0,
-        timeout: timedelta = timedelta(minutes=10),  # noqa: B008
+        timeout: timedelta = timedelta(minutes=10),
         ttl: timedelta | None = None,
         args_id: str | None = None,  # default: uuid4
         args_ttl: timedelta | None = None,
         args: Any = None,
         use_args_bucketer: bool | None = None,
         result_id: str | None = None,  # default: uuid4
-        result_ttl: timedelta | None = timedelta(days=1),  # noqa: B008
+        result_ttl: timedelta | None = timedelta(days=1),
         store_result: bool | None = None,
         _connection: Connection | None = None,
     ) -> None:

@@ -111,7 +111,7 @@ asyncio_mode = "auto"
 [tool.ruff]
 ignore = ["E501", "N999", "PLR0913"]
 line-length = 100
-per-file-ignores = {"tests/*" = ["S", "PLR2004", "FBT", "BLE", "S101"], "repid/connections/__init__.py" = ["F401"], "benchmarks/*" = ["T201"], "**/__init__.py" = ["PLC0414"]}
+per-file-ignores = {"tests/*" = ["S", "PLR2004", "FBT", "BLE", "S101"], "repid/connections/__init__.py" = ["F401"], "benchmarks/*" = ["T201", "S603", "S607"], "**/__init__.py" = ["PLC0414"]}
 select = [
   "F",
   "E",

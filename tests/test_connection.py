@@ -21,11 +21,11 @@ def test_args_bucket_broker_shortcut() -> None:
         DummyMessageBroker(),
         args_bucket_broker=DummyBucketBroker(),
     )
-    with_args_broker._ab
+    with_args_broker._ab  # noqa: B018
 
     without_args_broker = Connection(DummyMessageBroker())
     with pytest.raises(ValueError, match="Args bucket broker"):
-        without_args_broker._ab
+        without_args_broker._ab  # noqa: B018
 
 
 def test_result_bucket_broker_shortcut() -> None:
@@ -33,11 +33,11 @@ def test_result_bucket_broker_shortcut() -> None:
         DummyMessageBroker(),
         results_bucket_broker=DummyBucketBroker(use_result_bucket=True),
     )
-    with_result_broker._rb
+    with_result_broker._rb  # noqa: B018
 
     without_result_broker = Connection(DummyMessageBroker())
     with pytest.raises(ValueError, match="Results bucket broker"):
-        without_result_broker._rb
+        without_result_broker._rb  # noqa: B018
 
 
 async def test_is_open() -> None:

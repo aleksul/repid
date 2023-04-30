@@ -109,7 +109,7 @@ class ParametersT(SerializableT, TimedT, Protocol):
     def __init__(
         self,
         *,
-        execution_timeout: timedelta = timedelta(minutes=10),  # noqa: B008
+        execution_timeout: timedelta = timedelta(minutes=10),
         result: Union[ResultPropertiesT, None] = None,
         retries: Union[RetriesPropertiesT, None] = None,
         delay: Union[DelayPropertiesT, None] = None,

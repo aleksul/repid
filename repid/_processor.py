@@ -60,7 +60,7 @@ class _Processor:
 
         try:
             result = await asyncio.wait_for(actor.fn(*args, **kwargs), timeout=time_limit)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             exception = exc
             success = False
             logger.exception(

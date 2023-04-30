@@ -5,7 +5,6 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 import aiormq
-import orjson
 from aiormq.abc import Basic
 
 from repid.connections.abc import MessageBrokerT
@@ -17,6 +16,7 @@ from repid.connections.rabbitmq.utils import (
     wait_until,
 )
 from repid.logger import logger
+from repid.utils import JSON_ENCODER
 
 if TYPE_CHECKING:
     from repid.connections.rabbitmq.protocols import (
@@ -83,7 +83,7 @@ class RabbitMessageBroker(MessageBrokerT):
                 exp = str(millis)
 
         confirmation = await self._channel.basic_publish(
-            body=orjson.dumps(body),
+            body=JSON_ENCODER.encode(body).encode(),
             routing_key=self.qnc(key.queue, delayed=exp is not None),
             properties=aiormq.spec.Basic.Properties(
                 message_id=key.id_,

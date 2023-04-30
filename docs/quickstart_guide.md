@@ -111,7 +111,7 @@ if __name__ == "__main__":
 
 1. Name of the job will be used to route it to the similarly named actor.
 2. Using dictionary to map arguments' names to values.
-The dictionary will be encoded with `orjson` by default.
+The dictionary will be encoded with `json` module by default.
 3. You only need to declare a queue once. Ideally you would do that on application startup.
 
 This will enqueue a job to the default queue, which than worker will consume

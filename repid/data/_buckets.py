@@ -1,10 +1,9 @@
-from dataclasses import dataclass, field
+import json
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Dict, Union
 
-import orjson
-
-from repid.utils import FROZEN_DATACLASS, SLOTS_DATACLASS
+from repid.utils import FROZEN_DATACLASS, JSON_ENCODER, SLOTS_DATACLASS
 
 
 @dataclass(**FROZEN_DATACLASS, **SLOTS_DATACLASS)
@@ -14,18 +13,12 @@ class ArgsBucket:
     timestamp: datetime = field(default_factory=datetime.now)
     ttl: Union[timedelta, None] = None
 
-    @staticmethod
-    def __orjson_default(obj: Any) -> str:
-        if isinstance(obj, timedelta):
-            return str(obj.total_seconds())
-        raise TypeError  # pragma: no cover
-
     def encode(self) -> str:
-        return orjson.dumps(self, default=self.__orjson_default).decode()
+        return JSON_ENCODER.encode(asdict(self))
 
     @classmethod
     def decode(cls, data: str) -> "ArgsBucket":
-        loaded: Dict[str, Any] = orjson.loads(data)
+        loaded: Dict[str, Any] = json.loads(data)
 
         for key, value in loaded.items():
             if value is None:
@@ -62,18 +55,12 @@ class ResultBucket:
     timestamp: datetime = field(default_factory=datetime.now)
     ttl: Union[timedelta, None] = None
 
-    @staticmethod
-    def __orjson_default(obj: Any) -> str:
-        if isinstance(obj, timedelta):
-            return str(obj.total_seconds())
-        raise TypeError  # pragma: no cover
-
     def encode(self) -> str:
-        return orjson.dumps(self, default=self.__orjson_default).decode()
+        return JSON_ENCODER.encode(asdict(self))
 
     @classmethod
     def decode(cls, data: str) -> "ResultBucket":
-        loaded: Dict[str, Any] = orjson.loads(data)
+        loaded: Dict[str, Any] = json.loads(data)
 
         for key, value in loaded.items():
             if value is None:

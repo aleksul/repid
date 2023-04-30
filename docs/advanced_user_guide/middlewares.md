@@ -155,4 +155,4 @@ params: ParametersT | None, result: None)`
 - `#!python before_actor_run(actor: ActorData, key: RoutingKeyT, parameters: ParametersT,
 args: list, kwargs: dict)`
 - `#!python after_actor_run(actor: ActorData, key: RoutingKeyT, parameters: ParametersT,
-args: list, kwargs: dict, result: Any)`
+args: list, kwargs: dict, result: ActorResult)`

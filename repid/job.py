@@ -8,7 +8,7 @@ from repid.config import Config
 from repid.data import ParametersT, PrioritiesT, ResultBucketT, RoutingKeyT
 from repid.main import Repid
 from repid.queue import Queue
-from repid.utils import JSON_ENCODER, VALID_ID, VALID_NAME
+from repid.utils import VALID_ID, VALID_NAME, _ArgsBucketInMessageId
 
 if TYPE_CHECKING:
     from repid.connection import Connection
@@ -176,9 +176,9 @@ class Job:
         if self.use_args_bucketer and self.args is not None:
             bucket = self._conn._ab.BUCKET_CLASS(data=self.args, ttl=self.args_ttl)
             await self._conn._ab.store_bucket(self.args_id, bucket)
-            return JSON_ENCODER.encode({"__repid_payload_id": self.args_id})
+            return _ArgsBucketInMessageId.construct(self.args_id)
         if self.args_id_set:
-            return JSON_ENCODER.encode({"__repid_payload_id": self.args_id})
+            return _ArgsBucketInMessageId.construct(self.args_id)
         return self.args or ""
 
     async def enqueue(self) -> tuple[RoutingKeyT, str, ParametersT]:

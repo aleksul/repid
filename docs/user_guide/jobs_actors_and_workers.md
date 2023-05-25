@@ -228,6 +228,10 @@ def my_synchronous_function() -> None:
     ...
 ```
 
+??? warning
+    If you are running on the `emscripten` platform (e.g. PyScript) `run_in_process` setting
+    doesn't take any effect.
+
 ### Retry Policy
 
 In case of a retry, application will reschedule the message with a delay. The delay is calculated
@@ -371,6 +375,11 @@ Worker(
 
 # code below is omitted
 ```
+
+??? warning
+    If you are running on the `emscripten` platform (e.g. PyScript) you will have to manually
+    disable signal handling by setting `handle_signals` to an empty list `= []`, as the platform
+    doesn't support signal handling.
 
 After Worker is done running, it will return an internal `_Runner` object, which you can use
 to retrieve information about amount of actor runs.

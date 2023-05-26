@@ -8,15 +8,15 @@ First of all, you will have to define what will be used to store the data. Argum
 stored inside of a message (so you only need message broker) or inside of a bucket broker.
 Results, on the other hand, can only be stored in a result bucket broker.
 
-For example, let's create a connection with DummyBucketBroker.
+For example, let's create a connection with InMemoryBucketBroker.
 
 ```python hl_lines="5-8"
-from repid import Connection, DummyMessageBroker, DummyBucketBroker
+from repid import Connection, InMemoryMessageBroker, InMemoryBucketBroker
 
 my_connection = Connection(
-    message_broker=DummyMessageBroker(),
-    args_bucket_broker=DummyBucketBroker(),
-    results_bucket_broker=DummyBucketBroker(,
+    message_broker=InMemoryMessageBroker(),
+    args_bucket_broker=InMemoryBucketBroker(),
+    results_bucket_broker=InMemoryBucketBroker(,
         use_result_bucket=True,
     ),
 )

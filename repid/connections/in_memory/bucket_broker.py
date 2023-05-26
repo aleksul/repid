@@ -11,17 +11,17 @@ if TYPE_CHECKING:
     from repid.data.protocols import BucketT
 
 
-class DummyBucketBroker(BucketBrokerT):
+class InMemoryBucketBroker(BucketBrokerT):
     def __init__(self, *, use_result_bucket: bool = False) -> None:
         self.BUCKET_CLASS = ResultBucket if use_result_bucket else ArgsBucket
         self.__storage: dict[str, BucketT] = {}
 
     async def connect(self) -> None:
-        logger.info("Connecting to dummy bucket broker.")
+        logger.info("Connecting to in-memory bucket broker.")
         await asyncio.sleep(0)
 
     async def disconnect(self) -> None:
-        logger.info("Disconnecting from dummy bucket broker.")
+        logger.info("Disconnecting from in-memory bucket broker.")
         await asyncio.sleep(0)
 
     async def get_bucket(self, id_: str) -> BucketT | None:
@@ -40,3 +40,14 @@ class DummyBucketBroker(BucketBrokerT):
         await asyncio.sleep(0)
         self.__storage.pop(id_, None)
         await asyncio.sleep(0)
+
+
+def DummyBucketBroker(*, use_result_bucket: bool = False) -> InMemoryBucketBroker:  # noqa: N802
+    from warnings import warn
+
+    warn(
+        "DummyBucketBroker was renamed to InMemoryBucketBroker.",
+        category=DeprecationWarning,
+        stacklevel=2,
+    )
+    return InMemoryBucketBroker(use_result_bucket=use_result_bucket)

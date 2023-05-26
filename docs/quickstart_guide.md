@@ -3,7 +3,8 @@
 ## Before we start
 
 To follow this guide you will need a virtual environment with `repid` installed.
-We will use dummy brokers, but feel free to exchange those for any other ones - it should *just work*.
+We will use in memory brokers, but feel free to exchange those for any other ones -
+it should *just work*.
 
 ## Consumer
 
@@ -43,7 +44,7 @@ import asyncio
 
 import repid
 
-app = repid.Repid(repid.Connection(repid.DummyMessageBroker()))  # (1)
+app = repid.Repid(repid.Connection(repid.InMemoryMessageBroker()))  # (1)
 
 router = repid.Router()
 
@@ -65,7 +66,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-1. Create a `repid` app with the dummy message broker.
+1. Create a `repid` app with the in-memory message broker.
 2. The main function, which will execute our async code.
 3. Inside of this context manager every object will be provided with the connection
 that is attached to the `repid` app which we've created.
@@ -81,7 +82,7 @@ import asyncio
 
 import repid
 
-app = repid.Repid(repid.Connection(repid.DummyMessageBroker()))
+app = repid.Repid(repid.Connection(repid.InMemoryMessageBroker()))
 
 router = repid.Router()
 

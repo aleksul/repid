@@ -2,7 +2,7 @@ from typing import Callable, Optional
 
 import pytest
 
-from repid.connections.dummy.utils import wait_until as dummy_wait_until
+from repid.connections.in_memory.utils import wait_until as dummy_wait_until
 from repid.connections.rabbitmq.utils import wait_until as rabbitmq_wait_until
 from repid.connections.redis.utils import wait_timestamp as redis_wait_timestamp
 from repid.data._parameters import Parameters

@@ -1,14 +1,14 @@
 import pytest
 
-from repid import Connection, DummyBucketBroker, DummyMessageBroker, Repid
+from repid import Connection, InMemoryBucketBroker, InMemoryMessageBroker, Repid
 
 
 async def test_connection() -> None:
     app = Repid(
         Connection(
-            DummyMessageBroker(),
-            DummyBucketBroker(),
-            DummyBucketBroker(use_result_bucket=True),
+            InMemoryMessageBroker(),
+            InMemoryBucketBroker(),
+            InMemoryBucketBroker(use_result_bucket=True),
         ),
     )
 
@@ -33,16 +33,16 @@ def test_no_magic() -> None:
 @pytest.mark.parametrize(
     "connection",
     [
-        Connection(DummyMessageBroker()),
-        Connection(DummyMessageBroker(), args_bucket_broker=DummyBucketBroker()),
+        Connection(InMemoryMessageBroker()),
+        Connection(InMemoryMessageBroker(), args_bucket_broker=InMemoryBucketBroker()),
         Connection(
-            DummyMessageBroker(),
-            results_bucket_broker=DummyBucketBroker(use_result_bucket=True),
+            InMemoryMessageBroker(),
+            results_bucket_broker=InMemoryBucketBroker(use_result_bucket=True),
         ),
         Connection(
-            DummyMessageBroker(),
-            DummyBucketBroker(),
-            DummyBucketBroker(use_result_bucket=True),
+            InMemoryMessageBroker(),
+            InMemoryBucketBroker(),
+            InMemoryBucketBroker(use_result_bucket=True),
         ),
     ],
 )

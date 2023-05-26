@@ -4,8 +4,8 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from repid.connections.abc import MessageBrokerT
-from repid.connections.dummy.consumer import _DummyConsumer
-from repid.connections.dummy.utils import DummyQueue, Message, wait_until
+from repid.connections.in_memory.consumer import _InMemoryConsumer
+from repid.connections.in_memory.utils import DummyQueue, Message, wait_until
 from repid.logger import logger
 
 if TYPE_CHECKING:
@@ -14,18 +14,18 @@ if TYPE_CHECKING:
     from repid.data.protocols import ParametersT, RoutingKeyT
 
 
-class DummyMessageBroker(MessageBrokerT):
-    CONSUMER_CLASS = _DummyConsumer
+class InMemoryMessageBroker(MessageBrokerT):
+    CONSUMER_CLASS = _InMemoryConsumer
 
     def __init__(self) -> None:
         self.queues: dict[str, DummyQueue] = {}
 
     async def connect(self) -> None:
-        logger.info("Connecting to dummy message broker.")
+        logger.info("Connecting to in-memory message broker.")
         await asyncio.sleep(0)
 
     async def disconnect(self) -> None:
-        logger.info("Disconnecting from dummy message broker.")
+        logger.info("Disconnecting from in-memory message broker.")
         await asyncio.sleep(0)
 
     async def enqueue(
@@ -120,3 +120,14 @@ class DummyMessageBroker(MessageBrokerT):
         self.queues.pop(queue_name, None)
 
         await asyncio.sleep(0)
+
+
+def DummyMessageBroker() -> InMemoryMessageBroker:  # noqa: N802
+    from warnings import warn
+
+    warn(
+        "DummyMessageBroker was renamed to InMemoryMessageBroker.",
+        category=DeprecationWarning,
+        stacklevel=2,
+    )
+    return InMemoryMessageBroker()

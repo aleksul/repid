@@ -1,5 +1,10 @@
 from repid.connections.abc import BucketBrokerT, ConsumerT, MessageBrokerT
-from repid.connections.dummy import DummyBucketBroker, DummyMessageBroker
+from repid.connections.in_memory import (
+    DummyBucketBroker,
+    DummyMessageBroker,
+    InMemoryBucketBroker,
+    InMemoryMessageBroker,
+)
 
 __all__ = [
     "BucketBrokerT",
@@ -7,6 +12,8 @@ __all__ = [
     "MessageBrokerT",
     "DummyBucketBroker",
     "DummyMessageBroker",
+    "InMemoryBucketBroker",
+    "InMemoryMessageBroker",
 ]
 
 try:

@@ -10,9 +10,9 @@ You can use FastAPI lifespan events with Repid's magic connection mechanism.
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from repid import Repid, Connection, DummyMessageBroker, Job
+from repid import Repid, Connection, InMemoryMessageBroker, Job
 
-repid_app = Repid(Connection(DummyMessageBroker()))
+repid_app = Repid(Connection(InMemoryMessageBroker()))
 
 
 @asynccontextmanager

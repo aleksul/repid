@@ -20,10 +20,10 @@ For example, let's create a middleware which will report errors to Sentry.
 ```python
 import os
 import sentry_sdk
-from repid import Repid, Connection, DummyMessageBroker
+from repid import Repid, Connection, InMemoryMessageBroker
 from repid.actor import ActorResult
 
-app = Repid(Connection(DummyMessageBroker()))  # (1)
+app = Repid(Connection(InMemoryMessageBroker()))  # (1)
 
 
 class SentryMiddleware:
@@ -53,10 +53,10 @@ Let's replicate the example above using function-based approach.
 ```python
 import os
 import sentry_sdk
-from repid import Repid, Connection, DummyMessageBroker
+from repid import Repid, Connection, InMemoryMessageBroker
 from repid.actor import ActorResult
 
-app = Repid(Connection(DummyMessageBroker()))  # (1)
+app = Repid(Connection(InMemoryMessageBroker()))  # (1)
 
 sentry_sdk.init(dsn=os.environ.get("SENTRY_DSN"))
 

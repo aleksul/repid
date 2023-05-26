@@ -8,7 +8,7 @@ and **consumer** (the one who actually does all the heavy lifting).
 The framework is intentionally designed to separate those two parts
 and you may even have them in different codebases.
 
-With that said, for simplicity, most of the examples in docs are using `DummyMessageBroker`,
+With that said, for simplicity, most of the examples in docs are using `InMemoryMessageBroker`,
 which requires both sides to be run in one process.
 
 ## Brokers
@@ -30,9 +30,9 @@ For Redis install
 pip install repid[redis]
 ```
 
-Mostly for test purposes, repid also provides `DummyMessageBroker` & `DummyBucketBroker`, which are
-using RAM to store data, thus requiring your app to run in one context/process/etc. You don't need
-any extra dependencies to use those.
+Mostly for test purposes, repid also provides `InMemoryMessageBroker` & `InMemoryBucketBroker`,
+which are using RAM to store data, thus requiring your app to run in one context/process/etc.
+You don't need any extra dependencies to use those.
 
 Different brokers may have different initialization parameters, but often the pattern is to simply
 pass a connection string. Bucket brokers may also have some way of specifying whether they are

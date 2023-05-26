@@ -20,9 +20,9 @@ It's extremely easy to create a job:
 ```python hl_lines="10"
 import asyncio
 
-from repid import Connection, DummyMessageBroker, Job, Repid
+from repid import Connection, InMemoryMessageBroker, Job, Repid
 
-app = Repid(Connection(DummyMessageBroker()))
+app = Repid(Connection(InMemoryMessageBroker()))
 
 
 async def main() -> None:
@@ -280,9 +280,9 @@ Workers are also routers. You can assign actors directly to them.
 ```python hl_lines="12"
 import asyncio
 
-from repid import Connection, DummyMessageBroker, Job, Repid, Worker
+from repid import Connection, InMemoryMessageBroker, Job, Repid, Worker
 
-app = Repid(Connection(DummyMessageBroker()))
+app = Repid(Connection(InMemoryMessageBroker()))
 
 
 async def main() -> None:
@@ -334,9 +334,9 @@ or until it reaches `messages_limit`, which by default is set to infinity.
 ```python hl_lines="11"
 import asyncio
 
-from repid import Connection, DummyMessageBroker, Repid, Worker
+from repid import Connection, InMemoryMessageBroker, Repid, Worker
 
-app = Repid(Connection(DummyMessageBroker()))
+app = Repid(Connection(InMemoryMessageBroker()))
 
 
 async def main() -> None:
@@ -387,9 +387,9 @@ to retrieve information about amount of actor runs.
 ```python hl_lines="11-12"
 import asyncio
 
-from repid import Connection, DummyMessageBroker, Repid, Worker
+from repid import Connection, InMemoryMessageBroker, Repid, Worker
 
-app = Repid(Connection(DummyMessageBroker()))
+app = Repid(Connection(InMemoryMessageBroker()))
 
 
 async def main() -> None:
@@ -415,7 +415,7 @@ import asyncio
 
 import repid
 
-app = repid.Repid(repid.Connection(repid.DummyMessageBroker()))
+app = repid.Repid(repid.Connection(repid.InMemoryMessageBroker()))
 
 router = repid.Router()
 

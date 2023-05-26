@@ -17,7 +17,7 @@
 async def main() -> None:
     import repid
 
-    app = repid.Repid(repid.Connection(repid.DummyMessageBroker()))
+    app = repid.Repid(repid.Connection(repid.InMemoryMessageBroker()))
 
     router = repid.Router()
 

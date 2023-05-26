@@ -3,7 +3,7 @@ from typing import AsyncIterator, Iterator
 
 import pytest
 
-from repid import Connection, DummyBucketBroker, DummyMessageBroker, Repid
+from repid import Connection, InMemoryBucketBroker, InMemoryMessageBroker, Repid
 
 
 @pytest.fixture(scope="session")
@@ -18,9 +18,9 @@ def event_loop() -> Iterator[asyncio.AbstractEventLoop]:
 def fake_repid() -> Repid:
     return Repid(
         Connection(
-            DummyMessageBroker(),
-            DummyBucketBroker(),
-            DummyBucketBroker(use_result_bucket=True),
+            InMemoryMessageBroker(),
+            InMemoryBucketBroker(),
+            InMemoryBucketBroker(use_result_bucket=True),
         ),
     )
 

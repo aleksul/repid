@@ -1,7 +1,11 @@
-from .bucket_broker import DummyBucketBroker
-from .message_broker import DummyMessageBroker
+import warnings
 
-__all__ = [
-    "DummyBucketBroker",
-    "DummyMessageBroker",
-]
+warnings.warn(
+    "Module repid.connections.dummy was renamed to repid.connections.in_memory",
+    category=DeprecationWarning,
+    stacklevel=2,
+)
+
+from repid.connections.in_memory import DummyBucketBroker, DummyMessageBroker  # noqa: E402
+
+__all__ = ["DummyMessageBroker", "DummyBucketBroker"]

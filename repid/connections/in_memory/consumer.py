@@ -8,15 +8,15 @@ from typing import TYPE_CHECKING, Iterable
 from repid.connections.abc import ConsumerT
 
 if TYPE_CHECKING:
-    from repid.connections.dummy.message_broker import DummyMessageBroker
-    from repid.connections.dummy.utils import Message
+    from repid.connections.in_memory.message_broker import InMemoryMessageBroker
+    from repid.connections.in_memory.utils import Message
     from repid.data.protocols import ParametersT, RoutingKeyT
 
 
-class _DummyConsumer(ConsumerT):
+class _InMemoryConsumer(ConsumerT):
     def __init__(
         self,
-        broker: DummyMessageBroker,
+        broker: InMemoryMessageBroker,
         queue_name: str,
         topics: Iterable[str] | None,
         max_unacked_messages: int | None = None,  # noqa: ARG002

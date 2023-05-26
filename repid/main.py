@@ -26,6 +26,9 @@ class Repid:
 
         if update_config:
             Config.update_all()
+            # In brokers Config is only fetched on initialization, and by the time this is called -
+            # initialization has been already done, so we have to update manually
+            self.connection._update_from_config()
 
     @classmethod
     def get_magic_connection(cls) -> Connection:

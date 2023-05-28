@@ -1,13 +1,10 @@
 {
 	"name": "Repid Devcontainer",
-	"build": {
-		"dockerfile": "Dockerfile",
-		"context": "..",
-		"args": {
-			"VARIANT": "3.8-bullseye"
-		}
+	"image": "mcr.microsoft.com/devcontainers/python:0-3.8-bullseye",
+	"features": {
+		"ghcr.io/devcontainers-contrib/features/pdm:2": {},
+		"docker-from-docker": "latest"
 	},
-	"workspaceFolder": "/workspace",
 	"customizations": {
 		"vscode": {
 			"settings": {
@@ -26,8 +23,5 @@
 		}
 	},
 	"postCreateCommand": "pdm install -G :all && pdm run pre-commit install",
-	"remoteUser": "vscode",
-	"features": {
-		"docker-from-docker": "latest"
-	}
+	"remoteUser": "vscode"
 }

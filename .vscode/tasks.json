@@ -24,9 +24,6 @@
                 "reveal": "silent",
                 "showReuseMessage": false,
             },
-            "runOptions": {
-                "runOn": "folderOpen",
-            },
             "problemMatcher": []
         },
     ]

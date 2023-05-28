@@ -11,7 +11,6 @@
         ".hypothesis": true,
         "**/.venv": true,
     },
-    "task.allowAutomaticTasks": "on",
     "python.languageServer": "Pylance",
     // Testing
     "python.testing.pytestEnabled": true,

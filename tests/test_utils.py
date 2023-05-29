@@ -6,6 +6,7 @@ from repid.connections.in_memory.utils import wait_until as dummy_wait_until
 from repid.connections.rabbitmq.utils import wait_until as rabbitmq_wait_until
 from repid.connections.redis.utils import wait_timestamp as redis_wait_timestamp
 from repid.data._parameters import Parameters
+from repid.utils import is_installed
 
 
 @pytest.mark.parametrize(
@@ -18,3 +19,17 @@ from repid.data._parameters import Parameters
 )
 def test_wait_until_returns_none(params: Optional[Parameters], function: Callable) -> None:
     assert function(params=params) is None
+
+
+@pytest.mark.parametrize(
+    ("dependency", "result"),
+    [
+        ("repid", True),
+        ("pydantic", True),
+        ("pytest", True),
+        ("flask", False),
+        ("blabla", False),
+    ],
+)
+def test_is_imported(dependency: str, result: bool) -> None:
+    assert is_installed(dependency) is result

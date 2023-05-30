@@ -10,4 +10,5 @@ from .retry_policy import default_retry_policy_factory as default_retry_policy_f
 from .router import Router as Router
 from .serializer import SerializerT as SerializerT
 from .serializer import default_serializer as default_serializer
+from .testing import *  # noqa: F403
 from .worker import Worker as Worker

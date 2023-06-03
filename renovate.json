@@ -1,0 +1,53 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    ":disableRateLimiting"
+  ],
+  "commitMessagePrefix": "⬆️",
+  "enabledManagers": ["pep621", "pip_requirements", "github-actions"],
+  "rangeStrategy": "replace",
+  "labels": ["dependencies"],
+  "platformAutomerge": true,
+  "separateMultipleMajor": true,
+  "packageRules": [
+    {
+      "matchManagers": ["pep621"],
+      "updatePinnedDependencies": false
+    },
+    {
+      "matchManagers": ["pep621"],
+      "matchDepTypes": ["tool.pdm.dev-dependencies"],
+      "automerge": true,
+      "groupName": "Development dependencies",
+      "groupSlug": "dev"
+    },
+    {
+      "matchManagers": ["pep621"],
+      "matchDepTypes": ["project.dependencies", "project.optional-dependencies"],
+      "matchUpdateTypes": ["patch"],
+      "automerge": true,
+      "groupName": "Patch dependencies",
+      "groupSlug": "patch"
+    },
+    {
+      "matchManagers": ["pep621"],
+      "matchDepTypes": ["project.dependencies", "project.optional-dependencies"],
+      "matchUpdateTypes": ["minor"],
+      "groupName": "Minor dependencies",
+      "groupSlug": "minor"
+    },
+    {
+      "matchManagers": ["pip_requirements"],
+      "matchPaths": ["benchmarks/requirements.txt"],
+      "automerge": true,
+      "groupName": "Benchmark dependencies",
+      "groupSlug": "benchmark"
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions",
+      "groupSlug": "github-actions",
+      "separateMultipleMajor": false
+    }
+  ]
+}

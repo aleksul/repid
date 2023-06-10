@@ -109,6 +109,17 @@ tests = [
   "pydantic<2.0.0,>=1.10.0"
 ]
 
+[tool.pdm.scripts]
+test = {cmd = [
+  "pytest",
+  "--diff-symbols",
+  "--hypothesis-verbosity=normal",
+  "--cov-report=xml",
+  "--cov-report=term-missing",
+  "--cov=repid",
+  "--cov-append"
+], env = {COV_CORE_SOURCE = "repid", COV_CORE_CONFIG = ".coveragerc", COV_CORE_DATAFILE = ".coverage.eager"}}
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 

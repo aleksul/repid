@@ -37,10 +37,7 @@ jobs:
       run: pdm sync -G :all --clean
 
     - name: Run tests
-      run: |
-        pdm run pytest tests/ --diff-symbols \
-        --hypothesis-verbosity=normal \
-        --color=yes --cov-report=term-missing --cov=repid --cov-fail-under=0
+      run: pdm run test --color=yes --cov-fail-under=0
 
     - name: Rename .coverage file
       run: |

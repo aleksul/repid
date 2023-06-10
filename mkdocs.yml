@@ -16,6 +16,7 @@ nav:
   - Jobs, Actors and Workers: user_guide/jobs_actors_and_workers.md
   - Deferred scheduling: user_guide/deferred_scheduling.md
   - Arguments & Results: user_guide/arguments_and_results.md
+  - Testing: user_guide/testing.md
 - Cookbook:
   - Use with FastAPI & Pydantic: cookbook/fastapi_and_pydantic.md
 - Advanced User Guide:

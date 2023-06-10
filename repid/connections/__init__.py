@@ -5,6 +5,7 @@ from repid.connections.in_memory import (
     InMemoryBucketBroker,
     InMemoryMessageBroker,
 )
+from repid.utils import is_installed
 
 __all__ = [
     "BucketBrokerT",
@@ -16,20 +17,12 @@ __all__ = [
     "InMemoryMessageBroker",
 ]
 
-try:
-    import aiormq
-except ImportError:  # pragma: no cover
-    pass
-else:
+if is_installed("aiormq"):
     from repid.connections.rabbitmq import RabbitMessageBroker
 
     __all__.append("RabbitMessageBroker")
 
-try:
-    import redis
-except ImportError:  # pragma: no cover
-    pass
-else:
+if is_installed("redis"):
     from repid.connections.redis import RedisBucketBroker, RedisMessageBroker
 
     __all__.append("RedisBucketBroker")

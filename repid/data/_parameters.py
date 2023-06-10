@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, ClassVar, Dict, Type, Union
 from uuid import uuid4
 
-from repid.utils import FROZEN_DATACLASS, JSON_ENCODER, SLOTS_DATACLASS
+from repid.utils import FROZEN_DATACLASS, JSON_ENCODER, SLOTS_DATACLASS, is_installed
 
 if TYPE_CHECKING:
     from repid.data.protocols import (
@@ -14,12 +14,8 @@ if TYPE_CHECKING:
         RetriesPropertiesT,
     )
 
-try:
+if CRON_SUPPORT := is_installed("croniter"):
     from croniter import croniter
-
-    CRON_SUPPORT = True
-except ImportError:  # pragma: no cover
-    CRON_SUPPORT = False
 
 
 @dataclass(**FROZEN_DATACLASS, **SLOTS_DATACLASS)

@@ -1,13 +1,10 @@
 from dataclasses import asdict, is_dataclass
 from typing import Any, Protocol
 
-from repid.utils import JSON_ENCODER
+from repid.utils import JSON_ENCODER, is_installed
 
-PYDANTIC_IMPORTED = True
-try:
+if PYDANTIC_IMPORTED := is_installed("pydantic"):
     import pydantic
-except ImportError:  # pragma: no cover
-    PYDANTIC_IMPORTED = False
 
 
 class SerializerT(Protocol):

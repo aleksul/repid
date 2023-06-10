@@ -129,6 +129,12 @@ for integration testing!), so all you need to do is:
 pdm run pytest
 ```
 
+If you want to run test suite with all default arguments already set up - there is a PDM script:
+
+```bash
+pdm run test
+```
+
 #### VSCode and Dev Container
 
 If you are willing to use VSCode, repid comes with some configs already in place. Feel free to

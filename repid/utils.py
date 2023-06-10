@@ -1,7 +1,9 @@
+import importlib.util
 import json
 import re
 import sys
 from datetime import datetime, timedelta
+from functools import lru_cache
 from typing import Any
 
 VALID_ID = re.compile(r"[a-zA-Z0-9_-]+")
@@ -40,3 +42,8 @@ class _ArgsBucketInMessageId:
     @classmethod
     def deconstruct(cls, string: str) -> str:
         return json.loads(string).get(cls.KEY)  # type: ignore[no-any-return]
+
+
+@lru_cache
+def is_installed(dependency: str) -> bool:
+    return importlib.util.find_spec(dependency) is not None

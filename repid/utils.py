@@ -1,10 +1,16 @@
+from __future__ import annotations
+
+import importlib.metadata
 import importlib.util
 import json
+import operator
 import re
 import sys
 from datetime import datetime, timedelta
 from functools import lru_cache
 from typing import Any
+
+from packaging.version import parse as parse_version
 
 VALID_ID = re.compile(r"[a-zA-Z0-9_-]+")
 VALID_NAME = re.compile(r"[a-zA-Z_][a-zA-Z0-9_-]*")  # valid actor and queue names
@@ -44,6 +50,41 @@ class _ArgsBucketInMessageId:
         return json.loads(string).get(cls.KEY)  # type: ignore[no-any-return]
 
 
+_operators = {
+    ">": operator.gt,
+    "<": operator.lt,
+    "==": operator.eq,
+    ">=": operator.ge,
+    "<=": operator.le,
+}
+
+
 @lru_cache
-def is_installed(dependency: str) -> bool:
-    return importlib.util.find_spec(dependency) is not None
+def is_installed(dependency: str, version_constraints: str | None = None) -> bool:
+    spec = importlib.util.find_spec(dependency)
+    if spec is None:
+        return False
+
+    if version_constraints is None:
+        return True
+    constraints = version_constraints.split(",")
+
+    if not all(c.startswith((">", "<", "==", ">=", "<=")) for c in constraints):
+        raise ValueError("Version constraint must contain an operator.")
+
+    installed_version = parse_version(importlib.metadata.version(dependency))
+
+    # validate every constraint
+    for constraint in constraints:
+        op: str
+        if constraint.startswith((">", "<")) and not constraint.startswith((">=", "<=")):
+            op = constraint[0]
+            c = constraint[1:]
+        else:
+            op = constraint[0:2]
+            c = constraint[2:]
+
+        if not _operators[op](installed_version, parse_version(c)):
+            return False
+
+    return True

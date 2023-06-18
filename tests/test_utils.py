@@ -33,3 +33,36 @@ def test_wait_until_returns_none(params: Optional[Parameters], function: Callabl
 )
 def test_is_imported(dependency: str, result: bool) -> None:
     assert is_installed(dependency) is result
+
+
+@pytest.mark.parametrize(
+    ("dependency", "constraints", "result"),
+    [
+        ("repid", ">=1.0.0,<2.0.0", True),
+        ("repid", "<1.0.0", False),
+        ("pydantic", ">=2.0.0a1,<3.0.0", True),
+        ("pydantic", ">=1.0.0", True),
+        ("pydantic", ">=3.0.0", False),
+        ("pytest", ">=0.0.0,<100.0.0", True),
+        ("flask", ">0.0.0,<2.0.0", False),
+        ("blabla", ">0.0.0,<2.0.0", False),
+    ],
+)
+def test_is_imported_with_constraints(
+    dependency: str,
+    constraints: str,
+    result: bool,
+) -> None:
+    assert is_installed(dependency, constraints) is result
+
+
+@pytest.mark.parametrize(
+    ("dependency", "constraints"),
+    [
+        ("repid", "1.0.0,<2.0"),
+        ("repid", "0.0.0"),
+    ],
+)
+def test_is_imported_with_incorrect_constraints(dependency: str, constraints: str) -> None:
+    with pytest.raises(ValueError, match="Version constraint must contain an operator."):
+        is_installed(dependency, constraints)

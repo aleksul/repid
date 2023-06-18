@@ -674,7 +674,7 @@ summary = "Backport of pathlib-compatible object wrapper for zip files"
 lock_version = "4.2"
 cross_platform = true
 groups = ["default", "amqp", "cron", "docs", "format", "lint", "pre-commit", "pydantic", "redis", "test", "tests"]
-content_hash = "sha256:e380ab5b0de04d29479426ba537d637eeac053cec10f6b6aa855a7e5cb318263"
+content_hash = "sha256:f14b2a0f2a313c07eb33b1be1419a5126d3d12b3675aef57f472765ca34fee52"
 
 [metadata.files]
 "aiormq 6.7.6" = [

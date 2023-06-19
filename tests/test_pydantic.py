@@ -175,3 +175,36 @@ async def test_pydantic_return_simple_type() -> None:
     await asyncio.wait_for(myworker.run(), 5.0)
 
     assert (await j.result).data == generated.arg1  # type: ignore[union-attr]
+
+
+@patch.object(Config, "CONVERTER", PydanticConverter)
+async def test_pydantic_model_positional_only_args_converter() -> None:
+    r = Router()
+
+    class MyBaseModel(BaseModel):
+        arg1: str
+        arg2: int
+
+    expected = MyBaseModel(arg1=str(randint(0, 1000)), arg2=randint(0, 1000))
+    actual = None
+
+    @r.actor
+    async def my_pydantic_actor(
+        arg1: str,
+        arg2: int = Field(alias="arg3"),  # noqa: B008
+        /,
+    ) -> None:
+        nonlocal actual
+        actual = MyBaseModel(arg1=arg1, arg2=arg2)
+
+    assert type(r.actors["my_pydantic_actor"].converter) is PydanticConverter
+
+    j = Job("my_pydantic_actor", args={"arg1": expected.arg1, "arg3": expected.arg2})
+    await j.queue.declare()
+    await j.enqueue()
+
+    myworker = Worker(routers=[r], messages_limit=1)
+
+    await asyncio.wait_for(myworker.run(), 5.0)
+
+    assert expected == actual

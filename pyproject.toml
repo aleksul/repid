@@ -56,9 +56,8 @@ exclude_lines = [
 fail_under = 100
 
 [tool.coverage.run]
-omit = [
-  "repid/connections/rabbitmq/protocols.py"
-]
+omit = ["repid/connections/rabbitmq/protocols.py"]
+source = ["repid"]
 
 [tool.mypy]
 check_untyped_defs = true
@@ -106,23 +105,21 @@ tests = [
   "pytest-clarity",
   "pytest-lazy-fixture",
   "pytest-docker-tools",
-  "pytest-cov",
+  "pytest-timeout>=2.1.0",
+  "coverage[toml]>=7.2.7",
   "hypothesis"
 ]
 
 [tool.pdm.scripts]
-test = {cmd = [
-  "pytest",
-  "--diff-symbols",
-  "--hypothesis-verbosity=normal",
-  "--cov-report=xml",
-  "--cov-report=term-missing",
-  "--cov=repid",
-  "--cov-append"
-], env = {COV_CORE_SOURCE = "repid", COV_CORE_CONFIG = ".coveragerc", COV_CORE_DATAFILE = ".coverage.eager"}}
+erase-coverage = "coverage erase"
+only-test = "coverage run -m pytest --diff-symbols --hypothesis-verbosity=normal tests/"
+report-coverage = "coverage report --no-skip-covered --show-missing"
+test = {composite = ["erase-coverage", "only-test", "xml-coverage", "report-coverage"]}
+xml-coverage = "coverage xml --fail-under=0"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+timeout = 150
 
 [tool.ruff]
 ignore = ["E501", "N999", "PLR0913"]

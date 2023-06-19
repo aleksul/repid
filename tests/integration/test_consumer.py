@@ -30,9 +30,9 @@ async def seed_conn(
         await j.queue.delete()
 
 
-@pytest.mark.parametrize("seed_conn", [15], indirect=True)
+@pytest.mark.parametrize("seed_conn", [30], indirect=True)
 async def test_more_concurrent_tasks_than_limit() -> None:
-    w = Worker(messages_limit=15, tasks_limit=10)
+    w = Worker(messages_limit=30, tasks_limit=10)
 
     hit = 0
 
@@ -44,7 +44,7 @@ async def test_more_concurrent_tasks_than_limit() -> None:
 
     await asyncio.wait_for(w.run(), timeout=5.0)
 
-    assert hit == 15
+    assert hit == 30
 
 
 async def test_reject_on_sigint(seed_conn: Connection) -> None:

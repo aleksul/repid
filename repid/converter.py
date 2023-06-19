@@ -13,7 +13,8 @@ if is_installed("pydantic"):
     if is_installed("pydantic", ">=2.0.0a1,<3.0.0"):
         from pydantic import model_serializer, root_validator
 
-        class RootBaseModel(BaseModel):  # workaround until AnalysedType releases
+        # workaround until AnalysedType releases
+        class RootBaseModel(BaseModel):  # pragma: no cover
             @root_validator(pre=True)
             @classmethod
             def populate_root(cls, values: Any) -> dict:

@@ -5,7 +5,7 @@ from collections import defaultdict
 import pytest
 
 from repid.actor import ActorData
-from repid.converter import DefaultConverter
+from repid.converter import BasicConverter
 from repid.retry_policy import RetryPolicyT, default_retry_policy_factory
 from repid.router import Router, RouterDefaults
 
@@ -33,7 +33,7 @@ def test_router_includes_other_router() -> None:
         name="actor1",
         queue="queue1",
         retry_policy=default_retry_policy_factory(),
-        converter=DefaultConverter(fn),
+        converter=BasicConverter(fn),
     )
     other_router.actors = {"actor1": actor1}
     temp = defaultdict(set)
@@ -73,15 +73,15 @@ def test_router_decorator_overrides_actor_name() -> None:
     ("queue", "retry_policy", "converter"),
     [
         (None, None, None),
-        ("actor1_queue", default_retry_policy_factory(), DefaultConverter),
-        (None, default_retry_policy_factory(), DefaultConverter),
-        (None, None, DefaultConverter),
+        ("actor1_queue", default_retry_policy_factory(), BasicConverter),
+        (None, default_retry_policy_factory(), BasicConverter),
+        (None, None, BasicConverter),
     ],
 )
 def test_router_decorator_registers_actor_with_defaults(
     queue: str | None,
     retry_policy: RetryPolicyT | None,
-    converter: type[DefaultConverter] | None,
+    converter: type[BasicConverter] | None,
 ) -> None:
     router = Router()
     defaults = RouterDefaults(queue="default_queue")
@@ -99,7 +99,7 @@ def test_router_decorator_registers_actor_with_defaults(
     if retry_policy is not None:
         assert router.actors["actor1"].retry_policy is retry_policy
 
-    assert isinstance(router.actors["actor1"].converter, DefaultConverter)
+    assert isinstance(router.actors["actor1"].converter, BasicConverter)
 
 
 def test_router_decorator_uses_default_retry_policy() -> None:

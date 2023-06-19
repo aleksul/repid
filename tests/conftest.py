@@ -3,7 +3,16 @@ from typing import AsyncIterator, Iterator
 
 import pytest
 
-from repid import Connection, InMemoryBucketBroker, InMemoryMessageBroker, Repid
+from repid import (
+    BasicConverter,
+    Config,
+    Connection,
+    InMemoryBucketBroker,
+    InMemoryMessageBroker,
+    Repid,
+)
+
+Config.CONVERTER = BasicConverter
 
 
 @pytest.fixture(scope="session")

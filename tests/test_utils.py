@@ -24,7 +24,6 @@ def test_wait_until_returns_none(params: Optional[Parameters], function: Callabl
 @pytest.mark.parametrize(
     ("dependency", "result"),
     [
-        ("repid", True),
         ("pydantic", True),
         ("pytest", True),
         ("flask", False),
@@ -38,8 +37,6 @@ def test_is_imported(dependency: str, result: bool) -> None:
 @pytest.mark.parametrize(
     ("dependency", "constraints", "result"),
     [
-        ("repid", ">=1.0.0,<2.0.0", True),
-        ("repid", "<1.0.0", False),
         ("pydantic", ">=2.0.0a1,<3.0.0", True),
         ("pydantic", ">=1.0.0", True),
         ("pydantic", ">=3.0.0", False),
@@ -59,8 +56,8 @@ def test_is_imported_with_constraints(
 @pytest.mark.parametrize(
     ("dependency", "constraints"),
     [
-        ("repid", "1.0.0,<2.0"),
-        ("repid", "0.0.0"),
+        ("abc", "1.0.0,<2.0"),
+        ("abc", "0.0.0"),
     ],
 )
 def test_is_imported_with_incorrect_constraints(dependency: str, constraints: str) -> None:

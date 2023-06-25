@@ -1,7 +1,7 @@
 from dataclasses import asdict, is_dataclass
 from typing import Any, Protocol
 
-from repid.utils import JSON_ENCODER, is_installed
+from repid._utils import JSON_ENCODER, is_installed
 
 if PYDANTIC_IMPORTED := is_installed("pydantic"):
     import pydantic

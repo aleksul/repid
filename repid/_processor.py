@@ -5,10 +5,10 @@ import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from repid._utils import _ArgsBucketInMessageId
 from repid.actor import ActorData, ActorResult
 from repid.logger import logger
 from repid.middlewares import middleware_wrapper
-from repid.utils import _ArgsBucketInMessageId
 
 if TYPE_CHECKING:
     from repid.connection import Connection

@@ -5,7 +5,7 @@ import json
 from typing import Any, Callable, Coroutine, Dict, List, Protocol, Tuple, TypeVar
 from warnings import warn
 
-from repid.utils import JSON_ENCODER, is_installed
+from repid._utils import JSON_ENCODER, is_installed
 
 if is_installed("pydantic"):
     from pydantic import BaseModel, Field, create_model

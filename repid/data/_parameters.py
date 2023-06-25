@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, ClassVar, Dict, Type, Union
 from uuid import uuid4
 
-from repid.utils import FROZEN_DATACLASS, JSON_ENCODER, SLOTS_DATACLASS, is_installed
+from repid._utils import FROZEN_DATACLASS, JSON_ENCODER, SLOTS_DATACLASS, is_installed
 
 if TYPE_CHECKING:
     from repid.data.protocols import (

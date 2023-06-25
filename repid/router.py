@@ -6,10 +6,10 @@ from functools import partial
 from typing import TYPE_CHECKING, Callable, TypeVar, overload
 
 from repid._asyncify import asyncify
+from repid._utils import VALID_NAME
 from repid.actor import ActorData
 from repid.config import Config
 from repid.retry_policy import default_retry_policy_factory
-from repid.utils import VALID_NAME
 
 if TYPE_CHECKING:
     from repid.converter import ConverterT

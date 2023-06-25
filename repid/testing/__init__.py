@@ -1,4 +1,4 @@
-from repid.utils import is_installed
+from repid._utils import is_installed
 
 __all__ = []
 

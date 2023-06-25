@@ -5,8 +5,8 @@ from functools import wraps
 from time import perf_counter, time
 from typing import TYPE_CHECKING, Any, Callable
 
+from repid._utils import FROZEN_DATACLASS, SLOTS_DATACLASS
 from repid.connections.abc import BucketBrokerT, ConsumerT, MessageBrokerT
-from repid.utils import FROZEN_DATACLASS, SLOTS_DATACLASS
 from repid.worker import Worker
 
 if TYPE_CHECKING:

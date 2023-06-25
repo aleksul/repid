@@ -4,11 +4,11 @@ import uuid
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from repid._utils import VALID_ID, VALID_NAME, _ArgsBucketInMessageId
 from repid.config import Config
 from repid.data import ParametersT, PrioritiesT, ResultBucketT, RoutingKeyT
 from repid.main import Repid
 from repid.queue import Queue
-from repid.utils import VALID_ID, VALID_NAME, _ArgsBucketInMessageId
 
 if TYPE_CHECKING:
     from repid.connection import Connection

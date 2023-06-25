@@ -23,7 +23,7 @@ from hypothesis.strategies import (
 )
 
 from repid import Job, PrioritiesT, Queue, default_retry_policy_factory
-from repid.utils import VALID_ID, VALID_NAME
+from repid._utils import VALID_ID, VALID_NAME
 
 MAX = 2**31 - 1
 MIN = -(2**31)

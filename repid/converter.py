@@ -168,8 +168,8 @@ class PydanticConverter:
         return ([], loaded)
 
     def convert_outputs(self, data: FnR) -> str:
-        if not self.validate_output:
-            return "null"
+        if not self.validate_output:  # there is not type to validate
+            return JSON_ENCODER.encode(data)  # fallback to JSON encoding
         if issubclass(self.output_type, BaseModel):
             if isinstance(data, BaseModel):
                 return data.model_dump_json()
@@ -203,8 +203,8 @@ class PydanticV1Converter(PydanticConverter):  # pragma: no cover
         return ([], loaded)
 
     def convert_outputs(self, data: FnR) -> str:
-        if not self.validate_output:
-            return "null"
+        if not self.validate_output:  # there is not type to validate
+            return JSON_ENCODER.encode(data)  # fallback to JSON encoding
         if issubclass(self.output_type, BaseModel):
             if isinstance(data, BaseModel):
                 return data.json()

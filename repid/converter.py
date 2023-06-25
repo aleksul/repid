@@ -160,7 +160,7 @@ class PydanticConverter:
         )
 
     def convert_inputs(self, data: str) -> Params:
-        loaded = self.input_pydantic_model.model_validate_json(data).model_dump()
+        loaded = dict(self.input_pydantic_model.model_validate_json(data))
 
         if self.args:
             return ([loaded.pop(arg) for arg in self.args], loaded)
@@ -195,7 +195,7 @@ class PydanticV1Converter(PydanticConverter):  # pragma: no cover
         )
 
     def convert_inputs(self, data: str) -> Params:
-        loaded = self.input_pydantic_model.parse_raw(data).dict()
+        loaded = dict(self.input_pydantic_model.parse_raw(data))
 
         if self.args:
             return ([loaded.pop(arg) for arg in self.args], loaded)

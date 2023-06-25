@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable, Coroutine, NamedTuple
+from typing import TYPE_CHECKING, Callable, Coroutine, NamedTuple
 
 if TYPE_CHECKING:
     from repid.converter import ConverterT
@@ -16,7 +16,7 @@ class ActorData(NamedTuple):
 
 
 class ActorResult(NamedTuple):
-    data: Any
+    data: str
     success: bool
     exception: Exception | None
     started_when: int

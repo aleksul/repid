@@ -39,8 +39,7 @@ class _Processor:
         actor: ActorData,
         key: RoutingKeyT,
         parameters: ParametersT,
-        args: list,
-        kwargs: dict,
+        payload: str,
     ) -> ActorResult:
         time_limit = parameters.execution_timeout.total_seconds()
 
@@ -60,7 +59,9 @@ class _Processor:
         started_when = time.perf_counter_ns()
 
         try:
-            result = await asyncio.wait_for(actor.fn(*args, **kwargs), timeout=time_limit)
+            args, kwargs = actor.converter.convert_inputs(payload)
+            _result = await asyncio.wait_for(actor.fn(*args, **kwargs), timeout=time_limit)
+            result = actor.converter.convert_outputs(_result)
         except Exception as exc:  # noqa: BLE001
             exception = exc
             success = False
@@ -115,7 +116,6 @@ class _Processor:
     async def set_result_bucket(
         self,
         result_params: ResultPropertiesT | None,
-        returns: str,
         result_actor: ActorResult,
     ) -> None:
         if result_params is None:
@@ -123,7 +123,7 @@ class _Processor:
         await self._conn._rb.store_bucket(
             result_params.id_,
             self._conn._rb.BUCKET_CLASS(  # type: ignore[call-arg]
-                data=returns,
+                data=result_actor.data,
                 started_when=result_actor.started_when,
                 finished_when=result_actor.finished_when,
                 success=result_actor.success,
@@ -143,12 +143,10 @@ class _Processor:
         parameters: ParametersT,
     ) -> None:
         raw_payload = await self.get_payload(payload)
-        args, kwargs = actor.converter.convert_inputs(raw_payload)
-        result = await self.actor_run(actor, key, parameters, args, kwargs)
+        result = await self.actor_run(actor, key, parameters, raw_payload)
         await self.report_to_broker(actor, key, payload, parameters, result)
         self._processed += 1
-        returns = actor.converter.convert_outputs(result.data)
-        await self.set_result_bucket(parameters.result, returns, result)
+        await self.set_result_bucket(parameters.result, result)
 
     @property
     def processed(self) -> int:

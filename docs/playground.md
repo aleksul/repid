@@ -54,7 +54,7 @@ async def main() -> None:
         input_html = Element("input").innerHtml
         input_html = input_html.replace("<br>", "\n")  # user inputted new lines == "<br>"
         f.feed(input_html)
-        f.text = f.text[9:]  # remove "Edit me!"
+        f.text = f.text[10:]  # remove "Edit me!"
         locals = {}
         exec(f.text, globals(), locals)
         asyncio.create_task(locals.get("main")())

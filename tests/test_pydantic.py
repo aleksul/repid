@@ -237,3 +237,33 @@ async def test_pydantic_model_root() -> None:
     await asyncio.wait_for(myworker.run(), 5.0)
 
     assert expected == actual
+
+
+@patch.object(Config, "CONVERTER", PydanticConverter)
+async def test_pydantic_return_no_extra_data() -> None:
+    r = Router()
+
+    class MyBaseModel(BaseModel):
+        arg1: str
+        arg2: int
+
+    class MyReturnModel(BaseModel):
+        arg3: int
+
+    generated = MyBaseModel(arg1=str(randint(0, 1000)), arg2=randint(0, 1000))
+
+    @r.actor
+    async def my_pydantic_actor(arg1: str, arg2: int) -> MyReturnModel:
+        return {"arg2": arg2, "arg3": arg1}  # type: ignore[return-value]
+
+    assert type(r.actors["my_pydantic_actor"].converter) is PydanticConverter
+
+    j = Job("my_pydantic_actor", args=generated)
+    await j.queue.declare()
+    await j.enqueue()
+
+    myworker = Worker(routers=[r], messages_limit=1)
+
+    await asyncio.wait_for(myworker.run(), 5.0)
+
+    assert json.loads((await j.result).data) == {"arg3": int(generated.arg1)}  # type: ignore[union-attr]

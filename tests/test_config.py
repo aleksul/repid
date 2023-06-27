@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import sys
 from importlib.metadata import EntryPoint
 from typing import Iterator
 from unittest.mock import patch
@@ -55,6 +56,44 @@ def _entry_points(monkeypatch: pytest.MonkeyPatch) -> None:
                 EntryPoint("converter", "tests:test_config.SomeClass.converter", "repid_converter"),
             ],
         }
+
+    if sys.version_info >= (3, 10):
+
+        def mock_entry_points(*args, **kwargs) -> importlib.metadata.EntryPoints:  # noqa: F811
+            return importlib.metadata.EntryPoints(
+                [
+                    EntryPoint(
+                        "routing_key",
+                        "tests:test_config.SomeClass.routing_key",
+                        "repid_data",
+                    ),
+                    EntryPoint(
+                        "parameters",
+                        "tests:test_config.SomeClass.parameters",
+                        "repid_data",
+                    ),
+                    EntryPoint(
+                        "bucket",
+                        "tests:test_config.SomeClass.bucket",
+                        "repid_data",
+                    ),
+                    EntryPoint(
+                        "result_bucket",
+                        "tests:test_config.SomeClass.result_bucket",
+                        "repid_data",
+                    ),
+                    EntryPoint(
+                        "serializer",
+                        "tests:test_config.SomeClass.serializer",
+                        "repid_serializer",
+                    ),
+                    EntryPoint(
+                        "converter",
+                        "tests:test_config.SomeClass.converter",
+                        "repid_converter",
+                    ),
+                ],
+            ).select(*args, **kwargs)
 
     monkeypatch.setattr(importlib.metadata, "entry_points", mock_entry_points)
 

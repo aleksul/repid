@@ -1,3 +1,4 @@
+from repid._utils import is_installed
 from repid.connections.abc import BucketBrokerT, ConsumerT, MessageBrokerT
 from repid.connections.in_memory import (
     DummyBucketBroker,
@@ -5,7 +6,6 @@ from repid.connections.in_memory import (
     InMemoryBucketBroker,
     InMemoryMessageBroker,
 )
-from repid.utils import is_installed
 
 __all__ = [
     "BucketBrokerT",

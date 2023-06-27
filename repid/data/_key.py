@@ -1,8 +1,8 @@
 from dataclasses import dataclass, field
 from uuid import uuid4
 
+from repid._utils import FROZEN_DATACLASS, SLOTS_DATACLASS, VALID_ID, VALID_NAME
 from repid.data.priorities import PrioritiesT
-from repid.utils import FROZEN_DATACLASS, SLOTS_DATACLASS, VALID_ID, VALID_NAME
 
 
 @dataclass(**FROZEN_DATACLASS, **SLOTS_DATACLASS)

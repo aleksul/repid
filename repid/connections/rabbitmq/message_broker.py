@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import aiormq
 from aiormq.abc import Basic
 
+from repid._utils import JSON_ENCODER
 from repid.connections.abc import MessageBrokerT
 from repid.connections.rabbitmq.consumer import _RabbitConsumer
 from repid.connections.rabbitmq.utils import (
@@ -16,7 +17,6 @@ from repid.connections.rabbitmq.utils import (
     wait_until,
 )
 from repid.logger import logger
-from repid.utils import JSON_ENCODER
 
 if TYPE_CHECKING:
     from repid.connections.rabbitmq.protocols import (

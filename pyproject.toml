@@ -16,7 +16,8 @@ classifiers = [
   "Typing :: Typed"
 ]
 dependencies = [
-  "typing-extensions>=4.3.0,<5.0.0; python_version < \"3.10\""
+  "typing-extensions>=4.3.0,<5.0.0; python_version < \"3.10\"",
+  "packaging>=22.0"
 ]
 description = "Repid framework: simple to use, fast to run and extensible to adopt job scheduler"
 dynamic = ["version"]
@@ -31,6 +32,7 @@ repid = "repid.testing.plugin"
 [project.optional-dependencies]
 amqp = ["aiormq<7.0.0,>=6.4.0"]
 cron = ["croniter<2.0.0,>=1.3.4"]
+pydantic = ["pydantic>=2.0a1,<3.0.0"]
 redis = ["redis<5.0.0,>=4.3.3"]
 test = ["pytest", "pytest-asyncio"]
 
@@ -54,9 +56,8 @@ exclude_lines = [
 fail_under = 100
 
 [tool.coverage.run]
-omit = [
-  "repid/connections/rabbitmq/protocols.py"
-]
+omit = ["repid/connections/rabbitmq/protocols.py"]
+source = ["repid"]
 
 [tool.mypy]
 check_untyped_defs = true
@@ -104,24 +105,21 @@ tests = [
   "pytest-clarity",
   "pytest-lazy-fixture",
   "pytest-docker-tools",
-  "pytest-cov",
-  "hypothesis",
-  "pydantic<2.0.0,>=1.10.0"
+  "pytest-timeout>=2.1.0",
+  "coverage[toml]>=7.2.7",
+  "hypothesis"
 ]
 
 [tool.pdm.scripts]
-test = {cmd = [
-  "pytest",
-  "--diff-symbols",
-  "--hypothesis-verbosity=normal",
-  "--cov-report=xml",
-  "--cov-report=term-missing",
-  "--cov=repid",
-  "--cov-append"
-], env = {COV_CORE_SOURCE = "repid", COV_CORE_CONFIG = ".coveragerc", COV_CORE_DATAFILE = ".coverage.eager"}}
+erase-coverage = "coverage erase"
+only-test = "coverage run -m pytest --diff-symbols --hypothesis-verbosity=normal tests/"
+report-coverage = "coverage report --no-skip-covered --show-missing"
+test = {composite = ["erase-coverage", "only-test", "xml-coverage", "report-coverage"]}
+xml-coverage = "coverage xml --fail-under=0"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+timeout = 150
 
 [tool.ruff]
 ignore = ["E501", "N999", "PLR0913"]

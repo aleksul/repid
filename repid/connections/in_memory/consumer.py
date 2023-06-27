@@ -74,7 +74,7 @@ class _InMemoryConsumer(ConsumerT):
                 if msg.parameters.is_overdue:
                     self._queue.dead.append(msg)
                 elif self.topics and msg.key.topic not in self.topics:
-                    await self._queue.simple.put(msg)
+                    self._queue.simple.put_nowait(msg)
                 else:
                     break
             await asyncio.sleep(0.001)

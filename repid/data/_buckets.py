@@ -3,7 +3,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Dict, Union
 
-from repid.utils import FROZEN_DATACLASS, JSON_ENCODER, SLOTS_DATACLASS
+from repid._utils import FROZEN_DATACLASS, JSON_ENCODER, SLOTS_DATACLASS
 
 
 @dataclass(**FROZEN_DATACLASS, **SLOTS_DATACLASS)

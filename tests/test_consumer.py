@@ -48,7 +48,7 @@ async def test_more_concurrent_tasks_than_limit() -> None:
 async def test_rejected_after_timeout(seed_conn: Connection) -> None:
     consumer = seed_conn.message_broker.get_consumer("default", ["awesome_job"])
     async with consumer:
-        await asyncio.sleep(1.0)
+        await asyncio.sleep(0)
 
     with pytest.raises(RuntimeError):
         # can't consume finished consumer
@@ -62,7 +62,7 @@ async def test_paused_consumer(seed_conn: Connection) -> None:
     async with consumer:
         with pytest.raises(asyncio.TimeoutError):
             # there should be nothing to consume, since the consumer has been paused
-            await asyncio.wait_for(consumer.consume(), 1.0)
+            await asyncio.wait_for(consumer.consume(), 0.2)
 
 
 async def test_finishing_consumer_without_start(seed_conn: Connection) -> None:
@@ -72,25 +72,26 @@ async def test_finishing_consumer_without_start(seed_conn: Connection) -> None:
 
 async def test_another_topic_is_not_consumed(seed_conn: Connection) -> None:
     consumer = seed_conn.message_broker.get_consumer("default", ["another_topic"])
-    async with consumer:
-        with pytest.raises(asyncio.TimeoutError):
-            # there should be nothing to consume, since the consumer is interested in another topic
-            await asyncio.wait_for(consumer.consume(), 1.0)
+    await consumer.start()
+    with pytest.raises(asyncio.TimeoutError):
+        # there should be nothing to consume, since the consumer is interested in another topic
+        await asyncio.wait_for(consumer.consume(), 0.2)
+    await consumer.finish()
 
 
 async def test_consume_without_ack(seed_conn: Connection) -> None:
     consumer = seed_conn.message_broker.get_consumer("default", ["awesome_job"])
     async with consumer:
-        key, _, _ = await asyncio.wait_for(consumer.consume(), 1.0)
+        key, _, _ = await asyncio.wait_for(consumer.consume(), 0.1)
         assert key.topic == "awesome_job"
 
     async with consumer:
-        key, _, _ = await asyncio.wait_for(consumer.consume(), 1.0)
+        key, _, _ = await asyncio.wait_for(consumer.consume(), 0.1)
         assert key.topic == "awesome_job"
         await seed_conn.message_broker.ack(key)
 
         with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(consumer.consume(), 1.0)
+            await asyncio.wait_for(consumer.consume(), 0.2)
 
 
 @pytest.mark.parametrize("seed_conn", [0], indirect=True)

@@ -37,7 +37,10 @@ jobs:
       run: pdm sync -G :all --clean
 
     - name: Run tests
-      run: pdm run test --color=yes --cov-fail-under=0
+      run: pdm run only-test --color=yes
+
+    - name: Display coverage
+      run: pdm run report-coverage --fail-under=0
 
     - name: Rename .coverage file
       run: |

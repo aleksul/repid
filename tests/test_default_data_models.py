@@ -5,6 +5,7 @@ from uuid import UUID
 
 import pytest
 
+from repid._utils import JSON_ENCODER
 from repid.data import BucketT, ResultBucketT
 from repid.data._buckets import ArgsBucket, ResultBucket
 from repid.data._key import RoutingKey
@@ -15,7 +16,6 @@ from repid.data._parameters import (
     RetriesProperties,
 )
 from repid.data.priorities import PrioritiesT
-from repid.utils import JSON_ENCODER
 
 
 def test_routing_key() -> None:

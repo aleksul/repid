@@ -59,7 +59,7 @@ def _entry_points(monkeypatch: pytest.MonkeyPatch) -> None:
 
     if sys.version_info >= (3, 10):
 
-        def mock_entry_points(  # type: ignore[misc] # noqa: F811
+        def mock_entry_points(  # noqa: F811
             *args: tuple,
             **kwargs: dict,
         ) -> importlib.metadata.EntryPoints:
@@ -96,10 +96,7 @@ def _entry_points(monkeypatch: pytest.MonkeyPatch) -> None:
                         "repid_converter",
                     ),
                 ],
-            ).select(
-                *args,
-                **kwargs,  # type: ignore[arg-type]
-            )
+            ).select(*args, **kwargs)
 
     monkeypatch.setattr(importlib.metadata, "entry_points", mock_entry_points)
 

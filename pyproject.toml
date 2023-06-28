@@ -108,7 +108,8 @@ tests = [
   "pytest-docker-tools",
   "pytest-timeout>=2.1.0",
   "coverage[toml]>=7.2.7",
-  "hypothesis"
+  "hypothesis",
+  "httpx>=0.24.1"
 ]
 
 [tool.pdm.scripts]

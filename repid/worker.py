@@ -5,6 +5,7 @@ import signal
 from typing import TYPE_CHECKING, Callable
 
 from repid._runner import _Runner
+from repid.health_check_server import HealthCheckServer
 from repid.main import Repid
 from repid.queue import Queue
 from repid.router import Router, RouterDefaults
@@ -12,6 +13,7 @@ from repid.router import Router, RouterDefaults
 if TYPE_CHECKING:
     from repid.connection import Connection
     from repid.connections.abc import ConsumerT
+    from repid.health_check_server import HealthCheckServerSettings
 
 
 class Worker(Router):
@@ -25,6 +27,8 @@ class Worker(Router):
         handle_signals: list[signal.Signals] | None = None,
         router_defaults: RouterDefaults | None = None,
         auto_declare: bool = True,
+        run_health_check_server: bool = False,
+        health_check_server_settings: HealthCheckServerSettings | None = None,
         _connection: Connection | None = None,
     ):
         super().__init__(defaults=router_defaults)
@@ -42,6 +46,9 @@ class Worker(Router):
             [signal.SIGINT, signal.SIGTERM] if handle_signals is None else handle_signals
         )
         self.auto_declare = auto_declare
+        self.health_check_server = None
+        if run_health_check_server:
+            self.health_check_server = HealthCheckServer(health_check_server_settings)
 
     async def declare_all_queues(self) -> None:
         await asyncio.wait(
@@ -52,7 +59,10 @@ class Worker(Router):
             return_when=asyncio.ALL_COMPLETED,
         )
 
-    async def run(self) -> _Runner:
+    async def run(self) -> _Runner:  # noqa: C901
+        if self.health_check_server is not None:
+            await self.health_check_server.start()
+
         runner = _Runner(
             max_tasks=self.messages_limit,
             tasks_concurrency_limit=self.tasks_limit,
@@ -60,6 +70,8 @@ class Worker(Router):
         )
 
         if not self.actors:
+            if self.health_check_server is not None:  # pragma: no cover
+                await self.health_check_server.stop()
             return runner
 
         if self.auto_declare:
@@ -103,6 +115,9 @@ class Worker(Router):
 
         runner.stop_consume_event.set()
         runner.cancel_event.set()
+
+        if self.health_check_server is not None:
+            await self.health_check_server.stop()
 
         return runner
 

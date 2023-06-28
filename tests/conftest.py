@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import asyncio
+from pathlib import Path
 from typing import AsyncIterator, Iterator
 
 import pytest
@@ -38,3 +41,10 @@ def fake_repid() -> Repid:
 async def fake_connection(fake_repid: Repid) -> AsyncIterator[Connection]:
     async with fake_repid.magic(auto_disconnect=True) as conn:
         yield conn
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    tests_folder = Path(__file__).parent
+    for item in items:
+        if item.path in tests_folder.glob("integration/*"):
+            item.add_marker("integration")

@@ -21,6 +21,7 @@ nav:
   - Use with FastAPI & Pydantic: cookbook/fastapi_and_pydantic.md
 - Advanced User Guide:
   - Validating with Pydantic: advanced_user_guide/validating_with_pydantic.md
+  - Health checks: advanced_user_guide/health_checks.md
   - Middlewares: advanced_user_guide/middlewares.md
   - Your own brokers: advanced_user_guide/your_own_brokers.md
   - Configuring overrides: advanced_user_guide/configuring_overrides.md

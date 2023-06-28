@@ -6,6 +6,7 @@ from datetime import timedelta
 from random import random
 from signal import SIGINT
 
+import httpx
 import pytest
 
 from repid import Connection, Job, Router, Worker
@@ -304,3 +305,28 @@ async def test_sync_job() -> None:
     await asyncio.wait_for(myworker.run(), timeout=5.0)
 
     assert hit == 5
+
+
+async def test_health_check_server() -> None:
+    j = Job("awesome_job")
+    await j.queue.declare()
+    await j.enqueue()
+
+    router = Router()
+
+    @router.actor
+    def awesome_job() -> None:
+        time.sleep(1)
+
+    myworker = Worker(routers=[router], messages_limit=1, run_health_check_server=True)
+    worker_task = asyncio.create_task(asyncio.wait_for(myworker.run(), timeout=5.0))
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get("http://localhost:8080/healthz")
+        assert response.status_code == 200
+
+    await worker_task
+
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(httpx.ConnectError):
+            await client.get("http://localhost:8080/healthz")

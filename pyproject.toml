@@ -120,6 +120,7 @@ xml-coverage = "coverage xml --fail-under=0"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = ["integration: marker for integration tests (deselect with `-m 'not integration'`)"]
 timeout = 150
 
 [tool.ruff]

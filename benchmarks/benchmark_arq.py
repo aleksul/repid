@@ -42,7 +42,7 @@ async def report(start: float) -> None:
 
 
 class WorkerSettings:
-    functions = [benchmark_task]
+    functions = [benchmark_task]  # noqa: RUF012
     log_results = False
     redis_pool = arq_redis
     max_jobs = 2000

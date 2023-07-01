@@ -45,7 +45,7 @@ class ArgsBucket:
 class ResultBucket:
     data: str
 
-    # perf_counter_ns
+    # time_ns
     started_when: int
     finished_when: int
 

@@ -56,7 +56,7 @@ class _Processor:
         logger.info("Running actor '{actor_name}' on message {message_id}.", extra=logger_extra)
         logger.debug("Time limit is set to {time_limit}.", extra=logger_extra)
 
-        started_when = time.perf_counter_ns()
+        started_when = time.time_ns()
 
         try:
             args, kwargs = actor.converter.convert_inputs(payload)
@@ -81,7 +81,7 @@ class _Processor:
             success=success,
             exception=exception,
             started_when=started_when,
-            finished_when=time.perf_counter_ns(),
+            finished_when=time.time_ns(),
         )
 
     async def report_to_broker(

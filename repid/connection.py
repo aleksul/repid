@@ -34,7 +34,7 @@ class Connection:
                 if broker is not None
             ],
         )
-        object.__setattr__(self, "is_open", True)  # noqa: FBT003
+        object.__setattr__(self, "is_open", True)
 
     async def disconnect(self) -> None:
         """Disconnect from all set brokers. Marks connection as closed."""
@@ -49,7 +49,7 @@ class Connection:
                 if broker is not None
             ],
         )
-        object.__setattr__(self, "is_open", False)  # noqa: FBT003
+        object.__setattr__(self, "is_open", False)
 
     @property
     def _ab(self) -> "BucketBrokerT":

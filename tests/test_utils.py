@@ -37,7 +37,7 @@ def test_is_imported(dependency: str, result: bool) -> None:
 @pytest.mark.parametrize(
     ("dependency", "constraints", "result"),
     [
-        ("pydantic", ">=2.0.0a1,<3.0.0", True),
+        ("pydantic", ">=2.0.0,<3.0.0", True),
         ("pydantic", ">=1.0.0", True),
         ("pydantic", ">=3.0.0", False),
         ("pytest", ">=0.0.0,<100.0.0", True),

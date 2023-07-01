@@ -40,19 +40,18 @@ Job(
 )
 ```
 
-If you want to pass Pydantic model inside of another structure, e.g. dictionary -
-you will have to convert the model yourself. You can use `.dict()` or `.model_dump()`
-in Pydantic v1 and v2 respectively. In Pydantic v2 you can also use `mode="json"`
-to ensure that all your types are JSON encodable.
+You can also use Pydantic models inside of another structures
+(such as dictionaries, dataclasses, etc.) - Repid's JSON encoder will automatically
+convert Pydantic models using `.model_dump(mode="json")`.
 
-```python hl_lines="7"
+```python hl_lines="4-7"
 Job(
     "some_another_repid_actor",
     args={
         "body": MyPydanticModel(
             user_id=123,
             actions=["First action"],
-        ).model_dump(mode="json"),
+        ),
     },
 )
 ```

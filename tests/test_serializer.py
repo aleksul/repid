@@ -30,4 +30,4 @@ def test_dataclass_args_serialization() -> None:
             d=timedelta(days=2, hours=3),
         ),
     )
-    assert j.args == '{"a":123,"b":567.34,"c":"2020-01-01T12:00:00","d":"183600.0"}'
+    assert j.args == '{"a":123,"b":567.34,"c":"2020-01-01T12:00:00","d":183600.0}'

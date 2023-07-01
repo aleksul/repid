@@ -10,26 +10,8 @@ from repid._utils import JSON_ENCODER, is_installed
 if is_installed("pydantic"):
     from pydantic import BaseModel, Field, create_model
 
-    if is_installed("pydantic", ">=2.0.0a1,<3.0.0"):
-        from pydantic import model_serializer, root_validator
-
-        # workaround until AnalysedType releases
-        class RootBaseModel(BaseModel):  # pragma: no cover
-            @root_validator(pre=True)
-            @classmethod
-            def populate_root(cls, values: Any) -> dict:
-                return {"root": values}
-
-            @model_serializer(mode="wrap")
-            def _serialize(self, handler, info):  # type: ignore[no-untyped-def]
-                data = handler(self)
-                if info.mode == "json":
-                    return data["root"]
-                return data
-
-            @classmethod
-            def model_modify_json_schema(cls, json_schema):  # type: ignore[no-untyped-def]
-                return json_schema["properties"]["root"]
+    if is_installed("pydantic", ">=2.0.0,<3.0.0"):
+        from pydantic import RootModel
 
 
 FnR = TypeVar("FnR", contravariant=True)
@@ -49,7 +31,7 @@ class ConverterT(Protocol[FnR]):
 
 class DefaultConverter:
     def __new__(cls, fn: Callable[..., Coroutine[Any, Any, FnR]]) -> ConverterT[FnR]:  # type: ignore[misc]
-        if is_installed("pydantic", ">=2.0.0a1,<3.0.0"):
+        if is_installed("pydantic", ">=2.0.0,<3.0.0"):
             return PydanticConverter(fn)
         if is_installed("pydantic", ">=1.0.0,<2.0.0"):
             return PydanticV1Converter(fn)
@@ -155,7 +137,7 @@ class PydanticConverter:
     def _generate_output_model(fn_name: str, return_annotation: Any) -> BaseModel:
         return create_model(  # type: ignore[return-value]
             f"{fn_name}_output_repid_model",
-            __base__=RootBaseModel,
+            __base__=RootModel,
             root=(return_annotation, Field()),
         )
 

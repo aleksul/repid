@@ -204,7 +204,7 @@ def test_parameters_is_overdue(ttl: timedelta, is_overdue: bool) -> None:
             "some_data",
             datetime(2022, 1, 1),
             timedelta(days=1),
-            '{"data":"some_data","timestamp":"2022-01-01T00:00:00","ttl":"86400.0"}',
+            '{"data":"some_data","timestamp":"2022-01-01T00:00:00","ttl":86400.0}',
         ),
         (
             ResultBucket,
@@ -212,7 +212,7 @@ def test_parameters_is_overdue(ttl: timedelta, is_overdue: bool) -> None:
             datetime(2022, 1, 1),
             timedelta(days=1),
             '{"data":"some_data","started_when":1,"finished_when":2,'
-            '"success":true,"exception":null,"timestamp":"2022-01-01T00:00:00","ttl":"86400.0"}',
+            '"success":true,"exception":null,"timestamp":"2022-01-01T00:00:00","ttl":86400.0}',
         ),
     ],
 )

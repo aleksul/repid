@@ -114,6 +114,7 @@ tests = [
 
 [tool.pdm.scripts]
 erase-coverage = "coverage erase"
+fast-test = {composite = ["erase-coverage", "only-test -m 'not integration' --ignore='tests/test_hypothesis.py'", "report-coverage --omit 'repid/connections/**'"]}
 only-test = "coverage run -m pytest --diff-symbols --hypothesis-verbosity=normal tests/"
 report-coverage = "coverage report --no-skip-covered --show-missing"
 test = {composite = ["erase-coverage", "only-test", "xml-coverage", "report-coverage"]}

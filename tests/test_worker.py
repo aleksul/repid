@@ -282,8 +282,37 @@ async def test_result_job() -> None:
     assert hit
     r = await j.result
     assert r is not None
-    assert r.success
+    assert r.success is True
     assert r.data == json.dumps(result)
+    assert r.exception is None
+
+
+async def test_unsuccesfull_result_job() -> None:
+    result = random()
+
+    j = Job("awesome_job")
+    await j.queue.declare()
+    await j.enqueue()
+
+    router = Router()
+
+    hit = False
+
+    @router.actor
+    async def awesome_job() -> float:
+        nonlocal hit, result
+        hit = True
+        raise ValueError(f"Some random value: {result}")
+
+    myworker = Worker(routers=[router], messages_limit=1)
+    await asyncio.wait_for(myworker.run(), timeout=5.0)
+
+    assert hit
+    r = await j.result
+    assert r is not None
+    assert r.success is False
+    assert r.data == f"Some random value: {result}"
+    assert r.exception == "ValueError"
 
 
 async def test_sync_job() -> None:

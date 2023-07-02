@@ -16,7 +16,7 @@ class ActorData(NamedTuple):
 
 
 class ActorResult(NamedTuple):
-    data: str
+    data: str | None
     success: bool
     exception: Exception | None
     started_when: int

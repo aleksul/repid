@@ -112,7 +112,7 @@ class PydanticConverter:
             **{
                 p.name: (
                     p.annotation if p.annotation is not inspect.Parameter.empty else Any,
-                    p.default if p.annotation is not inspect.Parameter.empty else Field(),
+                    p.default if p.default is not inspect.Parameter.empty else Field(),
                 )
                 for p in signature.parameters.values()
             },

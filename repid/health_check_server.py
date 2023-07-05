@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import asdict, dataclass
 from enum import IntEnum
+from wsgiref.handlers import format_date_time
 
 from repid._utils import FROZEN_DATACLASS, SLOTS_DATACLASS
 from repid.logger import logger
@@ -83,9 +85,14 @@ class _HttpServerProtocol(asyncio.Protocol):
 
     def handle_request(self, method: str, path: str) -> str:
         if method == "GET" and path == self.endpoint_name:
-            return (
-                f"HTTP/1.1 {self.status.value} {self.status.name}\r\n"
-                f"Content-Type: text/plain\r\n\r\n"
-                f"{self.status.value} {self.status.name}"
-            )
-        return "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n\r\n404 Not Found"
+            content = f"{self.status.value} {self.status.name}"
+        else:
+            content = "404 Not Found"
+        return (
+            f"HTTP/1.1 {content}\r\n"
+            f"Date: {format_date_time(time.time())}\r\n"
+            f"Content-Type: text/plain\r\n"
+            f"Content-Length: {len(content)}\r\n"
+            f"Connection: close\r\n\r\n"
+            f"{content}"
+        )

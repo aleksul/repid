@@ -14,7 +14,7 @@ if is_installed("pydantic"):
         from pydantic import RootModel
 
 
-FnR = TypeVar("FnR", contravariant=True)
+FnR = TypeVar("FnR", contravariant=True)  # noqa: PLC0105
 Params = Tuple[List, Dict]
 
 
@@ -59,9 +59,9 @@ class BasicConverter:
         for p in signature.parameters.values():
             if p.kind == inspect.Parameter.POSITIONAL_ONLY:
                 self.args.update({p.name: p.default})
-            elif (
-                p.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD
-                or p.kind == inspect.Parameter.KEYWORD_ONLY
+            elif p.kind in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
             ):
                 self.kwargs.update({p.name: p.default})
             elif p.kind == inspect.Parameter.VAR_POSITIONAL:
@@ -96,14 +96,14 @@ class PydanticConverter:
         for p in signature.parameters.values():
             if p.kind == inspect.Parameter.POSITIONAL_ONLY:
                 self.args.append(p.name)
-            elif (
-                p.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD
-                or p.kind == inspect.Parameter.KEYWORD_ONLY
+            elif p.kind in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
             ):
                 self.kwargs.append(p.name)
-            elif (
-                p.kind == inspect.Parameter.VAR_POSITIONAL
-                or p.kind == inspect.Parameter.VAR_KEYWORD
+            elif p.kind in (
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD,
             ):
                 raise ValueError("*args and **kwargs are unsupported")
 

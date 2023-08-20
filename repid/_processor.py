@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, cast
 
 from repid._utils import _ArgsBucketInMessageId
 from repid.actor import ActorData, ActorResult
@@ -12,7 +12,7 @@ from repid.middlewares import middleware_wrapper
 
 if TYPE_CHECKING:
     from repid.connection import Connection
-    from repid.data import ParametersT, RoutingKeyT
+    from repid.data import ParametersT, ResultBucketT, RoutingKeyT
     from repid.data.protocols import ResultPropertiesT
 
 
@@ -49,14 +49,14 @@ class _Processor:
             "time_limit": time_limit,
         }
 
-        result: Any = None
+        result: str | None = None
         success: bool
         exception = None
 
         logger.info("Running actor '{actor_name}' on message {message_id}.", extra=logger_extra)
         logger.debug("Time limit is set to {time_limit}.", extra=logger_extra)
 
-        started_when = time.perf_counter_ns()
+        started_when = time.time_ns()
 
         try:
             args, kwargs = actor.converter.convert_inputs(payload)
@@ -81,7 +81,7 @@ class _Processor:
             success=success,
             exception=exception,
             started_when=started_when,
-            finished_when=time.perf_counter_ns(),
+            finished_when=time.time_ns(),
         )
 
     async def report_to_broker(
@@ -120,20 +120,31 @@ class _Processor:
     ) -> None:
         if result_params is None:
             return
-        await self._conn._rb.store_bucket(
-            result_params.id_,
-            self._conn._rb.BUCKET_CLASS(  # type: ignore[call-arg]
-                data=result_actor.data,
+
+        bucket: ResultBucketT
+
+        if result_actor.success:
+            bucket = self._conn._rb.BUCKET_CLASS(  # type: ignore[call-arg, assignment]
+                data=cast(str, result_actor.data),
                 started_when=result_actor.started_when,
                 finished_when=result_actor.finished_when,
                 success=result_actor.success,
-                exception=str(result_actor.exception)
-                if result_actor.exception is not None
-                else None,
+                exception=None,
                 timestamp=datetime.now(),
                 ttl=result_params.ttl,
-            ),
-        )
+            )
+        else:
+            bucket = self._conn._rb.BUCKET_CLASS(  # type: ignore[call-arg, assignment]
+                data=str(result_actor.exception),
+                started_when=result_actor.started_when,
+                finished_when=result_actor.finished_when,
+                success=result_actor.success,
+                exception=type(result_actor.exception).__name__,
+                timestamp=datetime.now(),
+                ttl=result_params.ttl,
+            )
+
+        await self._conn._rb.store_bucket(result_params.id_, bucket)
 
     async def process(
         self,

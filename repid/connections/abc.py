@@ -87,11 +87,11 @@ class ConsumerT(_WrappedABC):
     async def consume(self) -> tuple[RoutingKeyT, EncodedPayloadT, ParametersT]:
         """Consume one message. Consumer must be started."""
 
-    async def __aenter__(self) -> ConsumerT:
+    async def __aenter__(self) -> ConsumerT:  # noqa: PYI034
         await self.start()
         return self
 
-    async def __aexit__(self, *exc: tuple) -> None:
+    async def __aexit__(self, *exc: object) -> None:
         await self.finish()
 
     def __aiter__(self) -> ConsumerT:
@@ -185,7 +185,7 @@ class MessageBrokerT(_WrappedABC):
     async def queue_delete(self, queue_name: str) -> None:
         """Deletes the queue with all of its messages."""
 
-    def __new__(
+    def __new__(  # noqa: PYI034
         cls: type[MessageBrokerT],
         *args: tuple,  # noqa: ARG003
         **kwargs: dict,  # noqa: ARG003s
@@ -225,7 +225,7 @@ class BucketBrokerT(_WrappedABC):
     async def delete_bucket(self, id_: str) -> None:
         """Deletes the bucket."""
 
-    def __new__(
+    def __new__(  # noqa: PYI034
         cls: type[BucketBrokerT],
         *args: tuple,  # noqa: ARG003
         **kwargs: dict,  # noqa: ARG003

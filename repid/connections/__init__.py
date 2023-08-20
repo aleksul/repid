@@ -20,10 +20,9 @@ __all__ = [
 if is_installed("aiormq"):
     from repid.connections.rabbitmq import RabbitMessageBroker
 
-    __all__.append("RabbitMessageBroker")
+    __all__ += ["RabbitMessageBroker"]
 
 if is_installed("redis"):
     from repid.connections.redis import RedisBucketBroker, RedisMessageBroker
 
-    __all__.append("RedisBucketBroker")
-    __all__.append("RedisMessageBroker")
+    __all__ += ["RedisBucketBroker", "RedisMessageBroker"]

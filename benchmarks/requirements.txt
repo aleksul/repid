@@ -4,6 +4,6 @@ redis==5.0.0
 dramatiq[rabbitmq]==1.14.2
 celery==5.3.1
 amqp==5.1.1
-gevent==23.7.0
+gevent==23.9.1
 eventlet==0.33.3
 arq==0.25.0

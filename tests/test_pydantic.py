@@ -73,7 +73,7 @@ async def test_pydantic_model_args_converter() -> None:
     actual = None
 
     @r.actor
-    async def my_pydantic_actor(arg1: str, arg2: int = Field(alias="arg3")) -> None:  # noqa: B008
+    async def my_pydantic_actor(arg1: str, arg2: int = Field(alias="arg3")) -> None:
         nonlocal actual
         actual = MyBaseModel(arg1=arg1, arg2=arg2)
 
@@ -191,7 +191,7 @@ async def test_pydantic_model_positional_only_args_converter() -> None:
     @r.actor
     async def my_pydantic_actor(
         arg1: str,
-        arg2: int = Field(alias="arg3"),  # noqa: B008
+        arg2: int = Field(alias="arg3"),
         /,
     ) -> None:
         nonlocal actual

@@ -39,7 +39,7 @@ class EventLogModifier:
 
     def consumer_class_wrapper(self, class_: type[ConsumerT]) -> type[ConsumerT]:
         class ConsumerWrapper(class_):  # type: ignore[valid-type,misc]
-            def __new__(cls, *args: tuple, **kwargs: dict) -> Any:  # noqa: ARG003
+            def __new__(cls, *args: Any, **kwargs: Any) -> Any:  # noqa: ARG003
                 inst = super().__new__(cls)
 
                 for method in inst.__WRAPPED_METHODS__:
@@ -51,7 +51,7 @@ class EventLogModifier:
 
     def wrapper(self, fn: Callable) -> Callable:
         @wraps(fn)
-        async def inner(*args: tuple, **kwargs: dict) -> Any:
+        async def inner(*args: Any, **kwargs: Any) -> Any:
             result = await fn(*args, **kwargs)
             # log the event
             self.events.append(
@@ -76,7 +76,7 @@ class RunWorkerOnEnqueueModifier:
 
     def wrapper(self, fn: Callable) -> Callable:
         @wraps(fn)
-        async def inner(*args: tuple, **kwargs: dict) -> Any:
+        async def inner(*args: Any, **kwargs: Any) -> Any:
             result = await fn(*args, **kwargs)
 
             key: RoutingKeyT = args[0] if len(args) > 0 else kwargs.get("key")  # type: ignore[assignment]

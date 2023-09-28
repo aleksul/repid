@@ -42,7 +42,7 @@ class Middleware:
         asyncified = asyncify(fn)
         argspec = getfullargspec(fn)
 
-        async def wrapper(**kwargs: dict[str, Any]) -> Any:
+        async def wrapper(**kwargs: Any) -> Any:
             # leave only those kwargs that are in the function signature
             kwargs = {
                 key: value

@@ -6,7 +6,7 @@ from typing import Any, Callable, Coroutine, Dict, List, Protocol, Tuple, TypeVa
 from warnings import warn
 
 from repid._utils import JSON_ENCODER, is_installed
-from repid.dependencies.protocols import DependencyT
+from repid.dependencies.protocols import DependencyT, get_dependency
 
 if is_installed("pydantic"):
     from pydantic import BaseModel, Field, create_model
@@ -68,15 +68,15 @@ class BasicConverter:
         self.all_kwargs = False
         for p in signature.parameters.values():
             if p.kind == inspect.Parameter.POSITIONAL_ONLY:
-                if isinstance(p.annotation, DependencyT):
+                if get_dependency(p.annotation) is not None:
                     raise ValueError("Dependencies in positional-only arguments are not supported.")
                 self.args[p.name] = p.default
             elif p.kind in (
                 inspect.Parameter.POSITIONAL_OR_KEYWORD,
                 inspect.Parameter.KEYWORD_ONLY,
             ):
-                if isinstance(p.annotation, DependencyT):
-                    self.dependency_kwargs[p.name] = p.annotation
+                if (dep := get_dependency(p.annotation)) is not None:
+                    self.dependency_kwargs[p.name] = dep
                     continue
                 self.kwargs[p.name] = p.default
             elif p.kind == inspect.Parameter.VAR_POSITIONAL:
@@ -115,15 +115,15 @@ class PydanticConverter:
 
         for p in signature.parameters.values():
             if p.kind == inspect.Parameter.POSITIONAL_ONLY:
-                if isinstance(p.annotation, DependencyT):
+                if get_dependency(p.annotation) is not None:
                     raise ValueError("Dependencies in positional-only arguments are not supported.")
                 self.args.append(p.name)
             elif p.kind in (
                 inspect.Parameter.POSITIONAL_OR_KEYWORD,
                 inspect.Parameter.KEYWORD_ONLY,
             ):
-                if isinstance(p.annotation, DependencyT):
-                    self.dependency_kwargs[p.name] = p.annotation
+                if (dep := get_dependency(p.annotation)) is not None:
+                    self.dependency_kwargs[p.name] = dep
                     continue
                 self.kwargs.append(p.name)
             elif p.kind in (

@@ -6,6 +6,7 @@ from .converter import DefaultConverter as DefaultConverter
 from .converter import PydanticConverter as PydanticConverter
 from .converter import PydanticV1Converter as PydanticV1Converter
 from .data import *  # noqa: F403
+from .dependencies import Depends as Depends
 from .dependencies import Message as Message
 from .health_check_server import HealthCheckServer as HealthCheckServer
 from .health_check_server import HealthCheckServerSettings as HealthCheckServerSettings

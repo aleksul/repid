@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Coroutine, cast
 
 from repid._utils import _ArgsBucketInMessageId, _NoAction
 from repid.actor import ActorData, ActorResult
+from repid.dependencies import Depends
 from repid.dependencies import Message as MessageDependency
 from repid.logger import logger
 from repid.middlewares import middleware_wrapper
@@ -62,6 +63,7 @@ class _Processor:
 
         try:
             dependency_kwargs: dict[str, Any] = {}
+            unresolved_dependencies: dict[str, Coroutine] = {}
             for dep_name, dep in actor.converter.dependencies.items():
                 if dep is MessageDependency:
                     dependency_kwargs[dep_name] = MessageDependency(
@@ -72,8 +74,19 @@ class _Processor:
                         _actor_data=actor,
                         _actor_processing_started_when=started_when,
                     )
+                elif isinstance(dep, Depends):
+                    unresolved_dependencies[dep_name] = dep.fn()
                 else:
                     raise ValueError("Unsupported dependency argument.")
+
+            unresolved_dependencies_names, unresolved_dependencies_values = (
+                unresolved_dependencies.keys(),
+                unresolved_dependencies.values(),
+            )
+
+            resolved = await asyncio.gather(*unresolved_dependencies_values)
+
+            dependency_kwargs.update(dict(zip(unresolved_dependencies_names, resolved)))
 
             args, kwargs = actor.converter.convert_inputs(payload)
             _result = await asyncio.wait_for(

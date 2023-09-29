@@ -34,7 +34,7 @@ class RoutingKeyT(Protocol):
     def __init__(
         self,
         *,
-        id_: str = uuid4().hex,  # noqa: B008
+        id_: str = uuid4().hex,
         topic: str,
         queue: str = "default",
         priority: int = PrioritiesT.MEDIUM.value,

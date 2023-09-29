@@ -79,7 +79,7 @@ class RunWorkerOnEnqueueModifier:
         async def inner(*args: Any, **kwargs: Any) -> Any:
             result = await fn(*args, **kwargs)
 
-            key: RoutingKeyT = args[0] if len(args) > 0 else kwargs.get("key")  # type: ignore[assignment]
+            key: RoutingKeyT = args[0] if len(args) > 0 else kwargs.get("key")
 
             if key.queue in self._topics_by_queue and key.topic in self._topics_by_queue[key.queue]:
                 await self._worker_constructor().run()

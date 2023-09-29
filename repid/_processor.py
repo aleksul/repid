@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import datetime
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
-from repid._utils import _ArgsBucketInMessageId
+from repid._utils import _ArgsBucketInMessageId, _NoAction
 from repid.actor import ActorData, ActorResult
+from repid.dependencies import Message as MessageDependency
 from repid.logger import logger
 from repid.middlewares import middleware_wrapper
 
@@ -40,7 +41,8 @@ class _Processor:
         key: RoutingKeyT,
         parameters: ParametersT,
         payload: str,
-    ) -> ActorResult:
+        connection: Connection,
+    ) -> ActorResult | None:
         time_limit = parameters.execution_timeout.total_seconds()
 
         logger_extra = {
@@ -59,9 +61,28 @@ class _Processor:
         started_when = time.time_ns()
 
         try:
+            dependency_kwargs: dict[str, Any] = {}
+            for dep_name, dep in actor.converter.dependencies.items():
+                if dep is MessageDependency:
+                    dependency_kwargs[dep_name] = MessageDependency(
+                        key=key,
+                        raw_payload=payload,
+                        parameters=parameters,
+                        _connection=connection,
+                        _actor_data=actor,
+                        _actor_processing_started_when=started_when,
+                    )
+                else:
+                    raise ValueError("Unsupported dependency argument.")
+
             args, kwargs = actor.converter.convert_inputs(payload)
-            _result = await asyncio.wait_for(actor.fn(*args, **kwargs), timeout=time_limit)
+            _result = await asyncio.wait_for(
+                actor.fn(*args, **kwargs, **dependency_kwargs),
+                timeout=time_limit,
+            )
             result = actor.converter.convert_outputs(_result)
+        except _NoAction:
+            return None
         except Exception as exc:  # noqa: BLE001
             exception = exc
             success = False
@@ -154,7 +175,12 @@ class _Processor:
         parameters: ParametersT,
     ) -> None:
         raw_payload = await self.get_payload(payload)
-        result = await self.actor_run(actor, key, parameters, raw_payload)
+
+        result = await self.actor_run(actor, key, parameters, raw_payload, self._conn)
+        if result is None:  # actor has finished gracefully, but no action is required
+            self._processed += 1
+            return
+
         await self.report_to_broker(actor, key, payload, parameters, result)
         self._processed += 1
         await self.set_result_bucket(parameters.result, result)

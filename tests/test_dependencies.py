@@ -1,11 +1,14 @@
 import asyncio
+import sys
 import time
 from datetime import datetime, timedelta
 
 import pytest
+from annotated_types import Ge
 
 from repid import (
     Connection,
+    Depends,
     GetInMemoryQueueT,
     InMemoryMessageBroker,
     Job,
@@ -14,6 +17,11 @@ from repid import (
     Router,
     Worker,
 )
+
+if sys.version_info >= (3, 10):
+    from typing import Annotated
+else:
+    from typing_extensions import Annotated
 
 pytestmark = pytest.mark.usefixtures("fake_connection")
 
@@ -325,3 +333,152 @@ async def test_message_dependency_result_bucket_broker_not_available(
         await w.run()
 
     assert was_raised is True
+
+
+async def test_depends() -> None:
+    w = Worker(messages_limit=1)
+
+    received = None
+
+    async def mydependency() -> str:
+        return "aaa"
+
+    @w.actor
+    async def myactor(arg1: str, d: Annotated[str, Depends(mydependency)]) -> None:  # noqa: ARG001
+        nonlocal received
+        received = d
+
+    await w.declare_all_queues()
+    await Job("myactor", args={"arg1": "hello"}).enqueue()
+    await w.run()
+
+    assert received == "aaa"
+
+
+def _mydependency() -> str:
+    return "aaa"
+
+
+async def test_depends_run_in_process() -> None:
+    w = Worker(messages_limit=1)
+
+    received = None
+
+    @w.actor
+    async def myactor(
+        arg1: str,  # noqa: ARG001
+        d: Annotated[
+            str,
+            Depends(_mydependency, run_in_process=True),  # has to be top-level function
+        ],
+    ) -> None:
+        nonlocal received
+        received = d
+
+    await w.declare_all_queues()
+    await Job("myactor", args={"arg1": "hello"}).enqueue()
+    await w.run()
+
+    assert received == "aaa"
+
+
+async def test_multiple_depends() -> None:
+    w = Worker(messages_limit=1)
+
+    received = None
+    received2 = None
+
+    async def mydependency() -> str:
+        return "aaa"
+
+    def myseconddependency() -> int:
+        return 123
+
+    @w.actor
+    async def myactor(
+        arg1: str,  # noqa: ARG001
+        d: Annotated[str, Depends(mydependency)],
+        d2: Annotated[int, Depends(myseconddependency)],
+    ) -> None:
+        nonlocal received, received2
+        received = d
+        received2 = d2
+
+    await w.declare_all_queues()
+    await Job("myactor", args={"arg1": "hello"}).enqueue()
+    await w.run()
+
+    assert received == "aaa"
+    assert received2 == 123
+
+
+async def test_dependency_override() -> None:
+    w = Worker(messages_limit=1)
+
+    received = None
+
+    async def mydependency() -> str:
+        return "aaa"
+
+    def another_dependency() -> str:
+        return "bbb"
+
+    dep = Depends(mydependency)
+
+    @w.actor
+    async def myactor(arg1: str, d: Annotated[str, dep]) -> None:  # noqa: ARG001
+        nonlocal received
+        received = d
+
+    dep.override(another_dependency)
+
+    await w.declare_all_queues()
+    await Job("myactor", args={"arg1": "hello"}).enqueue()
+    await w.run()
+
+    assert received == "bbb"
+
+
+async def test_fake_depends() -> None:
+    w = Worker(messages_limit=1)
+
+    received = None
+
+    async def mydependency() -> str:
+        return "aaa"
+
+    class MyDepends:
+        __repid_dependency__ = True
+
+    @w.actor
+    async def myactor(arg1: str, d: Annotated[str, MyDepends()]) -> None:  # noqa: ARG001
+        nonlocal received
+        received = d
+
+    await w.declare_all_queues()
+    j = Job("myactor", args={"arg1": "hello"})
+    await j.enqueue()
+    await w.run()
+
+    assert received is None
+    result = await j.result
+    assert result is not None
+    assert result.success is False
+    assert result.exception == "ValueError"
+
+
+async def test_not_depends_but_annotated() -> None:
+    w = Worker(messages_limit=1)
+
+    received = None
+
+    @w.actor
+    async def myactor(arg1: str, d: Annotated[str, Ge(2)]) -> None:  # noqa: ARG001
+        nonlocal received
+        received = d
+
+    await w.declare_all_queues()
+    await Job("myactor", args={"arg1": "hello", "d": 3}).enqueue()
+    await w.run()
+
+    assert received == 3

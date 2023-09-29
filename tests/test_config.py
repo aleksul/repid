@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib.metadata
 import sys
 from importlib.metadata import EntryPoint
-from typing import Iterator
+from typing import Any, Iterator
 from unittest.mock import patch
 
 import pytest
@@ -60,8 +60,8 @@ def _entry_points(monkeypatch: pytest.MonkeyPatch) -> None:
     if sys.version_info >= (3, 10):
 
         def mock_entry_points(  # noqa: F811
-            *args: tuple,
-            **kwargs: dict,
+            *args: Any,
+            **kwargs: Any,
         ) -> importlib.metadata.EntryPoints:
             return importlib.metadata.EntryPoints(
                 [

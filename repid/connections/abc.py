@@ -29,8 +29,8 @@ class _WrappedABC(ABC):
 
     def __new__(
         cls: type[WrappedABCSelf],
-        *args: tuple,  # noqa: ARG003
-        **kwargs: dict,  # noqa: ARG003
+        *args: Any,  # noqa: ARG003
+        **kwargs: Any,  # noqa: ARG003
     ) -> WrappedABCSelf:
         inst = super().__new__(cls)
 
@@ -187,8 +187,8 @@ class MessageBrokerT(_WrappedABC):
 
     def __new__(  # noqa: PYI034
         cls: type[MessageBrokerT],
-        *args: tuple,  # noqa: ARG003
-        **kwargs: dict,  # noqa: ARG003s
+        *args: Any,  # noqa: ARG003
+        **kwargs: Any,  # noqa: ARG003s
     ) -> MessageBrokerT:
         cls.ROUTING_KEY_CLASS = deepcopy(Config.ROUTING_KEY)
         cls.PARAMETERS_CLASS = deepcopy(Config.PARAMETERS)
@@ -227,8 +227,8 @@ class BucketBrokerT(_WrappedABC):
 
     def __new__(  # noqa: PYI034
         cls: type[BucketBrokerT],
-        *args: tuple,  # noqa: ARG003
-        **kwargs: dict,  # noqa: ARG003
+        *args: Any,  # noqa: ARG003
+        **kwargs: Any,  # noqa: ARG003
     ) -> BucketBrokerT:
         cls.BUCKET_CLASS = deepcopy(Config.BUCKET)
 

@@ -5,6 +5,7 @@ import time
 from datetime import timedelta
 from random import random
 from signal import SIGINT
+from typing import Any
 
 import httpx
 import pytest
@@ -222,7 +223,7 @@ async def test_all_args_job() -> None:
     hit = False
 
     @router.actor
-    async def awesome_job(*args: tuple) -> None:
+    async def awesome_job(*args: Any) -> None:
         nonlocal hit, assertion1, assertion2
         assert args[0] == assertion1
         assert args[1] == assertion2
@@ -247,7 +248,7 @@ async def test_all_kwargs_job() -> None:
     hit = False
 
     @router.actor
-    async def awesome_job(**kwargs: dict) -> None:
+    async def awesome_job(**kwargs: Any) -> None:
         nonlocal hit, assertion1, assertion2
         assert kwargs["my_arg1"] == assertion1
         assert kwargs["my_arg2"] == assertion2

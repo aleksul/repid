@@ -173,7 +173,7 @@ import repid
 from myapp.app import actor_with_args, myrouter
 
 
-@pytest.mark.repid.with_args(routers=[r])
+@pytest.mark.repid.with_args(routers=[myrouter])
 async def test_actor_with_event_log(repid_get_event_log: repid.GetEventLogT) -> None:
     j = repid.Job("actor_with_args", args=dict(user_id=123, user_name="Alex", user_messages=[]))
     await j.queue.declare()

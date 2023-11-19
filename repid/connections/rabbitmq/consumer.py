@@ -110,6 +110,7 @@ class _RabbitConsumer(ConsumerT):
         if self.__is_paused or not self.__is_consuming:
             await asyncio.sleep(0.1)
             await self.broker._channel.basic_reject(message.delivery_tag)
+            logger.debug("Consumer is paused or is not set to consume message.")
             return
 
         msg_topic: str | None = None
@@ -124,12 +125,18 @@ class _RabbitConsumer(ConsumerT):
         if msg_topic is None:  # pragma: no cover
             await asyncio.sleep(0.1)  # poison message fix
             await self.broker._channel.basic_reject(message.delivery_tag)
+            logger.debug(
+                "Message has no topic set or message wasn't scheduled by repid-like producer.",
+            )
             return
 
         # reject the message if the topic isn't in the range of specified
         if self.topics and msg_topic not in self.topics:
             await asyncio.sleep(0.1)  # poison message fix
             await self.broker._channel.basic_reject(message.delivery_tag)
+            logger.debug(
+                "Unknown message's topic. Check if Actor name matches Job or message topic name.",
+            )
             return
 
         # decode message payload (rabbitmq abstraction level)
@@ -140,6 +147,7 @@ class _RabbitConsumer(ConsumerT):
         # put message to a dead queue if it's overdue
         if params.is_overdue:
             await self.broker._channel.basic_nack(message.delivery_tag, requeue=False)
+            logger.debug("Message is overdue, placing it in dlx.")
             return
 
         # save delivery tag for the future

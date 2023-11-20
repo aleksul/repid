@@ -6,7 +6,7 @@ ci:
 
 repos:
 - repo: https://github.com/pre-commit/pre-commit-hooks
-  rev: v4.4.0
+  rev: v4.5.0
   hooks:
   - id: trailing-whitespace
   - id: debug-statements
@@ -18,12 +18,12 @@ repos:
   - id: end-of-file-fixer
 
 - repo: https://github.com/psf/black
-  rev: 23.9.1
+  rev: 23.11.0
   hooks:
   - id: black
 
 - repo: https://github.com/astral-sh/ruff-pre-commit
-  rev: v0.0.291
+  rev: v0.1.6
   hooks:
   - id: ruff
     args: [--fix, --exit-non-zero-on-fix]
@@ -34,7 +34,7 @@ repos:
   - id: markdownlint-fix
 
 - repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
-  rev: v2.10.0
+  rev: v2.11.0
   hooks:
   - id: pretty-format-toml
     args: [--autofix]

@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import inspect
 import json
-from typing import Any, Callable, Coroutine, Dict, List, Protocol, Tuple, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Coroutine, Dict, List, Protocol, Tuple, TypeVar
 from warnings import warn
 
-from repid._utils import JSON_ENCODER, is_installed
-from repid.dependencies.protocols import DependencyT, get_dependency
+from repid._utils import JSON_ENCODER, get_dependency, is_installed
 
 if is_installed("pydantic"):
     from pydantic import BaseModel, Field, create_model
@@ -14,6 +13,8 @@ if is_installed("pydantic"):
     if is_installed("pydantic", ">=2.0.0,<3.0.0"):
         from pydantic import RootModel
 
+if TYPE_CHECKING:
+    from repid.dependencies.protocols import DependencyT
 
 FnR = TypeVar("FnR", contravariant=True)  # noqa: PLC0105
 Params = Tuple[List, Dict]

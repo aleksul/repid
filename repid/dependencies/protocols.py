@@ -1,22 +1,38 @@
 from __future__ import annotations
 
 import sys
-from typing import Any, Protocol, runtime_checkable
+from enum import Enum
+from typing import Any, Protocol, Union
 
-if sys.version_info >= (3, 9):  # pragma: no cover
-    from typing import Annotated, get_origin
-else:  # pragma: no cover
-    from typing_extensions import Annotated, get_origin
+if sys.version_info >= (3, 11):  # pragma: no cover
+    from typing import Self
+else:
+    from typing_extensions import Self
 
-
-@runtime_checkable
-class DependencyT(Protocol):
-    __repid_dependency__: bool = True
+from repid.dependencies.resolver_context import ResolverContext
 
 
-def get_dependency(t: Any) -> DependencyT | None:
-    if isinstance(t, DependencyT):
-        return t
-    if get_origin(t) is Annotated and isinstance(dep := t.__metadata__[0], DependencyT):
-        return dep
-    return None
+class DependencyKind(str, Enum):
+    DIRECT = "direct"
+    ANNOTATED = "annotated"
+
+
+class DirectDependencyT(Protocol):
+    __repid_dependency__: DependencyKind = DependencyKind.DIRECT
+
+    @classmethod
+    def construct_as_dependency(cls, *, context: ResolverContext) -> Self:
+        ...
+
+    async def resolve(self) -> Any:
+        ...
+
+
+class AnnotatedDependencyT(Protocol):
+    __repid_dependency__: DependencyKind = DependencyKind.ANNOTATED
+
+    async def resolve(self, *, context: ResolverContext) -> Any:
+        ...
+
+
+DependencyT = Union[DirectDependencyT, AnnotatedDependencyT]

@@ -12,7 +12,7 @@ from repid import (
     GetInMemoryQueueT,
     InMemoryMessageBroker,
     Job,
-    Message,
+    MessageDependency,
     Repid,
     Router,
     Worker,
@@ -32,7 +32,7 @@ async def test_simple_message_dependency() -> None:
     received = None
 
     @w.actor
-    async def myactor(arg1: str, m: Message) -> None:  # noqa: ARG001
+    async def myactor(arg1: str, m: MessageDependency) -> None:  # noqa: ARG001
         nonlocal received
         received = m
 
@@ -40,14 +40,14 @@ async def test_simple_message_dependency() -> None:
     await Job("myactor", args={"arg1": "hello"}).enqueue()
     await w.run()
 
-    assert isinstance(received, Message)
+    assert isinstance(received, MessageDependency)
 
 
 async def test_message_dependency_ack(repid_get_in_memory_queue: GetInMemoryQueueT) -> None:
     w = Worker(messages_limit=1)
 
     @w.actor
-    async def myactor(m: Message) -> None:
+    async def myactor(m: MessageDependency) -> None:
         await m.ack()
 
     await w.declare_all_queues()
@@ -71,7 +71,7 @@ async def test_message_dependency_nack(repid_get_in_memory_queue: GetInMemoryQue
     w = Worker(messages_limit=1)
 
     @w.actor
-    async def myactor(m: Message) -> None:
+    async def myactor(m: MessageDependency) -> None:
         await m.nack()
 
     await w.declare_all_queues()
@@ -95,7 +95,7 @@ async def test_message_dependency_reject(repid_get_in_memory_queue: GetInMemoryQ
     w = Worker(messages_limit=1)
 
     @w.actor
-    async def myactor(m: Message) -> None:
+    async def myactor(m: MessageDependency) -> None:
         await m.reject()
 
     await w.declare_all_queues()
@@ -115,13 +115,52 @@ async def test_message_dependency_reject(repid_get_in_memory_queue: GetInMemoryQ
     assert len(q.processing) == 0
 
 
+async def test_message_dependency_retry(repid_get_in_memory_queue: GetInMemoryQueueT) -> None:
+    w = Worker(messages_limit=1)
+
+    counter = 0
+
+    @w.actor(retry_policy=lambda retry_number=1: timedelta(seconds=1))  # noqa: ARG005
+    async def myactor(m: MessageDependency) -> None:
+        nonlocal counter
+        counter += 1
+        await m.retry()
+
+    await w.declare_all_queues()
+    await Job("myactor", retries=1).enqueue()  # message sets some amount of retries
+
+    q = repid_get_in_memory_queue("default")
+    assert q is not None
+    assert q.simple.qsize() == 1
+
+    await w.run()
+
+    q = repid_get_in_memory_queue("default")
+    assert q is not None
+    assert q.simple.qsize() == 0
+    assert len(q.dead) == 0
+    assert len(q.delayed) == 1
+    assert len(q.processing) == 0
+
+    await w.run()
+
+    assert counter == 2
+
+    q = repid_get_in_memory_queue("default")
+    assert q is not None
+    assert q.simple.qsize() == 0
+    assert len(q.dead) == 1  # failed as exceeded amount of retries
+    assert len(q.delayed) == 0
+    assert len(q.processing) == 0
+
+
 async def test_message_dependency_force_retry(repid_get_in_memory_queue: GetInMemoryQueueT) -> None:
     w = Worker(messages_limit=1)
 
     counter = 0
 
     @w.actor(retry_policy=lambda retry_number=1: timedelta(seconds=1))  # noqa: ARG005
-    async def myactor(m: Message) -> None:
+    async def myactor(m: MessageDependency) -> None:
         nonlocal counter
         counter += 1
         await m.force_retry()
@@ -153,7 +192,7 @@ async def test_message_dependency_reschedule(repid_get_in_memory_queue: GetInMem
     counter = 0
 
     @r.actor(retry_policy=lambda retry_number=1: timedelta(seconds=1))  # noqa: ARG005
-    async def myactor(m: Message) -> None:
+    async def myactor(m: MessageDependency) -> None:
         nonlocal counter
         await asyncio.sleep(0.1)
         counter += 1
@@ -193,7 +232,7 @@ async def test_message_dependency_set_result() -> None:
     w = Worker(messages_limit=1)
 
     @w.actor
-    async def myactor(arg1: str, m: Message) -> None:
+    async def myactor(arg1: str, m: MessageDependency) -> None:
         m.set_result(arg1)
         await m.ack()
 
@@ -212,7 +251,7 @@ async def test_message_dependency_set_exception() -> None:
     w = Worker(messages_limit=1)
 
     @w.actor
-    async def myactor(arg1: str, m: Message) -> None:
+    async def myactor(arg1: str, m: MessageDependency) -> None:
         m.set_result(arg1)  # result won't be set since setting exception will override it
         m.set_exception(ValueError(arg1))
         await m.ack()
@@ -246,7 +285,7 @@ async def test_message_dependency_add_callback() -> None:
         time.sleep(0.1)
 
     @w.actor
-    async def myactor(arg1: str, m: Message) -> None:
+    async def myactor(arg1: str, m: MessageDependency) -> None:
         m.add_callback(callback_1)
         m.set_result(arg1)
         m.add_callback(callback_2)
@@ -280,7 +319,7 @@ async def test_message_dependency_result_params_are_not_set(command: str) -> Non
     was_raised = False
 
     @w.actor
-    async def myactor(m: Message) -> str:
+    async def myactor(m: MessageDependency) -> str:
         nonlocal was_raised
         try:
             exec(command)
@@ -318,7 +357,7 @@ async def test_message_dependency_result_bucket_broker_not_available(
         w = Worker(messages_limit=1)
 
         @w.actor
-        async def myactor(m: Message) -> str:
+        async def myactor(m: MessageDependency) -> str:
             nonlocal was_raised
             try:
                 exec(command)
@@ -335,16 +374,17 @@ async def test_message_dependency_result_bucket_broker_not_available(
     assert was_raised is True
 
 
+def _mydependency() -> str:
+    return "aaa"
+
+
 async def test_depends() -> None:
     w = Worker(messages_limit=1)
 
     received = None
 
-    async def mydependency() -> str:
-        return "aaa"
-
     @w.actor
-    async def myactor(arg1: str, d: Annotated[str, Depends(mydependency)]) -> None:  # noqa: ARG001
+    async def myactor(arg1: str, d: Annotated[str, Depends(_mydependency)]) -> None:  # noqa: ARG001
         nonlocal received
         received = d
 
@@ -353,10 +393,6 @@ async def test_depends() -> None:
     await w.run()
 
     assert received == "aaa"
-
-
-def _mydependency() -> str:
-    return "aaa"
 
 
 async def test_depends_run_in_process() -> None:
@@ -448,7 +484,7 @@ async def test_fake_depends() -> None:
         return "aaa"
 
     class MyDepends:
-        __repid_dependency__ = True
+        __repid_dependency__ = "annotated"
 
     @w.actor
     async def myactor(arg1: str, d: Annotated[str, MyDepends()]) -> None:  # noqa: ARG001
@@ -464,7 +500,7 @@ async def test_fake_depends() -> None:
     result = await j.result
     assert result is not None
     assert result.success is False
-    assert result.exception == "ValueError"
+    assert result.exception == "AttributeError"
 
 
 async def test_not_depends_but_annotated() -> None:

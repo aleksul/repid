@@ -3,12 +3,11 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Coroutine, cast
+from typing import TYPE_CHECKING, Coroutine, cast
 
 from repid._utils import _ArgsBucketInMessageId, _NoAction
 from repid.actor import ActorData, ActorResult
-from repid.dependencies import Depends
-from repid.dependencies import Message as MessageDependency
+from repid.dependencies import DependencyKind, ResolverContext
 from repid.logger import logger
 from repid.middlewares import middleware_wrapper
 
@@ -16,6 +15,7 @@ if TYPE_CHECKING:
     from repid.connection import Connection
     from repid.data import ParametersT, ResultBucketT, RoutingKeyT
     from repid.data.protocols import ResultPropertiesT
+    from repid.dependencies.protocols import AnnotatedDependencyT, DirectDependencyT
 
 
 class _Processor:
@@ -61,22 +61,31 @@ class _Processor:
 
         started_when = time.time_ns()
 
+        resolver_context = ResolverContext(
+            message_key=key,
+            message_raw_payload=payload,
+            message_parameters=parameters,
+            connection=connection,
+            actor_data=actor,
+            actor_processing_started_when=started_when,
+        )
+
         try:
-            dependency_kwargs: dict[str, Any] = {}
             unresolved_dependencies: dict[str, Coroutine] = {}
             for dep_name, dep in actor.converter.dependencies.items():
-                if dep is MessageDependency:
-                    dependency_kwargs[dep_name] = MessageDependency(
-                        key=key,
-                        raw_payload=payload,
-                        parameters=parameters,
-                        _connection=connection,
-                        _actor_data=actor,
-                        _actor_processing_started_when=started_when,
+                dep_kind = getattr(dep, "__repid_dependency__", "")
+                if dep_kind == DependencyKind.DIRECT:
+                    unresolved_dependencies[dep_name] = (
+                        cast("DirectDependencyT", dep)
+                        .construct_as_dependency(context=resolver_context)
+                        .resolve()
                     )
-                elif isinstance(dep, Depends):
-                    unresolved_dependencies[dep_name] = dep.fn()
-                else:
+                elif dep_kind == DependencyKind.ANNOTATED:
+                    unresolved_dependencies[dep_name] = cast("AnnotatedDependencyT", dep).resolve(
+                        context=resolver_context,
+                    )
+                else:  # pragma: no cover
+                    # this should never happen
                     raise ValueError("Unsupported dependency argument.")
 
             unresolved_dependencies_names, unresolved_dependencies_values = (
@@ -86,7 +95,7 @@ class _Processor:
 
             resolved = await asyncio.gather(*unresolved_dependencies_values)
 
-            dependency_kwargs.update(dict(zip(unresolved_dependencies_names, resolved)))
+            dependency_kwargs = dict(zip(unresolved_dependencies_names, resolved))
 
             args, kwargs = actor.converter.convert_inputs(payload)
             _result = await asyncio.wait_for(

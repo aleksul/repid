@@ -418,6 +418,29 @@ async def test_depends_run_in_process() -> None:
     assert received == "aaa"
 
 
+async def test_sub_depends() -> None:
+    w = Worker(messages_limit=1)
+
+    received = None
+
+    def mysubdependency(m: MessageDependency) -> str:
+        return m.raw_payload
+
+    async def mydependency(rand: Annotated[int, Depends(mysubdependency)]) -> str:
+        return str(rand) + "aaa"
+
+    @w.actor
+    async def myactor(arg1: str, d: Annotated[str, Depends(mydependency)]) -> None:  # noqa: ARG001
+        nonlocal received
+        received = d
+
+    await w.declare_all_queues()
+    await Job("myactor", args={"arg1": "hello"}).enqueue()
+    await w.run()
+
+    assert received == '{"arg1":"hello"}aaa'
+
+
 async def test_multiple_depends() -> None:
     w = Worker(messages_limit=1)
 

@@ -66,13 +66,13 @@ def qnc(
         priority (int, optional): priority of the queue. Defaults to PrioritiesT.MEDIUM.
         delayed (bool, optional): True, if the queue is for delayed messages. Defaults to False.
         dead (bool, optional): True, if the queue is dead-letter.
-        If set to True, both `priority` and `delayed` are ignored. Defaults to False.
+        If set to True, takes precedence over `delayed`. Defaults to False.
 
     Returns:
         str: queue name, repsresenting all the arguments.
     """
     if dead:
-        return f"q:{queue_name}:dead"
+        return f"q:{queue_name}:{priority}:dead"
     return f"q:{queue_name}:{priority}:{'d' if delayed else 'n'}"
 
 

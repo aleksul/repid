@@ -57,7 +57,7 @@ class RedisMessageBroker(MessageBrokerT):
             )
 
     def __mark_dead(self, key: RoutingKeyT, pipe: Pipeline) -> None:
-        pipe.lpush(qnc(key.queue, dead=True), mnc(key, short=True))
+        pipe.lpush(qnc(key.queue, key.priority, dead=True), mnc(key, short=True))
 
     def __unmark_processing(self, key: RoutingKeyT, pipe: Pipeline) -> None:
         pipe.zrem(self.processing_queue, mnc(key, short=True))

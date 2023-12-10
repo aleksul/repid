@@ -441,6 +441,28 @@ async def test_sub_depends() -> None:
     assert received == '{"arg1":"hello"}aaa'
 
 
+def test_positional_only_dependency() -> None:
+    def mysubdependency(m: MessageDependency, /) -> str:
+        return m.raw_payload
+
+    with pytest.raises(
+        ValueError,
+        match="Dependencies in positional-only arguments are not supported.",
+    ):
+        Depends(mysubdependency)
+
+
+def test_non_default_arg() -> None:
+    def mysubdependency(m: None) -> str:
+        return f"{m}"
+
+    with pytest.raises(
+        ValueError,
+        match="Non-dependency arguments without defaults are not supported.",
+    ):
+        Depends(mysubdependency)
+
+
 async def test_multiple_depends() -> None:
     w = Worker(messages_limit=1)
 

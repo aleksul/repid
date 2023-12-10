@@ -35,7 +35,7 @@ class RedisMessageBroker(MessageBrokerT):
 
     async def disconnect(self) -> None:
         await self.maintenance()
-        await self.conn.close(close_connection_pool=True)
+        await self.conn.aclose(close_connection_pool=True)  # type: ignore[attr-defined]
 
     def __put_in_queue(
         self,

@@ -21,11 +21,11 @@ class Depends:
         "_subdependencies",
     )
 
-    def __init__(self, fn: Callable[[], Any | Coroutine], *, run_in_process: bool = False) -> None:
+    def __init__(self, fn: Callable[..., Any | Coroutine], *, run_in_process: bool = False) -> None:
         self._fn = asyncify(fn, run_in_process=run_in_process)
         self._update_subdependencies()
 
-    def override(self, fn: Callable[[], Any | Coroutine], *, run_in_process: bool = False) -> None:
+    def override(self, fn: Callable[..., Any | Coroutine], *, run_in_process: bool = False) -> None:
         self._fn = asyncify(fn, run_in_process=run_in_process)
         self._update_subdependencies()
 
@@ -80,3 +80,7 @@ class Depends:
                 and (dep := get_dependency(p.annotation)) is not None
             ):
                 self._subdependencies[p.name] = dep
+                continue
+
+            if p.default is inspect.Parameter.empty:
+                raise ValueError("Non-dependency arguments without defaults are not supported.")

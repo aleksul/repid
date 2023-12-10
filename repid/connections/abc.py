@@ -14,6 +14,7 @@ from typing import (
 )
 
 from repid.config import Config
+from repid.message import MessageCategory
 from repid.middlewares import middleware_wrapper
 
 if TYPE_CHECKING:
@@ -62,6 +63,7 @@ class ConsumerT(_WrappedABC):
         queue_name: str,
         topics: Iterable[str] | None = None,
         max_unacked_messages: int | None = None,
+        category: MessageCategory = MessageCategory.NORMAL,
     ) -> None:
         ...
 
@@ -131,15 +133,16 @@ class MessageBrokerT(_WrappedABC):
         queue_name: str,
         topics: Iterable[str] | None = None,
         max_unacked_messages: int | None = None,
+        category: MessageCategory = MessageCategory.NORMAL,
     ) -> ConsumerT:
         """Consumes messages from the specified queue.
         If topics are specified, each message will be checked for compliance with one of the topics.
         Otherwise every message from the queue can be consumed.
-        Consumer should informs the broker that job execution is started.
+        Consumer should inform the broker that job execution is started.
         Some brokers can adjust their load based on max_unacked_messages parameter.
         """
 
-        consumer = self.CONSUMER_CLASS(self, queue_name, topics, max_unacked_messages)
+        consumer = self.CONSUMER_CLASS(self, queue_name, topics, max_unacked_messages, category)
         consumer._signal_emitter = self._signal_emitter
         return consumer
 

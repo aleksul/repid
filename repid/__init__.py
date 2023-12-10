@@ -15,6 +15,7 @@ from .job import Job as Job
 from .logger import logger as logger
 from .main import Repid as Repid
 from .message import Message as Message
+from .message import MessageCategory as MessageCategory
 from .queue import Queue as Queue
 from .retry_policy import RetryPolicyT as RetryPolicyT
 from .retry_policy import default_retry_policy_factory as default_retry_policy_factory

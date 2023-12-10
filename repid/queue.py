@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, AsyncIterator, Iterable
 
 from repid._utils import VALID_NAME
 from repid.main import Repid
-from repid.message import Message
+from repid.message import Message, MessageCategory
 
 if TYPE_CHECKING:
     from repid.connection import Connection
@@ -31,11 +31,13 @@ class Queue:
         self,
         topics: Iterable[str] | None = None,
         max_unacked_messages: int | None = None,
+        category: MessageCategory = MessageCategory.NORMAL,
     ) -> AsyncIterator[Message]:
         consumer = self._conn.message_broker.get_consumer(
             queue_name=self.name,
             topics=topics,
             max_unacked_messages=max_unacked_messages,
+            category=category,
         )
         async with consumer:
             async for key, raw_payload, parameters in consumer:
@@ -44,6 +46,7 @@ class Queue:
                     raw_payload=raw_payload,
                     parameters=parameters,
                     _connection=self._conn,
+                    _category=category,
                 )
 
     async def declare(self) -> None:

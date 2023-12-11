@@ -1,9 +1,9 @@
 repid[amqp]==1.4.3
-uvloop==0.17.0
+uvloop==0.19.0
 redis==5.0.1
-dramatiq[rabbitmq]==1.14.2
-celery==5.3.4
-amqp==5.1.1
+dramatiq[rabbitmq]==1.15.0
+celery==5.3.6
+amqp==5.2.0
 gevent==23.9.1
 eventlet==0.33.3
 arq==0.25.0

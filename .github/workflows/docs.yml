@@ -33,4 +33,4 @@ jobs:
       run: echo "VER=$(pdm show --version repid)" >> $GITHUB_ENV
 
     - name: Mike update version
-      run: pdm run mike deploy --push --force --update-aliases ${{ env.VER }} latest
+      run: pdm run mike deploy --push --update-aliases ${{ env.VER }} latest

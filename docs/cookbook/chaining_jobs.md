@@ -21,7 +21,6 @@ Now, let's imagine you were designing some pipeline of jobs. The first one would
 of a greetings message and pass it to the second job. The second job will append to the greetings
 message some information about user's id.
 
-
 ```python
 import asyncio
 import os

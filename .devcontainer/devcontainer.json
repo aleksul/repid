@@ -16,6 +16,7 @@
 				"ms-python.vscode-pylance",
 				"matangover.mypy",
 				"charliermarsh.ruff",
+				"ms-python.black-formatter",
 				"njpwerner.autodocstring",
 				"ryanluker.vscode-coverage-gutters",
 				"seatonjiang.gitmoji-vscode"

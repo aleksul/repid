@@ -21,7 +21,7 @@ class RedisBucketBroker(BucketBrokerT):
         await self.conn.ping()
 
     async def disconnect(self) -> None:
-        await self.conn.close(close_connection_pool=True)
+        await self.conn.aclose(close_connection_pool=True)  # type: ignore[attr-defined]
 
     async def get_bucket(self, id_: str) -> BucketT | None:
         logger.debug("Getting bucket with id: {id_}.", extra={"id_": id_})

@@ -16,8 +16,12 @@ nav:
   - Jobs, Actors and Workers: user_guide/jobs_actors_and_workers.md
   - Deferred scheduling: user_guide/deferred_scheduling.md
   - Arguments & Results: user_guide/arguments_and_results.md
+  - Dependency injection: user_guide/dependency_injection.md
+  - Message & Eager response: user_guide/message_and_eager_response.md
   - Testing: user_guide/testing.md
 - Cookbook:
+  - Chaining jobs: cookbook/chaining_jobs.md
+  - Reschedule dead messages: cookbook/reschedule_dead_messages.md
   - Use with FastAPI & Pydantic: cookbook/fastapi_and_pydantic.md
 - Advanced User Guide:
   - Validating with Pydantic: advanced_user_guide/validating_with_pydantic.md

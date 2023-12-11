@@ -66,13 +66,13 @@ def qnc(
         priority (int, optional): priority of the queue. Defaults to PrioritiesT.MEDIUM.
         delayed (bool, optional): True, if the queue is for delayed messages. Defaults to False.
         dead (bool, optional): True, if the queue is dead-letter.
-        If set to True, both `priority` and `delayed` are ignored. Defaults to False.
+        If set to True, takes precedence over `delayed`. Defaults to False.
 
     Returns:
-        str: queue name, repsresenting all the arguments.
+        str: queue name, representing all the arguments.
     """
     if dead:
-        return f"q:{queue_name}:dead"
+        return f"q:{queue_name}:{priority}:dead"
     return f"q:{queue_name}:{priority}:{'d' if delayed else 'n'}"
 
 
@@ -89,12 +89,21 @@ def mnc(
         Defaults to False.
 
     Returns:
-        str: message name, repsresenting all the arguments.
+        str: message name, representing all the arguments.
     """
     prefix = ""
     if not short:
         prefix = f"m:{key.queue}:{key.priority}:"
     return f"{prefix}{key.topic}:{key.id_}"
+
+
+def full_message_name_from_short(short_name: str, full_queue_name: str) -> str:
+    _, queue_name, priority, _ = full_queue_name.split(":")
+    return f"m:{queue_name}:{priority}:{short_name}"
+
+
+def get_queue_marker(full_queue_name: str) -> str:
+    return full_queue_name.split(":")[-1]
 
 
 def parse_short_message_name(short_name: str) -> tuple[str, str]:

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import inspect
 import json
-from typing import Any, Callable, Coroutine, Dict, List, Protocol, Tuple, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Coroutine, Dict, List, Protocol, Tuple, TypeVar
 from warnings import warn
 
-from repid._utils import JSON_ENCODER, is_installed
+from repid._utils import JSON_ENCODER, get_dependency, is_installed
 
 if is_installed("pydantic"):
     from pydantic import BaseModel, Field, create_model
@@ -13,6 +13,8 @@ if is_installed("pydantic"):
     if is_installed("pydantic", ">=2.0.0,<3.0.0"):
         from pydantic import RootModel
 
+if TYPE_CHECKING:
+    from repid.dependencies.protocols import DependencyT
 
 FnR = TypeVar("FnR", contravariant=True)  # noqa: PLC0105
 Params = Tuple[List, Dict]
@@ -26,6 +28,10 @@ class ConverterT(Protocol[FnR]):
         ...
 
     def convert_outputs(self, data: FnR) -> str:
+        ...
+
+    @property
+    def dependencies(self) -> dict[str, DependencyT]:
         ...
 
 
@@ -47,6 +53,10 @@ class DefaultConverter:
     def convert_outputs(self, data: FnR) -> str:
         raise NotImplementedError  # pragma: no cover
 
+    @property
+    def dependencies(self) -> dict[str, DependencyT]:
+        raise NotImplementedError  # pragma: no cover
+
 
 class BasicConverter:
     def __init__(self, fn: Callable[..., Coroutine[Any, Any, FnR]]) -> None:
@@ -54,16 +64,22 @@ class BasicConverter:
         signature = inspect.signature(fn)
         self.args: dict[str, Any] = {}
         self.kwargs: dict[str, Any] = {}
+        self.dependency_kwargs: dict[str, DependencyT] = {}
         self.all_args = False
         self.all_kwargs = False
         for p in signature.parameters.values():
             if p.kind == inspect.Parameter.POSITIONAL_ONLY:
-                self.args.update({p.name: p.default})
+                if get_dependency(p.annotation) is not None:
+                    raise ValueError("Dependencies in positional-only arguments are not supported.")
+                self.args[p.name] = p.default
             elif p.kind in (
                 inspect.Parameter.POSITIONAL_OR_KEYWORD,
                 inspect.Parameter.KEYWORD_ONLY,
             ):
-                self.kwargs.update({p.name: p.default})
+                if (dep := get_dependency(p.annotation)) is not None:
+                    self.dependency_kwargs[p.name] = dep
+                    continue
+                self.kwargs[p.name] = p.default
             elif p.kind == inspect.Parameter.VAR_POSITIONAL:
                 self.all_args = True
             elif p.kind == inspect.Parameter.VAR_KEYWORD:
@@ -84,6 +100,10 @@ class BasicConverter:
     def convert_outputs(self, data: FnR) -> str:
         return JSON_ENCODER.encode(data)
 
+    @property
+    def dependencies(self) -> dict[str, DependencyT]:
+        return self.dependency_kwargs
+
 
 class PydanticConverter:
     def __init__(self, fn: Callable[..., Coroutine[Any, Any, FnR]]) -> None:
@@ -92,14 +112,20 @@ class PydanticConverter:
 
         self.args: list[str] = []
         self.kwargs: list[str] = []
+        self.dependency_kwargs: dict[str, DependencyT] = {}
 
         for p in signature.parameters.values():
             if p.kind == inspect.Parameter.POSITIONAL_ONLY:
+                if get_dependency(p.annotation) is not None:
+                    raise ValueError("Dependencies in positional-only arguments are not supported.")
                 self.args.append(p.name)
             elif p.kind in (
                 inspect.Parameter.POSITIONAL_OR_KEYWORD,
                 inspect.Parameter.KEYWORD_ONLY,
             ):
+                if (dep := get_dependency(p.annotation)) is not None:
+                    self.dependency_kwargs[p.name] = dep
+                    continue
                 self.kwargs.append(p.name)
             elif p.kind in (
                 inspect.Parameter.VAR_POSITIONAL,
@@ -115,6 +141,7 @@ class PydanticConverter:
                     p.default if p.default is not inspect.Parameter.empty else Field(),
                 )
                 for p in signature.parameters.values()
+                if p.name not in self.dependency_kwargs
             },
         )
 
@@ -157,6 +184,10 @@ class PydanticConverter:
                 return data.model_dump_json()
             return self.output_type.model_validate(data).model_dump_json()
         return self.output_pydantic_model.model_validate(data).model_dump_json()
+
+    @property
+    def dependencies(self) -> dict[str, DependencyT]:
+        return self.dependency_kwargs
 
 
 class PydanticV1Converter(PydanticConverter):  # pragma: no cover

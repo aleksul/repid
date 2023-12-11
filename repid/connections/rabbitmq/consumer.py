@@ -11,6 +11,7 @@ from aiormq.abc import Basic
 from repid.connections.abc import ConsumerT
 from repid.data.priorities import PrioritiesT
 from repid.logger import logger
+from repid.message import MessageCategory
 
 if TYPE_CHECKING:
     from repid.connections.rabbitmq.message_broker import RabbitMessageBroker
@@ -25,12 +26,14 @@ class _RabbitConsumer(ConsumerT):
         queue_name: str,
         topics: Iterable[str] | None = None,
         max_unacked_messages: int | None = None,
+        category: MessageCategory = MessageCategory.NORMAL,
     ) -> None:
         self.broker = broker
         self.queue_name = queue_name
         self.topics = topics
         self.queue: asyncio.Queue[tuple[RoutingKeyT, str, ParametersT]] = asyncio.Queue()
         self.max_unacked_messages = 0 if max_unacked_messages is None else max_unacked_messages
+        self.category = category
         self._consumer_tag: str | None = None
         self.__is_paused: bool = False
         self.__is_consuming: bool = False
@@ -45,7 +48,11 @@ class _RabbitConsumer(ConsumerT):
             prefetch_count=self.max_unacked_messages,
         )
         confirmation = await self.broker._channel.basic_consume(
-            self.queue_name,
+            self.broker.qnc(
+                self.queue_name,
+                delayed=self.category == MessageCategory.DELAYED,
+                dead=self.category == MessageCategory.DEAD,
+            ),
             self.on_new_message,
             no_ack=False,
         )
@@ -145,7 +152,7 @@ class _RabbitConsumer(ConsumerT):
         params = self.broker.PARAMETERS_CLASS.decode(decoded["parameters"])
 
         # put message to a dead queue if it's overdue
-        if params.is_overdue:
+        if params.is_overdue and self.category == MessageCategory.NORMAL:
             await self.broker._channel.basic_nack(message.delivery_tag, requeue=False)
             logger.debug("Message is overdue, placing it in dlx.")
             return

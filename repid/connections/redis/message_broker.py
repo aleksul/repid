@@ -35,7 +35,7 @@ class RedisMessageBroker(MessageBrokerT):
 
     async def disconnect(self) -> None:
         await self.maintenance()
-        await self.conn.close(close_connection_pool=True)
+        await self.conn.aclose(close_connection_pool=True)  # type: ignore[attr-defined]
 
     def __put_in_queue(
         self,
@@ -57,10 +57,11 @@ class RedisMessageBroker(MessageBrokerT):
             )
 
     def __mark_dead(self, key: RoutingKeyT, pipe: Pipeline) -> None:
-        pipe.lpush(qnc(key.queue, dead=True), mnc(key, short=True))
+        pipe.lpush(qnc(key.queue, key.priority, dead=True), mnc(key, short=True))
 
     def __unmark_processing(self, key: RoutingKeyT, pipe: Pipeline) -> None:
         pipe.zrem(self.processing_queue, mnc(key, short=True))
+        pipe.hdel(mnc(key), "_reject_to")
 
     async def enqueue(
         self,
@@ -89,7 +90,7 @@ class RedisMessageBroker(MessageBrokerT):
         logger.debug("Acking message ({routing_key}).", extra={"routing_key": key})
         async with self.conn.pipeline(transaction=True) as pipe:
             pipe.delete(mnc(key))
-            self.__unmark_processing(key, pipe)
+            self.__unmark_processing(key=key, pipe=pipe)
             await pipe.execute()
 
     async def nack(self, key: RoutingKeyT) -> None:
@@ -101,18 +102,31 @@ class RedisMessageBroker(MessageBrokerT):
 
     async def reject(self, key: RoutingKeyT) -> None:
         logger.debug("Rejecting message ({routing_key}).", extra={"routing_key": key})
-        raw_params: bytes | None = await self.conn.hget(mnc(key), "parameters")
-        if raw_params is not None:
-            params = self.PARAMETERS_CLASS.decode(raw_params.decode())
+
+        raw_params: list[bytes | None] = await self.conn.hmget(
+            mnc(key),
+            keys=["parameters", "_reject_to"],
+        )
+
+        if raw_params[0] is not None:
+            params = self.PARAMETERS_CLASS.decode(raw_params[0].decode())
         else:  # pragma: no cover
             params = self.PARAMETERS_CLASS()
+
+        reject_to = "n"  # normal queue
+        if raw_params[1] is not None:
+            reject_to = raw_params[1].decode()
+
         async with self.conn.pipeline(transaction=True) as pipe:
-            self.__put_in_queue(
-                key,
-                pipe,
-                delay_until=utils.wait_timestamp(params),
-                in_front=True,
-            )
+            if reject_to == "dead":
+                self.__mark_dead(key, pipe)
+            else:
+                self.__put_in_queue(
+                    key,
+                    pipe,
+                    delay_until=utils.wait_timestamp(params),
+                    in_front=True,
+                )
             self.__unmark_processing(key, pipe)
             await pipe.execute()
 

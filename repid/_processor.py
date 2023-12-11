@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import datetime
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Coroutine, cast
 
-from repid._utils import _ArgsBucketInMessageId
+from repid._utils import _ArgsBucketInMessageId, _NoAction
 from repid.actor import ActorData, ActorResult
+from repid.dependencies import DependencyKind, ResolverContext
 from repid.logger import logger
 from repid.middlewares import middleware_wrapper
 
@@ -14,6 +15,7 @@ if TYPE_CHECKING:
     from repid.connection import Connection
     from repid.data import ParametersT, ResultBucketT, RoutingKeyT
     from repid.data.protocols import ResultPropertiesT
+    from repid.dependencies.protocols import AnnotatedDependencyT, DirectDependencyT
 
 
 class _Processor:
@@ -40,7 +42,8 @@ class _Processor:
         key: RoutingKeyT,
         parameters: ParametersT,
         payload: str,
-    ) -> ActorResult:
+        connection: Connection,
+    ) -> ActorResult | None:
         time_limit = parameters.execution_timeout.total_seconds()
 
         logger_extra = {
@@ -58,10 +61,50 @@ class _Processor:
 
         started_when = time.time_ns()
 
+        resolver_context = ResolverContext(
+            message_key=key,
+            message_raw_payload=payload,
+            message_parameters=parameters,
+            connection=connection,
+            actor_data=actor,
+            actor_processing_started_when=started_when,
+        )
+
         try:
+            unresolved_dependencies: dict[str, Coroutine] = {}
+            for dep_name, dep in actor.converter.dependencies.items():
+                dep_kind = getattr(dep, "__repid_dependency__", "")
+                if dep_kind == DependencyKind.DIRECT:
+                    unresolved_dependencies[dep_name] = (
+                        cast("DirectDependencyT", dep)
+                        .construct_as_dependency(context=resolver_context)
+                        .resolve()
+                    )
+                elif dep_kind == DependencyKind.ANNOTATED:
+                    unresolved_dependencies[dep_name] = cast("AnnotatedDependencyT", dep).resolve(
+                        context=resolver_context,
+                    )
+                else:  # pragma: no cover
+                    # this should never happen
+                    raise ValueError("Unsupported dependency argument.")
+
+            unresolved_dependencies_names, unresolved_dependencies_values = (
+                unresolved_dependencies.keys(),
+                unresolved_dependencies.values(),
+            )
+
+            resolved = await asyncio.gather(*unresolved_dependencies_values)
+
+            dependency_kwargs = dict(zip(unresolved_dependencies_names, resolved))
+
             args, kwargs = actor.converter.convert_inputs(payload)
-            _result = await asyncio.wait_for(actor.fn(*args, **kwargs), timeout=time_limit)
+            _result = await asyncio.wait_for(
+                actor.fn(*args, **kwargs, **dependency_kwargs),
+                timeout=time_limit,
+            )
             result = actor.converter.convert_outputs(_result)
+        except _NoAction:
+            return None
         except Exception as exc:  # noqa: BLE001
             exception = exc
             success = False
@@ -154,7 +197,12 @@ class _Processor:
         parameters: ParametersT,
     ) -> None:
         raw_payload = await self.get_payload(payload)
-        result = await self.actor_run(actor, key, parameters, raw_payload)
+
+        result = await self.actor_run(actor, key, parameters, raw_payload, self._conn)
+        if result is None:  # actor has finished gracefully, but no action is required
+            self._processed += 1
+            return
+
         await self.report_to_broker(actor, key, payload, parameters, result)
         self._processed += 1
         await self.set_result_bucket(parameters.result, result)

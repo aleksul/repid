@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from inspect import getfullargspec, getmembers, isfunction, ismethod
+from inspect import getfullargspec, getmembers, iscoroutinefunction, isfunction, ismethod
 from typing import Any, Callable, Coroutine
 
 from repid._asyncify import asyncify
@@ -30,6 +30,14 @@ class Middleware:
         if name not in SUBSCRIBERS_NAMES:
             logger.warning(
                 "Function '{fn_name}' wasn't subscribed, as there is no corresponding signal.",
+                extra=logger_extra,
+            )
+            return
+
+        # Prevent accidental registering of synchronous functions
+        if not iscoroutinefunction(fn):
+            logger.error(
+                "Middleware method: '{fn_name}' not subscribed as it is not awaitable.",
                 extra=logger_extra,
             )
             return

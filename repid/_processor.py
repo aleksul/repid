@@ -43,7 +43,7 @@ class _Processor:
         parameters: ParametersT,
         payload: str,
         connection: Connection,
-    ) -> ActorResult | None:
+    ) -> ActorResult:
         time_limit = parameters.execution_timeout.total_seconds()
 
         logger_extra = {
@@ -103,8 +103,15 @@ class _Processor:
                 timeout=time_limit,
             )
             result = actor.converter.convert_outputs(_result)
-        except _NoAction:
-            return None
+        except _NoAction as exc:
+            return ActorResult(
+                data=exc.data,
+                success=exc.success,
+                exception=exc.exception,
+                started_when=started_when,
+                finished_when=time.time_ns(),
+                reporting_done=True,
+            )
         except Exception as exc:  # noqa: BLE001
             exception = exc
             success = False
@@ -125,6 +132,7 @@ class _Processor:
             exception=exception,
             started_when=started_when,
             finished_when=time.time_ns(),
+            reporting_done=False,
         )
 
     async def report_to_broker(
@@ -199,7 +207,7 @@ class _Processor:
         raw_payload = await self.get_payload(payload)
 
         result = await self.actor_run(actor, key, parameters, raw_payload, self._conn)
-        if result is None:  # actor has finished gracefully, but no action is required
+        if result.reporting_done:  # actor has finished gracefully, but no action is required
             self._processed += 1
             return
 

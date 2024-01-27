@@ -25,6 +25,9 @@ class MessageDependency(Message):
         "_actor_processing_started_when",
         "_callbacks",
         "__lazy_result_callback",
+        "__result_success",
+        "__result_data",
+        "__result_exception",
     )
 
     def __init__(
@@ -45,6 +48,9 @@ class MessageDependency(Message):
         self._actor_processing_started_when: int
         self._callbacks: list[Callable[[], Awaitable]] = []
         self.__lazy_result_callback: Callable[[], None] = lambda: None
+        self.__result_success: bool | None = None
+        self.__result_data: str | None = None
+        self.__result_exception: Exception | None = None
 
     @classmethod
     def construct_as_dependency(cls, *, context: ResolverContext) -> MessageDependency:
@@ -74,6 +80,10 @@ class MessageDependency(Message):
 
         data = self._actor_data.converter.convert_outputs(result)
 
+        self.__result_success = True
+        self.__result_data = data
+        self.__result_exception = None
+
         async def _inner() -> None:
             await rbb.store_bucket(
                 id_=self.parameters.result.id_,  # type: ignore[union-attr]
@@ -96,6 +106,10 @@ class MessageDependency(Message):
 
         if (rbb := self._connection.results_bucket_broker) is None:
             raise ValueError("Results bucket broker is not configured.")
+
+        self.__result_success = False
+        self.__result_data = None
+        self.__result_exception = exc
 
         async def _inner() -> None:
             await rbb.store_bucket(
@@ -120,22 +134,38 @@ class MessageDependency(Message):
     async def ack(self) -> NoReturn:
         await super().ack()
         await self.__execute_callbacks()
-        raise _NoAction
+        raise _NoAction(
+            success=self.__result_success if self.__result_success is not None else True,
+            data=self.__result_data,
+            exception=self.__result_exception,
+        )
 
     async def nack(self) -> NoReturn:
         await super().nack()
         await self.__execute_callbacks()
-        raise _NoAction
+        raise _NoAction(
+            success=self.__result_success if self.__result_success is not None else False,
+            data=self.__result_data,
+            exception=self.__result_exception,
+        )
 
     async def reject(self) -> NoReturn:
         await super().reject()
         await self.__execute_callbacks()
-        raise _NoAction
+        raise _NoAction(
+            success=self.__result_success if self.__result_success is not None else False,
+            data=self.__result_data,
+            exception=self.__result_exception,
+        )
 
     async def reschedule(self) -> NoReturn:
         await super().reschedule()
         await self.__execute_callbacks()
-        raise _NoAction
+        raise _NoAction(
+            success=self.__result_success if self.__result_success is not None else True,
+            data=self.__result_data,
+            exception=self.__result_exception,
+        )
 
     async def retry(self, next_retry: timedelta | None = None) -> NoReturn:
         await super().retry(
@@ -146,7 +176,11 @@ class MessageDependency(Message):
             else next_retry,
         )
         await self.__execute_callbacks()
-        raise _NoAction
+        raise _NoAction(
+            success=self.__result_success if self.__result_success is not None else False,
+            data=self.__result_data,
+            exception=self.__result_exception,
+        )
 
     async def force_retry(self, next_retry: timedelta | None = None) -> NoReturn:
         await super().force_retry(
@@ -157,4 +191,8 @@ class MessageDependency(Message):
             else next_retry,
         )
         await self.__execute_callbacks()
-        raise _NoAction
+        raise _NoAction(
+            success=self.__result_success if self.__result_success is not None else False,
+            data=self.__result_data,
+            exception=self.__result_exception,
+        )

@@ -21,3 +21,4 @@ class ActorResult(NamedTuple):
     exception: Exception | None
     started_when: int
     finished_when: int
+    reporting_done: bool

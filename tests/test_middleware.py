@@ -188,6 +188,25 @@ async def test_add_subscriber(caplog: pytest.LogCaptureFixture) -> None:
         ),
     )
 
+    # Test that non coroutine function is not added as a subscriber
+    async def bar(a: int, b: int) -> int:
+        return a + b
+
+    middleware.add_subscriber(bar)
+    assert bar.__name__ not in middleware.subscribers
+
+    assert any(
+        (
+            all(
+                (
+                    "ERROR" in x,
+                    "Middleware method: 'bar' not subscribed as it is not awaitable." in x,
+                ),
+            )
+            for x in caplog.text.splitlines()
+        ),
+    )
+
 
 def test_middleware_wrapper() -> None:
     @middleware_wrapper

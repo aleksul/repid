@@ -34,15 +34,58 @@ class _RabbitConsumer(ConsumerT):
         self.queue: asyncio.Queue[tuple[RoutingKeyT, str, ParametersT]] = asyncio.Queue()
         self.max_unacked_messages = 0 if max_unacked_messages is None else max_unacked_messages
         self.category = category
+        self.server_side_cancel_event = asyncio.Event()
         self._consumer_tag: str | None = None
         self.__is_paused: bool = False
         self.__is_consuming: bool = False
 
     async def consume(self) -> tuple[RoutingKeyT, str, ParametersT]:
-        return await self.queue.get()
+        # fast-path without task creation
+        if not self.queue.empty():
+            return self.queue.get_nowait()
+
+        while True:
+            # allow consume to be interrupted by server side cancel event
+            get_task = asyncio.create_task(self.queue.get())
+            server_side_cancel_wait_task = asyncio.create_task(self.server_side_cancel_event.wait())
+
+            # wait for a message or for server side cancel
+            try:
+                _, pending = await asyncio.wait(
+                    {get_task, server_side_cancel_wait_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            except asyncio.CancelledError:
+                # if we got cancellation while waiting on our tasks - cancel the tasks
+                get_task.cancel()
+                server_side_cancel_wait_task.cancel()
+                raise
+
+            # cancel unfinished tasks
+            for p in pending:
+                p.cancel()
+
+            # if we finished getting a message - return it
+            if get_task.done() and not get_task.cancelled():
+                return get_task.result()
+
+            # restart consumer if it was running and we got cancellation
+            if self.server_side_cancel_event.is_set() and self.__is_consuming:
+                logger.error(
+                    "RabbitMQ has terminated consumer (tag: {tag}) server-side.",
+                    extra={"tag": self._consumer_tag},
+                )
+                # attempt to restart the consumer
+                await self.start()
+                # if restart was successful - we can try to consume again
+                continue
+            if self.server_side_cancel_event.is_set():
+                self.server_side_cancel_event.clear()
+                continue
 
     async def start(self) -> None:
         self.__is_consuming = True
+        self.server_side_cancel_event.clear()
         await self.broker._channel.basic_qos(
             prefetch_size=0,
             prefetch_count=self.max_unacked_messages,
@@ -56,10 +99,10 @@ class _RabbitConsumer(ConsumerT):
             self.on_new_message,
             no_ack=False,
         )
-        if not isinstance(confirmation, Basic.ConsumeOk):
-            logger.error("Consumer wasn't started properly.")  # pragma: no cover
-        else:
-            self._consumer_tag = confirmation.consumer_tag
+        if not isinstance(confirmation, Basic.ConsumeOk):  # pragma: no cover
+            self.__is_consuming = False
+            raise ConnectionError("Consumer wasn't started properly.")
+        self._consumer_tag = confirmation.consumer_tag
 
     async def pause(self) -> None:
         self.__is_paused = True

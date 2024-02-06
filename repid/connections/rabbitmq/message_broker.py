@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import aiormq
 from aiormq.abc import Basic
@@ -12,6 +13,7 @@ from repid.connections.abc import MessageBrokerT
 from repid.connections.rabbitmq.consumer import _RabbitConsumer
 from repid.connections.rabbitmq.utils import (
     MessageContent,
+    _Consumers,
     durable_message_decider,
     qnc,
     wait_until,
@@ -19,6 +21,8 @@ from repid.connections.rabbitmq.utils import (
 from repid.logger import logger
 
 if TYPE_CHECKING:
+    from aiormq.channel import Channel
+
     from repid.connections.rabbitmq.protocols import (
         DurableMessageDeciderT,
         QueueNameConstructorT,
@@ -54,6 +58,7 @@ class RabbitMessageBroker(MessageBrokerT):
             self.__connection = await aiormq.connect(self.dsn)
         if self.__channel is None:
             self.__channel = await self.__connection.channel()
+            cast("Channel", self.__channel).consumers = cast("dict[str, Callable]", _Consumers())
 
     async def disconnect(self) -> None:
         if self.__connection is not None:

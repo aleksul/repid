@@ -12,14 +12,14 @@ if TYPE_CHECKING:
     from pytest_docker_tools import wrappers
 
 redis_container = container(
-    image="redis:7.0-alpine",
+    image="redis:7.2-alpine",
     ports={"6379/tcp": None},
     command="redis-server --requirepass test",
     scope="session",
 )
 
 rabbitmq_container = container(
-    image="rabbitmq:3.11-alpine",
+    image="rabbitmq:3.12-alpine",
     ports={"5672/tcp": None},
     environment={
         "RABBITMQ_DEFAULT_USER": "user",
@@ -29,7 +29,7 @@ rabbitmq_container = container(
 )
 
 rabbitmq_container_2 = container(
-    image="rabbitmq:3.11-alpine",
+    image="rabbitmq:3.12-alpine",
     ports={"5672/tcp": None},
     environment={
         "RABBITMQ_DEFAULT_USER": "user",

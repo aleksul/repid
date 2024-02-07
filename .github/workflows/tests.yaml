@@ -29,7 +29,7 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Setup PDM
-      uses: pdm-project/setup-pdm@v3
+      uses: pdm-project/setup-pdm@v4
       with:
         python-version: ${{ matrix.python-version }}
         cache: true
@@ -49,9 +49,9 @@ jobs:
         mv .coverage ./coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}
 
     - name: Store coverage files
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
-        name: coverage
+        name: coverage-${{ runner.os }}-py${{ matrix.python-version }}
         path: coverage
 
   coverage-combine:
@@ -67,10 +67,11 @@ jobs:
         cache: pip
 
     - name: Get coverage files
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
-        name: coverage
         path: coverage
+        pattern: coverage-*
+        merge-multiple: true
 
     - run: pip install coverage[toml]
 
@@ -80,6 +81,6 @@ jobs:
     - run: coverage xml
 
     - name: Upload code coverage
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v4
       with:
         files: ./coverage.xml

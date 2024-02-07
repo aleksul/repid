@@ -19,7 +19,7 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Setup PDM
-      uses: pdm-project/setup-pdm@v3
+      uses: pdm-project/setup-pdm@v4
       with:
         python-version: '3.8'
 
@@ -27,4 +27,4 @@ jobs:
       run: pdm export --group :all --format requirements --output requirements.txt
 
     - name: Dependency Review
-      uses: actions/dependency-review-action@v3
+      uses: actions/dependency-review-action@v4

@@ -4,7 +4,7 @@
 # repid
 
 <a href="https://www.instagram.com/p/Cd-ob1NNZ84/">
-  <img alt="Repid's logo" width="350" align="right" src="https://gist.github.com/aleksul/fedbe168f1fc59c5aac3ddd17ecff30a/raw/b9467303f55517d99633d6551de223cd6534b149/repid_logo_borders.svg">
+  <img alt="Repid's logo" width="350" align="right" src="https://raw.githubusercontent.com/gist/aleksul/fedbe168f1fc59c5aac3ddd17ecff30a/raw/b9467303f55517d99633d6551de223cd6534b149/repid_logo_borders.svg">
 </a>
 
 [![PyPI version](https://img.shields.io/pypi/v/repid.svg)](https://pypi.org/project/repid/)

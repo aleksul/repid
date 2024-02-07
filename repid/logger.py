@@ -4,7 +4,7 @@ import logging
 from typing import Any, MutableMapping
 
 
-class FormatWithExtraAdapter(logging.LoggerAdapter):
+class _FormatWithExtraAdapter(logging.LoggerAdapter):
     def process(
         self,
         msg: str,
@@ -17,4 +17,4 @@ class FormatWithExtraAdapter(logging.LoggerAdapter):
 
 logger = logging.getLogger("repid")
 logger.addHandler(logging.NullHandler())
-logger = FormatWithExtraAdapter(logger, {})  # type: ignore[assignment]
+logger = _FormatWithExtraAdapter(logger, {})  # type: ignore[assignment]

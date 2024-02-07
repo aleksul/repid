@@ -57,8 +57,7 @@ class Router:
         retry_policy: RetryPolicyT | None = None,
         run_in_process: bool | None = None,
         converter: type[ConverterT] | None = None,
-    ) -> Callable[[YourFunc], YourFunc]:
-        ...
+    ) -> Callable[[YourFunc], YourFunc]: ...
 
     @overload
     def actor(
@@ -70,8 +69,7 @@ class Router:
         retry_policy: RetryPolicyT | None = None,
         run_in_process: bool | None = None,
         converter: type[ConverterT] | None = None,
-    ) -> YourFunc:
-        ...
+    ) -> YourFunc: ...
 
     def actor(
         self,

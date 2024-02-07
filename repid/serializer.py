@@ -7,8 +7,7 @@ if is_installed("pydantic"):
 
 
 class SerializerT(Protocol):
-    def __call__(self, data: Any) -> str:
-        ...
+    def __call__(self, data: Any) -> str: ...
 
 
 def default_serializer(data: Any) -> str:

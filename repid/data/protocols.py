@@ -8,12 +8,10 @@ T_co = TypeVar("T_co", covariant=True)
 
 
 class SerializableT(Protocol[T_co]):
-    def encode(self) -> str:
-        ...
+    def encode(self) -> str: ...
 
     @classmethod
-    def decode(cls, data: str) -> T_co:
-        ...
+    def decode(cls, data: str) -> T_co: ...
 
 
 class TimedT(Protocol):
@@ -38,8 +36,7 @@ class RoutingKeyT(Protocol):
         topic: str,
         queue: str = "default",
         priority: int = PrioritiesT.MEDIUM.value,
-    ) -> None:
-        ...
+    ) -> None: ...
 
 
 class RetriesPropertiesT(Protocol):
@@ -51,8 +48,7 @@ class RetriesPropertiesT(Protocol):
         *,
         max_amount: int = 0,
         already_tried: int = 0,
-    ) -> None:
-        ...
+    ) -> None: ...
 
 
 class ResultPropertiesT(Protocol):
@@ -64,8 +60,7 @@ class ResultPropertiesT(Protocol):
         *,
         id_: Union[str, None] = None,
         ttl: Union[timedelta, None] = None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
 
 class DelayPropertiesT(Protocol):
@@ -81,8 +76,7 @@ class DelayPropertiesT(Protocol):
         defer_by: Union[timedelta, None] = None,
         cron: Union[str, None] = None,
         next_execution_time: Union[datetime, None] = None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
 
 class ParametersT(SerializableT, TimedT, Protocol):
@@ -95,16 +89,13 @@ class ParametersT(SerializableT, TimedT, Protocol):
     # why property? See mypy docs
     # https://mypy.readthedocs.io/en/stable/common_issues.html#covariant-subtyping-of-mutable-protocol-members-is-rejected
     @property
-    def result(self) -> Union[ResultPropertiesT, None]:
-        ...
+    def result(self) -> Union[ResultPropertiesT, None]: ...
 
     @property
-    def retries(self) -> RetriesPropertiesT:
-        ...
+    def retries(self) -> RetriesPropertiesT: ...
 
     @property
-    def delay(self) -> DelayPropertiesT:
-        ...
+    def delay(self) -> DelayPropertiesT: ...
 
     def __init__(
         self,
@@ -115,18 +106,15 @@ class ParametersT(SerializableT, TimedT, Protocol):
         delay: Union[DelayPropertiesT, None] = None,
         timestamp: datetime = datetime.now(),  # noqa: B008
         ttl: Union[timedelta, None] = None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     @property
     def compute_next_execution_time(self) -> Union[datetime, None]:
         """Computes unix timestamp of the next execution time."""
 
-    def _prepare_reschedule(self) -> "ParametersT":
-        ...
+    def _prepare_reschedule(self) -> "ParametersT": ...
 
-    def _prepare_retry(self, next_retry: timedelta) -> "ParametersT":
-        ...
+    def _prepare_retry(self, next_retry: timedelta) -> "ParametersT": ...
 
 
 class BucketT(SerializableT, TimedT, Protocol):
@@ -138,8 +126,7 @@ class BucketT(SerializableT, TimedT, Protocol):
         data: str = "",
         timestamp: Union[datetime, None] = None,
         ttl: Union[timedelta, None] = None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
 
 @runtime_checkable
@@ -161,5 +148,4 @@ class ResultBucketT(BucketT, Protocol):
         exception: Union[str, None] = None,
         timestamp: Union[datetime, None] = None,
         ttl: Union[timedelta, None] = None,
-    ) -> None:
-        ...
+    ) -> None: ...

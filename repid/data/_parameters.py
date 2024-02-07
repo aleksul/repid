@@ -44,7 +44,7 @@ class ResultProperties:
     def decode(cls, data: str) -> "ResultProperties":
         loaded: Dict[str, Any] = json.loads(data) if not isinstance(data, Dict) else data
 
-        if (ttl := loaded.get("ttl", None)) is not None:
+        if (ttl := loaded.get("ttl")) is not None:
             loaded["ttl"] = timedelta(seconds=float(ttl))
 
         return cls(**loaded)

@@ -51,7 +51,7 @@ jobs:
     - name: Store coverage files
       uses: actions/upload-artifact@v4
       with:
-        name: coverage
+        name: coverage-${{ runner.os }}-py${{ matrix.python-version }}
         path: coverage
 
   coverage-combine:
@@ -69,8 +69,9 @@ jobs:
     - name: Get coverage files
       uses: actions/download-artifact@v4
       with:
-        name: coverage
         path: coverage
+        pattern: coverage-*
+        merge-multiple: true
 
     - run: pip install coverage[toml]
 

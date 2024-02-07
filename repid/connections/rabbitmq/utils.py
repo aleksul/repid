@@ -1,11 +1,19 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypedDict
+from collections import UserDict
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from repid.connections.rabbitmq.consumer import _RabbitConsumer
+    from repid.connections.rabbitmq.protocols import RabbitConsumerCallbackT
     from repid.data.protocols import ParametersT, RoutingKeyT
+
+    # Python 3.8 typing trick
+    TypedUserDict = UserDict[str, RabbitConsumerCallbackT]
+else:
+    TypedUserDict = UserDict
 
 
 def durable_message_decider(key: RoutingKeyT) -> bool:  # noqa: ARG001
@@ -31,3 +39,22 @@ def wait_until(params: ParametersT | None = None) -> datetime | None:
 class MessageContent(TypedDict):
     payload: str
     parameters: str
+
+
+class _Consumers(TypedUserDict):
+    """A special dictionary which informs Repid's RabbitMQ consumer
+    that aiormq has removed consumer's callback from the channel."""
+
+    __marker = object()
+
+    def pop(self, key: str, default: Any = __marker) -> Any:
+        try:
+            value = self[key]
+        except KeyError:  # pragma: no cover
+            if default is self.__marker:
+                raise
+            return default
+        else:
+            cast("_RabbitConsumer", value.__self__).server_side_cancel_event.set()
+            del self[key]
+            return value

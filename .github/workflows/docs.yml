@@ -21,7 +21,7 @@ jobs:
         git config user.email github-actions@github.com
 
     - name: Setup PDM
-      uses: pdm-project/setup-pdm@v3
+      uses: pdm-project/setup-pdm@v4
       with:
         python-version: '3.11'
         cache: true

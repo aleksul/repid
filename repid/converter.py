@@ -21,18 +21,48 @@ Params = Tuple[List, Dict]
 
 
 class ConverterT(Protocol[FnR]):
-    def __init__(self, fn: Callable[..., Coroutine[Any, Any, FnR]]) -> None: ...
+    """Protocol definition for a class that can convert inputs and outputs of a function."""
 
-    def convert_inputs(self, data: str) -> Params: ...
+    def __init__(self, fn: Callable[..., Coroutine[Any, Any, FnR]]) -> None:
+        """Constructor that takes a function and analyses its signature."""
 
-    def convert_outputs(self, data: FnR) -> str: ...
+    def convert_inputs(self, data: str) -> Params:
+        """Convert a string input into a Params object.
+
+        Args:
+            data (str): a string to be converted.
+
+        Returns:
+            Params: args and kwargs to be submitted to the function.
+        """
+
+    def convert_outputs(self, data: FnR) -> str:
+        """Convert a function output into a string.
+
+        Args:
+            data (FnR): whatever function returns.
+
+        Returns:
+            str: output of the function, formatted into a string.
+        """
 
     @property
-    def dependencies(self) -> dict[str, DependencyT]: ...
+    def dependencies(self) -> dict[str, DependencyT]:
+        """Get a mapping of dependencies, which were found in function's signature.
+
+        Returns:
+            dict[str, DependencyT]: dictionary of arguments' names to the dependency.
+        """
 
 
 class DefaultConverter:
+    """Default converter class, pretends to be an implementation of ConverterT.
+
+    Instead forwards to appropriate converter implementation.
+    """
+
     def __new__(cls, fn: Callable[..., Coroutine[Any, Any, FnR]]) -> ConverterT[FnR]:  # type: ignore[misc]
+        """Initialize converter, based on pydantic's presence."""
         if is_installed("pydantic", ">=2.0.0,<3.0.0"):
             return PydanticConverter(fn)
         if is_installed("pydantic", ">=1.0.0,<2.0.0"):
@@ -55,7 +85,16 @@ class DefaultConverter:
 
 
 class BasicConverter:
+    """Class that converts function inputs and outputs to and from JSON format.
+
+    The class takes a function as input and analyses its signature to understand how mapping of
+    positional and keyword arguments can be performed. `convert_inputs` method can then be used
+    to take a JSON string and convert it to function's arguments. `convert_outputs` method can be
+    used it perform conversion of function's return value to a JSON.
+    """
+
     def __init__(self, fn: Callable[..., Coroutine[Any, Any, FnR]]) -> None:
+        """Constructor that takes a function and analyses its signature."""
         self.fn = fn
         signature = inspect.signature(fn)
         self.args: dict[str, Any] = {}
@@ -82,6 +121,14 @@ class BasicConverter:
                 self.all_kwargs = True
 
     def convert_inputs(self, data: str) -> Params:
+        """Convert a JSON string input into a Params object according to function's signature analysis.
+
+        Args:
+            data (str): a JSON string to be converted.
+
+        Returns:
+            Params: args and kwargs to be submitted to the function.
+        """
         if not data:
             return ([], {})
         loaded: dict[str, Any] = json.loads(data)
@@ -94,15 +141,38 @@ class BasicConverter:
         return (args, kwargs)
 
     def convert_outputs(self, data: FnR) -> str:
+        """Convert a function output into a JSON string.
+
+        Args:
+            data (FnR): whatever function returns.
+
+        Returns:
+            str: output of the function, formatted into a JSON string.
+        """
         return JSON_ENCODER.encode(data)
 
     @property
     def dependencies(self) -> dict[str, DependencyT]:
+        """Get a mapping of dependencies, which were found in function's signature.
+
+        Returns:
+            dict[str, DependencyT]: dictionary of arguments' names to the dependency.
+        """
         return self.dependency_kwargs
 
 
 class PydanticConverter:
+    """Class that converts function inputs and outputs to and from JSON format.
+
+    The class takes a function as input and analyses its signature to understand how mapping of
+    positional and keyword arguments can be performed. It then constructs Pydantic BaseModels,
+    which are used to validate input and output. `convert_inputs` method can then be used
+    to take a JSON string and convert it to function's arguments. `convert_outputs` method can be
+    used it perform conversion of function's return value to a JSON.
+    """
+
     def __init__(self, fn: Callable[..., Coroutine[Any, Any, FnR]]) -> None:
+        """Constructor that takes a function and analyses its signature."""
         self.fn = fn
         signature = inspect.signature(fn)
 
@@ -165,6 +235,14 @@ class PydanticConverter:
         )
 
     def convert_inputs(self, data: str) -> Params:
+        """Convert a JSON string input into a Params object according to function's signature analysis.
+
+        Args:
+            data (str): a JSON string to be converted.
+
+        Returns:
+            Params: args and kwargs to be submitted to the function.
+        """
         loaded = dict(self.input_pydantic_model.model_validate_json(data))
 
         if self.args:
@@ -173,6 +251,14 @@ class PydanticConverter:
         return ([], loaded)
 
     def convert_outputs(self, data: FnR) -> str:
+        """Convert a function output into a JSON string.
+
+        Args:
+            data (FnR): whatever function returns.
+
+        Returns:
+            str: output of the function, formatted into a JSON string.
+        """
         if not self.validate_output:  # there is not type to validate
             return JSON_ENCODER.encode(data)  # fallback to JSON encoding
         if issubclass(self.output_type, BaseModel):
@@ -183,11 +269,28 @@ class PydanticConverter:
 
     @property
     def dependencies(self) -> dict[str, DependencyT]:
+        """Get a mapping of dependencies, which were found in function's signature.
+
+        Returns:
+            dict[str, DependencyT]: dictionary of arguments' names to the dependency.
+        """
         return self.dependency_kwargs
 
 
 class PydanticV1Converter(PydanticConverter):  # pragma: no cover
+    """Class that converts function inputs and outputs to and from JSON format.
+
+    WARNING: the class uses Pydantic v1 and therefore is deprecated.
+
+    The class takes a function as input and analyses its signature to understand how mapping of
+    positional and keyword arguments can be performed. It then constructs Pydantic BaseModels,
+    which are used to validate input and output. `convert_inputs` method can then be used
+    to take a JSON string and convert it to function's arguments. `convert_outputs` method can be
+    used it perform conversion of function's return value to a JSON.
+    """
+
     def __init__(self, fn: Callable[..., Coroutine[Any, Any, FnR]]) -> None:
+        """Constructor that takes a function and analyses its signature."""
         super().__init__(fn)
         warn(
             "Pydantic v1 converter will be removed after Pydantic v2 becomes mainstream"
@@ -204,6 +307,14 @@ class PydanticV1Converter(PydanticConverter):  # pragma: no cover
         )
 
     def convert_inputs(self, data: str) -> Params:
+        """Convert a JSON string input into a Params object according to function's signature analysis.
+
+        Args:
+            data (str): a JSON string to be converted.
+
+        Returns:
+            Params: args and kwargs to be submitted to the function.
+        """
         loaded = dict(self.input_pydantic_model.parse_raw(data))
 
         if self.args:
@@ -212,6 +323,14 @@ class PydanticV1Converter(PydanticConverter):  # pragma: no cover
         return ([], loaded)
 
     def convert_outputs(self, data: FnR) -> str:
+        """Convert a function output into a JSON string.
+
+        Args:
+            data (FnR): whatever function returns.
+
+        Returns:
+            str: output of the function, formatted into a JSON string.
+        """
         if not self.validate_output:  # there is not type to validate
             return JSON_ENCODER.encode(data)  # fallback to JSON encoding
         if issubclass(self.output_type, BaseModel):

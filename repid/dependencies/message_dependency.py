@@ -169,11 +169,13 @@ class MessageDependency(Message):
 
     async def retry(self, next_retry: timedelta | None = None) -> NoReturn:
         await super().retry(
-            next_retry=self._actor_data.retry_policy(
-                retry_number=self.parameters.retries.already_tried + 1,
-            )
-            if next_retry is None
-            else next_retry,
+            next_retry=(
+                self._actor_data.retry_policy(
+                    retry_number=self.parameters.retries.already_tried + 1,
+                )
+                if next_retry is None
+                else next_retry
+            ),
         )
         await self.__execute_callbacks()
         raise _NoAction(
@@ -184,11 +186,13 @@ class MessageDependency(Message):
 
     async def force_retry(self, next_retry: timedelta | None = None) -> NoReturn:
         await super().force_retry(
-            next_retry=self._actor_data.retry_policy(
-                retry_number=self.parameters.retries.already_tried + 1,
-            )
-            if next_retry is None
-            else next_retry,
+            next_retry=(
+                self._actor_data.retry_policy(
+                    retry_number=self.parameters.retries.already_tried + 1,
+                )
+                if next_retry is None
+                else next_retry
+            ),
         )
         await self.__execute_callbacks()
         raise _NoAction(

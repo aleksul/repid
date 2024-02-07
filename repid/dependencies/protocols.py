@@ -21,18 +21,15 @@ class DirectDependencyT(Protocol):
     __repid_dependency__: DependencyKind = DependencyKind.DIRECT
 
     @classmethod
-    def construct_as_dependency(cls, *, context: ResolverContext) -> Self:
-        ...
+    def construct_as_dependency(cls, *, context: ResolverContext) -> Self: ...
 
-    async def resolve(self) -> Any:
-        ...
+    async def resolve(self) -> Any: ...
 
 
 class AnnotatedDependencyT(Protocol):
     __repid_dependency__: DependencyKind = DependencyKind.ANNOTATED
 
-    async def resolve(self, *, context: ResolverContext) -> Any:
-        ...
+    async def resolve(self, *, context: ResolverContext) -> Any: ...
 
 
 DependencyT = Union[DirectDependencyT, AnnotatedDependencyT]

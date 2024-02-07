@@ -21,16 +21,14 @@ FnP = ParamSpec("FnP")
 def middleware_wrapper(
     *,
     name: str | None = None,
-) -> partial[_middleware_wrapper]:
-    ...
+) -> partial[_middleware_wrapper]: ...
 
 
 @overload
 def middleware_wrapper(
     fn: Callable[FnP, Coroutine[Any, Any, FnR]],
     name: str | None = None,
-) -> _middleware_wrapper[FnP, FnR]:
-    ...
+) -> _middleware_wrapper[FnP, FnR]: ...
 
 
 def middleware_wrapper(

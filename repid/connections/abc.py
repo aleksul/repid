@@ -64,8 +64,7 @@ class ConsumerT(_WrappedABC):
         topics: Iterable[str] | None = None,
         max_unacked_messages: int | None = None,
         category: MessageCategory = MessageCategory.NORMAL,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     @abstractmethod
     async def start(self) -> None:
@@ -121,12 +120,10 @@ class MessageBrokerT(_WrappedABC):
     )
 
     @abstractmethod
-    async def connect(self) -> None:
-        ...
+    async def connect(self) -> None: ...
 
     @abstractmethod
-    async def disconnect(self) -> None:
-        ...
+    async def disconnect(self) -> None: ...
 
     def get_consumer(
         self,
@@ -209,12 +206,10 @@ class BucketBrokerT(_WrappedABC):
     )
 
     @abstractmethod
-    async def connect(self) -> None:
-        ...
+    async def connect(self) -> None: ...
 
     @abstractmethod
-    async def disconnect(self) -> None:
-        ...
+    async def disconnect(self) -> None: ...
 
     @abstractmethod
     async def get_bucket(self, id_: str) -> BucketT | None:

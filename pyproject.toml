@@ -114,7 +114,11 @@ tests = [
 
 [tool.pdm.scripts]
 erase-coverage = "coverage erase"
-fast-test = {composite = ["erase-coverage", "only-test -m 'not integration' --ignore='tests/test_hypothesis.py'", "report-coverage --omit 'repid/connections/**'"]}
+fast-test = {composite = [
+  "erase-coverage",
+  "only-test -m 'not integration' --ignore='tests/test_hypothesis.py'",
+  "report-coverage --omit 'repid/connections/**'"
+]}
 only-test = "coverage run -m pytest --diff-symbols --hypothesis-verbosity=normal tests/"
 report-coverage = "coverage report --no-skip-covered --show-missing"
 test = {composite = ["erase-coverage", "only-test", "xml-coverage", "report-coverage"]}
@@ -126,9 +130,11 @@ markers = ["integration: marker for integration tests (deselect with `-m 'not in
 timeout = 150
 
 [tool.ruff]
-ignore = ["E501", "N999", "PLR0913"]
 line-length = 100
-per-file-ignores = {"tests/*" = ["S", "PLR2004", "FBT", "BLE", "S101"], "repid/connections/__init__.py" = ["F401"], "repid/testing/__init__.py" = ["F401"], "benchmarks/*" = ["T201", "S603", "S607"], "**/__init__.py" = ["PLC0414"]}
+target-version = "py38"
+
+[tool.ruff.lint]
+ignore = ["E501", "N999", "PLR0913"]
 select = [
   "F",
   "E",
@@ -162,4 +168,10 @@ select = [
   "PL",
   "RUF"
 ]
-target-version = "py38"
+
+[tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = ["PLC0414"]
+"benchmarks/*" = ["T201", "S603", "S607"]
+"repid/connections/__init__.py" = ["F401"]
+"repid/testing/__init__.py" = ["F401"]
+"tests/*" = ["S", "PLR2004", "FBT", "BLE", "S101"]

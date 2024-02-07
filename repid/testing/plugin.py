@@ -119,12 +119,16 @@ async def repid_declare_all_known_queues(  # noqa: PT004
 def _repid_app_with_event_log_modifiers(repid_app: Repid) -> EventLogModifiers:  # noqa: PT005
     return EventLogModifiers(
         message_broker=EventLogModifier(repid_app.connection.message_broker),
-        args_bucket_broker=EventLogModifier(repid_app.connection.args_bucket_broker)
-        if repid_app.connection.args_bucket_broker is not None
-        else None,
-        result_bucket_broker=EventLogModifier(repid_app.connection.results_bucket_broker)
-        if repid_app.connection.results_bucket_broker is not None
-        else None,
+        args_bucket_broker=(
+            EventLogModifier(repid_app.connection.args_bucket_broker)
+            if repid_app.connection.args_bucket_broker is not None
+            else None
+        ),
+        result_bucket_broker=(
+            EventLogModifier(repid_app.connection.results_bucket_broker)
+            if repid_app.connection.results_bucket_broker is not None
+            else None
+        ),
     )
 
 

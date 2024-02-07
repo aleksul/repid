@@ -59,7 +59,7 @@ def _entry_points(monkeypatch: pytest.MonkeyPatch) -> None:
 
     if sys.version_info >= (3, 10):
 
-        def mock_entry_points(  # noqa: F811
+        def mock_entry_points(
             *args: Any,
             **kwargs: Any,
         ) -> importlib.metadata.EntryPoints:

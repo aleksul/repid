@@ -157,12 +157,14 @@ class Job:
             retries=self._conn.message_broker.PARAMETERS_CLASS.RETRIES_CLASS(
                 max_amount=self.retries,
             ),
-            result=self._conn.message_broker.PARAMETERS_CLASS.RESULT_CLASS(
-                id_=self.result_id,
-                ttl=self.result_ttl,
-            )
-            if self.store_result
-            else None,
+            result=(
+                self._conn.message_broker.PARAMETERS_CLASS.RESULT_CLASS(
+                    id_=self.result_id,
+                    ttl=self.result_ttl,
+                )
+                if self.store_result
+                else None
+            ),
             delay=self._conn.message_broker.PARAMETERS_CLASS.DELAY_CLASS(
                 delay_until=self.deferred_until,
                 defer_by=self.deferred_by,

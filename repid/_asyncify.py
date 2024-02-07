@@ -25,8 +25,7 @@ def asyncify(
     fn: Callable[FnP, Coroutine[Any, Any, FnR]],
     *,
     run_in_process: bool = False,
-) -> Callable[FnP, Coroutine[Any, Any, FnR]]:
-    ...
+) -> Callable[FnP, Coroutine[Any, Any, FnR]]: ...
 
 
 @overload
@@ -34,8 +33,7 @@ def asyncify(
     fn: Callable[FnP, FnR],
     *,
     run_in_process: bool = False,
-) -> Callable[FnP, Coroutine[Any, Any, FnR]]:
-    ...
+) -> Callable[FnP, Coroutine[Any, Any, FnR]]: ...
 
 
 def asyncify(

@@ -51,12 +51,11 @@ class Worker(Router):
             self.health_check_server = HealthCheckServer(health_check_server_settings)
 
     async def declare_all_queues(self) -> None:
-        await asyncio.wait(
-            {
-                asyncio.create_task(Queue(queue_name, _connection=self._conn).declare())
+        await asyncio.gather(
+            *(
+                Queue(queue_name, _connection=self._conn).declare()
                 for queue_name in self.topics_by_queue
-            },
-            return_when=asyncio.ALL_COMPLETED,
+            ),
         )
 
     async def run(self) -> _Runner:  # noqa: C901
@@ -66,6 +65,7 @@ class Worker(Router):
         runner = _Runner(
             max_tasks=self.messages_limit,
             tasks_concurrency_limit=self.tasks_limit,
+            health_check_server=self.health_check_server,
             _connection=self._conn,
         )
 
@@ -104,6 +104,8 @@ class Worker(Router):
                 if ft.exception() is None:
                     consumers.add(ft.result())
 
+        runner.stop_consume_event.set()
+
         if runner.tasks:
             await asyncio.wait(runner.tasks, return_when=asyncio.ALL_COMPLETED)
 
@@ -113,7 +115,6 @@ class Worker(Router):
                 return_when=asyncio.ALL_COMPLETED,
             )
 
-        runner.stop_consume_event.set()
         runner.cancel_event.set()
 
         if self.health_check_server is not None:

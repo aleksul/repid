@@ -4,6 +4,8 @@ import asyncio
 from typing import TYPE_CHECKING, Iterable
 
 from repid._processor import _Processor
+from repid.health_check_server import HealthCheckStatus
+from repid.logger import logger
 from repid.main import Repid
 
 if TYPE_CHECKING:
@@ -11,6 +13,7 @@ if TYPE_CHECKING:
     from repid.connection import Connection
     from repid.connections import ConsumerT
     from repid.data import ParametersT, RoutingKeyT
+    from repid.health_check_server import HealthCheckServer
 
 
 class _Runner(_Processor):
@@ -18,12 +21,10 @@ class _Runner(_Processor):
         self,
         max_tasks: int = float("inf"),  # type: ignore[assignment]
         tasks_concurrency_limit: int = 1000,
+        health_check_server: HealthCheckServer | None = None,
         _connection: Connection | None = None,
     ):
         self._conn = _connection or Repid.get_magic_connection()
-
-        self._actors: dict[str, ActorData] = {}
-        self._queues_to_routes: dict[str, set[str]] = {}
 
         self.tasks: set[asyncio.Task] = set()
 
@@ -34,6 +35,8 @@ class _Runner(_Processor):
         self.tasks_concurrency_limit = tasks_concurrency_limit
         self.limiter = asyncio.Semaphore(tasks_concurrency_limit)
         self._tasks_processed = 0
+
+        self.health_check_server = health_check_server
 
         super().__init__(self._conn)
 
@@ -112,14 +115,24 @@ class _Runner(_Processor):
             self.tasks_concurrency_limit,
         )
         await consumer.start()
-        try:
-            consume_task = asyncio.create_task(self._run_consumer(consumer, actors))
-            await asyncio.wait(
-                {self.stop_consume_event_task, consume_task},
-                return_when=asyncio.FIRST_COMPLETED,
+        consume_task = asyncio.create_task(self._run_consumer(consumer, actors))
+        await asyncio.wait(
+            {self.stop_consume_event_task, consume_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if (
+            consume_task.done()
+            and not consume_task.cancelled()
+            and (exc := consume_task.exception()) is not None
+        ):
+            logger.critical(
+                "Error while running consumer on queue '{queue_name}'.",
+                extra={"queue_name": queue_name},
+                exc_info=exc,
             )
-            if self.stop_consume_event.is_set():
-                consume_task.cancel()
-        finally:
-            await consumer.pause()
+            if self.health_check_server is not None:
+                self.health_check_server.health_status = HealthCheckStatus.UNHEALTHY
+        if self.stop_consume_event.is_set():
+            consume_task.cancel()
+        await consumer.pause()
         return consumer

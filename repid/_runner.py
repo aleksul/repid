@@ -26,17 +26,18 @@ class _Runner(_Processor):
     ):
         self._conn = _connection or Repid.get_magic_connection()
 
-        self.tasks: set[asyncio.Task] = set()
+        self._tasks: set[asyncio.Task] = set()
+        self._wait_for_cancel_task: asyncio.Task | None = None
 
         self.stop_consume_event = asyncio.Event()
         self.cancel_event = asyncio.Event()
 
         self.max_tasks = max_tasks
-        self.tasks_concurrency_limit = tasks_concurrency_limit
-        self.limiter = asyncio.Semaphore(tasks_concurrency_limit)
+        self._tasks_concurrency_limit = tasks_concurrency_limit
+        self._limiter = asyncio.Semaphore(tasks_concurrency_limit)
         self._tasks_processed = 0
 
-        self.health_check_server = health_check_server
+        self._health_check_server = health_check_server
 
         super().__init__(self._conn)
 
@@ -45,7 +46,7 @@ class _Runner(_Processor):
         return (
             self.max_tasks
             - self._tasks_processed
-            - (self.tasks_concurrency_limit - self.limiter._value)
+            - (self._tasks_concurrency_limit - self._limiter._value)
             <= 0
         )
 
@@ -62,8 +63,8 @@ class _Runner(_Processor):
         return self._stop_consume_event_task
 
     def _task_callback(self, task: asyncio.Task) -> None:
-        self.tasks.discard(task)
-        self.limiter.release()
+        self._tasks.discard(task)
+        self._limiter.release()
         self._tasks_processed += 1
         if self.max_tasks_hit:
             self.stop_consume_event.set()
@@ -93,14 +94,14 @@ class _Runner(_Processor):
     ) -> None:
         async for key, payload, params in consumer:
             actor = actors[key.topic]
-            if self.limiter.locked():
+            if self._limiter.locked():
                 await consumer.pause()
-                await self.limiter.acquire()
+                await self._limiter.acquire()
                 await consumer.unpause()
             else:
-                await self.limiter.acquire()
+                await self._limiter.acquire()
             t = asyncio.create_task(self._process_with_event(actor, key, payload, params))
-            self.tasks.add(t)
+            self._tasks.add(t)
             t.add_done_callback(self._task_callback)
 
     async def run_one_queue(
@@ -112,7 +113,7 @@ class _Runner(_Processor):
         consumer = self._conn.message_broker.get_consumer(
             queue_name,
             topics,
-            self.tasks_concurrency_limit,
+            self._tasks_concurrency_limit,
         )
         await consumer.start()
         consume_task = asyncio.create_task(self._run_consumer(consumer, actors))
@@ -130,9 +131,32 @@ class _Runner(_Processor):
                 extra={"queue_name": queue_name},
                 exc_info=exc,
             )
-            if self.health_check_server is not None:
-                self.health_check_server.health_status = HealthCheckStatus.UNHEALTHY
+            if self._health_check_server is not None:
+                self._health_check_server.health_status = HealthCheckStatus.UNHEALTHY
         if self.stop_consume_event.is_set():
             consume_task.cancel()
         await consumer.pause()
         return consumer
+
+    async def stop_wait_and_cancel(self, wait_for: float) -> None:
+        self.stop_consume_event.set()
+        await asyncio.sleep(wait_for)
+        self.cancel_event.set()
+
+    def sync_stop_wait_and_cancel(self, wait_for: float) -> None:
+        self._wait_for_cancel_task = asyncio.create_task(self.stop_wait_and_cancel(wait_for))
+
+    async def finish_gracefully(self, timeout: float) -> None:
+        logger.debug("Gracefully finishing runner.")
+        self.stop_consume_event.set()
+        if self._tasks:
+            _, pending = await asyncio.wait(
+                self._tasks,
+                return_when=asyncio.ALL_COMPLETED,
+                timeout=timeout,
+            )
+            if pending:
+                logger.error("Some tasks timeouted when gracefully finishing runner.")
+        if self._wait_for_cancel_task is not None:
+            self._wait_for_cancel_task.cancel()
+        self.cancel_event.set()

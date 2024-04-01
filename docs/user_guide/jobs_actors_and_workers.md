@@ -349,9 +349,9 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-After worker receives a signal it will attempt a graceful shutdown. It means that it will stop
-receiving new messages and wait for `graceful_shutdown_time` (default: 25 seconds) to let already
-running actors complete.
+After worker receives a signal or reaches `messages_limit` it will attempt a graceful shutdown.
+It means that it will stop receiving new messages and wait for `graceful_shutdown_time`
+(default: 25 seconds) to let already running actors complete.
 
 !!! note
     Default `graceful_shutdown_time` is set to 25 seconds because default Kubernetes timeout
@@ -377,9 +377,8 @@ Worker(
 ```
 
 ??? warning
-    If you are running on the `emscripten` platform (e.g. PyScript) you will have to manually
-    disable signal handling by setting `handle_signals` to an empty list `= []`, as the platform
-    doesn't support signal handling.
+    If you are running on the `emscripten` platform (e.g. PyScript) signal handling is disabled
+    by default, as it isn't supported by the platform.
 
 After Worker is done running, it will return an internal `_Runner` object, which you can use
 to retrieve information about amount of actor runs.

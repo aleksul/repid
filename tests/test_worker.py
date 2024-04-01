@@ -59,6 +59,36 @@ async def test_worker_sigint() -> None:
     await task
 
 
+async def test_worker_cancel(caplog: pytest.LogCaptureFixture) -> None:
+    r = Router()
+
+    @r.actor
+    async def awesome_job() -> None:
+        await asyncio.sleep(0.01)
+
+    myworker = Worker(routers=[r], graceful_shutdown_time=1)
+
+    task = asyncio.Task(myworker.run())
+    j = Job("awesome_job")
+    await j.queue.declare()
+    await j.enqueue()
+    assert not task.done()
+    assert task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert any(
+        (
+            all(
+                (
+                    "CRITICAL" in x,
+                    "Worker was cancelled." in x,
+                ),
+            )
+            for x in caplog.text.splitlines()
+        ),
+    )
+
+
 async def test_worker_long_task_reject() -> None:
     r = Router()
     j = Job("awesome_job")

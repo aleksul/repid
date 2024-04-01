@@ -56,8 +56,10 @@ class _Processor:
         success: bool
         exception = None
 
-        logger.info("Running actor '{actor_name}' on message {message_id}.", extra=logger_extra)
-        logger.debug("Time limit is set to {time_limit}.", extra=logger_extra)
+        logger.debug(
+            "Running actor '{actor_name}' on message {message_id} with time limit {time_limit}.",
+            extra=logger_extra,
+        )
 
         started_when = time.time_ns()
 
@@ -104,6 +106,10 @@ class _Processor:
             )
             result = actor.converter.convert_outputs(_result)
         except _NoAction as exc:
+            logger.debug(
+                "Actor '{actor_name}' finished explicitly on message {message_id}.",
+                extra=logger_extra,
+            )
             return ActorResult(
                 data=exc.data,
                 success=exc.success,
@@ -115,12 +121,13 @@ class _Processor:
         except Exception as exc:  # noqa: BLE001
             exception = exc
             success = False
-            logger.exception(
+            logger.debug(
                 "Error inside of an actor '{actor_name}' on message {message_id}.",
                 extra=logger_extra,
+                exc_info=exc,
             )
         else:
-            logger.info(
+            logger.debug(
                 "Actor '{actor_name}' finished successfully on message {message_id}.",
                 extra=logger_extra,
             )

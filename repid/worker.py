@@ -65,6 +65,8 @@ class Worker(Router):
         )
 
     async def run(self) -> _Runner:
+        logger.info("Starting to run worker.")
+
         if self.health_check_server is not None:
             await self.health_check_server.start()
 
@@ -87,7 +89,7 @@ class Worker(Router):
         loop = asyncio.get_running_loop()
         self._register_signals(loop, runner)
 
-        logger.debug("Starting consumers.")
+        logger.info("Starting consumers.")
         try:
             consumers = await asyncio.gather(
                 *(
@@ -106,7 +108,7 @@ class Worker(Router):
         await runner.finish_gracefully(timeout=self.graceful_shutdown_time)
 
         if consumers:
-            logger.debug("Gracefully finishing consumers.")
+            logger.info("Gracefully finishing consumers.")
             await asyncio.wait_for(
                 asyncio.gather(*(c.finish() for c in consumers)),
                 timeout=self.graceful_consumer_finish_time,
@@ -120,10 +122,13 @@ class Worker(Router):
 
         self._unregister_signals(loop)
 
+        logger.info("Exiting worker run.")
+
         return runner
 
     def _register_signals(self, loop: asyncio.AbstractEventLoop, runner: _Runner) -> None:
         def signal_handler() -> None:
+            logger.info("Received signal, stopping runner.")
             runner.sync_stop_wait_and_cancel(self.graceful_shutdown_time)
             self._unregister_signals(loop)
 

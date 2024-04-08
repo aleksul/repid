@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 import pytest
@@ -20,33 +19,14 @@ from repid import (
 from repid._runner import _Runner
 from repid.actor import ActorData
 from repid.connections.in_memory.consumer import _InMemoryConsumer
-from repid.connections.in_memory.utils import Message
 
 
 class FaultyConsumer(_InMemoryConsumer):
     async def consume(self) -> tuple[RoutingKeyT, str, ParametersT]:
-        await asyncio.sleep(0)
-        if not self._started:
-            raise RuntimeError("Consumer wasn't started.")
-        while self._paused.locked():
-            await asyncio.sleep(0.1)
-
-        _consume_fn = self._InMemoryConsumer__category_to_consume[self.category]  # type: ignore[attr-defined]
-
-        msg: Message | None
-        while True:
-            await self._InMemoryConsumer__update_delayed()  # type: ignore[attr-defined]
-            if (msg := await _consume_fn()) is not None:
-                break
-            await asyncio.sleep(0.001)
-
-        self._queue.processing.add(msg)
-
-        if msg.key.topic == "fail":
+        result = await super().consume()
+        if result[0].topic == "fail":
             raise RuntimeError("I'm a faulty consumer.")
-
-        await asyncio.sleep(0)
-        return (msg.key, msg.payload, msg.parameters)
+        return result
 
 
 def connection_with_faulty_consumer() -> Connection:

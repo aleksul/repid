@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
 from datetime import datetime
 from typing import TYPE_CHECKING, Iterable
 
@@ -15,6 +14,8 @@ if TYPE_CHECKING:
 
 
 class _InMemoryConsumer(ConsumerT):
+    UPDATE_DELAYED_EVERY = 1.0
+
     def __init__(
         self,
         broker: InMemoryMessageBroker,
@@ -54,11 +55,10 @@ class _InMemoryConsumer(ConsumerT):
         await asyncio.sleep(0)
         self._started = False
         while self._queue.processing:
-            await self._queue.simple.put(self._queue.processing.pop())
+            self._queue.simple.put_nowait(self._queue.processing.pop())
         await asyncio.sleep(0)
 
-    async def __update_delayed(self) -> None:
-        await asyncio.sleep(0)
+    def __update_delayed(self) -> None:
         now = datetime.now()
         pop_soon = []
         for time_, msgs in self._queue.delayed.items():
@@ -67,20 +67,21 @@ class _InMemoryConsumer(ConsumerT):
                 for msg in msgs:
                     self._queue.simple.put_nowait(msg)
         [self._queue.delayed.pop(i) for i in pop_soon]
-        await asyncio.sleep(0)
 
-    async def __consume_normal(self) -> Message | None:
-        with suppress(asyncio.TimeoutError):
-            msg = await asyncio.wait_for(self._queue.simple.get(), timeout=1.0)
-            if msg.parameters.is_overdue:  # ttl expired
-                self._queue.dead.append(msg)
-            elif self.topics and msg.key.topic not in self.topics:  # topics don't match
-                self._queue.simple.put_nowait(msg)
-            else:  # proper message
-                return msg
-        return None
+    def __consume_normal(self) -> Message | None:
+        try:
+            msg = self._queue.simple.get_nowait()
+        except asyncio.QueueEmpty:
+            return None
+        if msg.parameters.is_overdue:  # ttl expired
+            self._queue.dead.append(msg)
+            return None
+        if self.topics and msg.key.topic not in self.topics:  # topics don't match
+            self._queue.simple.put_nowait(msg)
+            return None
+        return msg
 
-    async def __consume_delayed(self) -> Message | None:
+    def __consume_delayed(self) -> Message | None:
         if not self._queue.delayed:
             return None
 
@@ -90,7 +91,7 @@ class _InMemoryConsumer(ConsumerT):
             return self._queue.delayed.pop(soonest)[0]
         return self._queue.delayed[soonest].pop(0)
 
-    async def __consume_dead(self) -> Message | None:
+    def __consume_dead(self) -> Message | None:
         if not self._queue.dead:
             return None
 
@@ -106,11 +107,15 @@ class _InMemoryConsumer(ConsumerT):
         _consume_fn = self.__category_to_consume[self.category]
 
         msg: Message | None
-        while True:
-            await self.__update_delayed()
-            if (msg := await _consume_fn()) is not None:
-                break
+        sleep_time = 0.001
+        counter = 0.0
+        self.__update_delayed()
+        while (msg := _consume_fn()) is None:
             await asyncio.sleep(0.001)
+            counter += sleep_time
+            if counter > self.UPDATE_DELAYED_EVERY:
+                counter -= self.UPDATE_DELAYED_EVERY
+                self.__update_delayed()
 
         self._queue.processing.add(msg)
 

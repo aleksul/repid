@@ -5,5 +5,5 @@ dramatiq[rabbitmq]==1.16.0
 celery==5.3.6
 amqp==5.2.0
 gevent==23.9.1
-eventlet==0.35.1
+eventlet==0.35.2
 arq==0.25.0

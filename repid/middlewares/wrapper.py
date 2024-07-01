@@ -68,7 +68,7 @@ class _middleware_wrapper(Generic[FnP, FnR]):  # noqa: N801
         self._repid_signal_emitter: Callable[[str, dict[str, Any]], Coroutine] | None = None
 
     async def call_set_context(self, *args: FnP.args, **kwargs: FnP.kwargs) -> FnR:
-        IsInsideMiddleware.set(True)  # noqa: FBT003
+        IsInsideMiddleware.set(True)
         return await self.fn(*args, **kwargs)
 
     async def __call__(self, *args: FnP.args, **kwargs: FnP.kwargs) -> FnR:

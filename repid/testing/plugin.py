@@ -42,7 +42,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
                 break
 
 
-@pytest.fixture()
+@pytest.fixture
 def repid_app() -> Repid:
     return Repid(
         Connection(
@@ -53,14 +53,14 @@ def repid_app() -> Repid:
     )
 
 
-@pytest.fixture()
+@pytest.fixture
 async def repid_connection(_repid_app_with_modifiers: Repid) -> AsyncIterator[Connection]:
     await _repid_app_with_modifiers.magic_disconnect()
     async with _repid_app_with_modifiers.magic(auto_disconnect=True):
         yield _repid_app_with_modifiers.connection
 
 
-@pytest.fixture()
+@pytest.fixture
 def repid_get_event_log(
     _repid_app_with_event_log_modifiers: EventLogModifiers,
 ) -> GetEventLogT:
@@ -82,7 +82,7 @@ def repid_get_event_log(
     )
 
 
-@pytest.fixture()
+@pytest.fixture
 def repid_get_mocked_actor(
     _construct_repid_router_from_markers: Router,
 ) -> GetMockedActorT:
@@ -96,7 +96,7 @@ class EventLogModifiers:
     result_bucket_broker: EventLogModifier | None
 
 
-@pytest.fixture()
+@pytest.fixture
 def repid_get_in_memory_queue(repid_connection: Connection) -> GetInMemoryQueueT:
     def _get_queue(queue: Queue | str) -> DummyQueue | None:
         if not isinstance(repid_connection.message_broker, InMemoryMessageBroker):
@@ -108,14 +108,14 @@ def repid_get_in_memory_queue(repid_connection: Connection) -> GetInMemoryQueueT
     return _get_queue
 
 
-@pytest.fixture()
+@pytest.fixture
 async def repid_declare_all_known_queues(  # noqa: PT004
     _construct_repid_router_from_markers: Router,
 ) -> None:
     await Worker(routers=[_construct_repid_router_from_markers]).declare_all_queues()
 
 
-@pytest.fixture()
+@pytest.fixture
 def _repid_app_with_event_log_modifiers(repid_app: Repid) -> EventLogModifiers:  # noqa: PT005
     return EventLogModifiers(
         message_broker=EventLogModifier(repid_app.connection.message_broker),
@@ -132,7 +132,7 @@ def _repid_app_with_event_log_modifiers(repid_app: Repid) -> EventLogModifiers: 
     )
 
 
-@pytest.fixture()
+@pytest.fixture
 def _repid_app_with_worker_modifier(  # noqa: PT005
     repid_app: Repid,
     _construct_repid_router_from_markers: Router,
@@ -149,7 +149,7 @@ def _repid_app_with_worker_modifier(  # noqa: PT005
     )
 
 
-@pytest.fixture()
+@pytest.fixture
 def _repid_app_with_modifiers(  # noqa: PT005
     repid_app: Repid,
     _repid_app_with_event_log_modifiers: EventLogModifiers,
@@ -158,7 +158,7 @@ def _repid_app_with_modifiers(  # noqa: PT005
     return repid_app
 
 
-@pytest.fixture()
+@pytest.fixture
 def _construct_repid_router_from_markers(request: pytest.FixtureRequest) -> Router:  # noqa: PT005
     router = Router()
 

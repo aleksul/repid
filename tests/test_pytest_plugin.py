@@ -10,7 +10,7 @@ def my_super_function(a: str) -> str:
     return a
 
 
-@pytest.mark.repid()
+@pytest.mark.repid
 async def test_repid_marker_provides_connection() -> None:
     Repid.get_magic_connection()
 
@@ -111,7 +111,7 @@ async def test_no_connection_declare_all_queues() -> None:
     pass
 
 
-@pytest.mark.repid()
+@pytest.mark.repid
 async def test_get_queue(repid_get_in_memory_queue: GetInMemoryQueueT) -> None:
     q = Queue("nondefault")
     await q.declare()

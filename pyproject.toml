@@ -34,7 +34,7 @@ repid = "repid.testing.plugin"
 amqp = ["aiormq<7.0.0,>=6.4.0"]
 cron = ["croniter<3.0.0,>=2.0.0"]
 pydantic = ["pydantic>=2.0.0,<3.0.0"]
-redis = ["redis<5.1.0,>=5.0.0"]
+redis = ["redis<5.2.1,>=5.2.0"]
 test = ["pytest", "pytest-asyncio"]
 
 [project.urls]

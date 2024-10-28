@@ -92,7 +92,7 @@ class Connection:
                 )
                 if not isinstance(test_subject, ResultBucketT):
                     raise  # pragma: no cover
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 raise ValueError(
                     "Results bucket broker's BUCKET_CLASS must be compatible with ResultBucketT.",
                 ) from exc

@@ -26,7 +26,7 @@ def event_loop() -> Iterator[asyncio.AbstractEventLoop]:
     loop.close()
 
 
-@pytest.fixture()
+@pytest.fixture
 def fake_repid() -> Repid:
     return Repid(
         Connection(
@@ -37,7 +37,7 @@ def fake_repid() -> Repid:
     )
 
 
-@pytest.fixture()
+@pytest.fixture
 async def fake_connection(fake_repid: Repid) -> AsyncIterator[Connection]:
     async with fake_repid.magic(auto_disconnect=True) as conn:
         yield conn

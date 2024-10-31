@@ -33,7 +33,7 @@ repid = "repid.testing.plugin"
 
 [project.optional-dependencies]
 amqp = ["aiormq<7.0.0,>=6.4.0"]
-cron = ["croniter<3.0.0,>=2.0.0"]
+cron = ["croniter<5.0.2,>=5.0.1"]
 pydantic = ["pydantic>=2.0.0,<3.0.0"]
 redis = ["redis<6.0.0,>=5.0.0"]
 test = ["pytest", "pytest-asyncio"]

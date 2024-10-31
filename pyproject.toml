@@ -61,6 +61,20 @@ fail_under = 100
 omit = ["repid/connections/rabbitmq/protocols.py"]
 source = ["repid"]
 
+[tool.markdownlint]
+MD046 = false  # Code block style
+
+[tool.markdownlint.MD013]
+code_block_line_length = 100  # Number of characters for code blocks
+code_blocks = true  # Include code blocks
+headers = true  # Include headers
+heading_line_length = 100  # Number of characters for headings
+headings = true  # Include headings
+line_length = 100  # Number of characters
+stern = false  # Stern length checking
+strict = false  # Strict length checking
+tables = true  # Include tables
+
 [tool.mypy]
 check_untyped_defs = true
 disallow_any_unimported = true

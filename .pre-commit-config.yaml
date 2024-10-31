@@ -32,6 +32,7 @@ repos:
   rev: v0.39.0
   hooks:
   - id: markdownlint-fix
+    args: [--config=pyproject.toml, --configPointer=/tool/markdownlint]
 
 - repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
   rev: v2.12.0

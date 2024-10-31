@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from pytest_docker_tools import container
-from pytest_lazyfixture import lazy_fixture
+from pytest_lazy_fixtures import lf as lazy_fixture
 
 from repid import Connection, Repid
 from repid.connections import RabbitMessageBroker, RedisBucketBroker, RedisMessageBroker

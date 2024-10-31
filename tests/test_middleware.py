@@ -64,7 +64,7 @@ class RecursiveConnection(MessageBrokerT):
         raise NotImplementedError
 
 
-@pytest.fixture()
+@pytest.fixture
 async def dummy_recursive_connection() -> AsyncIterator[Connection]:
     repid_app = Repid(Connection(RecursiveConnection()))
     async with repid_app.magic(auto_disconnect=True) as conn:

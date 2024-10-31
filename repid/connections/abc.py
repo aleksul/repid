@@ -25,7 +25,7 @@ SignalEmitterT = Callable[[str, Dict[str, Any]], Coroutine]
 WrappedABCSelf = TypeVar("WrappedABCSelf", bound="_WrappedABC")
 
 
-class _WrappedABC(ABC):
+class _WrappedABC(ABC):  # noqa: B024
     __WRAPPED_METHODS__: tuple[str, ...] = ()
 
     def __new__(

@@ -3,9 +3,9 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from pytest_docker_tools import container
-from pytest_lazyfixture import lazy_fixture
+from pytest_lazy_fixtures import lf as lazy_fixture
 
-from repid import Connection, Repid
+from repid import Connection, InMemoryBucketBroker, InMemoryMessageBroker, Repid
 from repid.connections import RabbitMessageBroker, RedisBucketBroker, RedisMessageBroker
 
 if TYPE_CHECKING:
@@ -85,6 +85,17 @@ def rabbitmq_with_redis_connection(
                 f"redis://:test@localhost:{redis_container.ports['6379/tcp'][0]}/2",
                 use_result_bucket=True,
             ),
+        ),
+    )
+
+
+@pytest.fixture(scope="session")
+def fake_repid() -> Repid:
+    return Repid(
+        Connection(
+            InMemoryMessageBroker(),
+            InMemoryBucketBroker(),
+            InMemoryBucketBroker(use_result_bucket=True),
         ),
     )
 

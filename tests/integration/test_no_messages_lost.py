@@ -12,9 +12,9 @@ router = Router()
 
 @router.actor
 async def sleepy() -> None:
-    COUNTER1.value += 1  # type: ignore[attr-defined]
+    COUNTER1.value += 1
     await asyncio.sleep(3)
-    COUNTER2.value += 1  # type: ignore[attr-defined]
+    COUNTER2.value += 1
 
 
 async def run_worker(repid_conn: Repid) -> None:
@@ -33,8 +33,8 @@ def run_worker_sync(repid_conn: Repid) -> None:
 
 
 async def test_forced_worker_stop(autoconn: Repid) -> None:
-    COUNTER1.value = 0  # type: ignore[attr-defined]
-    COUNTER2.value = 0  # type: ignore[attr-defined]
+    COUNTER1.value = 0
+    COUNTER2.value = 0
 
     async with autoconn.magic(auto_disconnect=True):
         j = Job("sleepy", timeout=timedelta(seconds=4))
@@ -51,8 +51,8 @@ async def test_forced_worker_stop(autoconn: Repid) -> None:
     process.join()
     assert not process.is_alive()
 
-    assert COUNTER1.value == 1  # type: ignore[attr-defined]
-    assert COUNTER2.value == 0  # type: ignore[attr-defined]
+    assert COUNTER1.value == 1
+    assert COUNTER2.value == 0
 
     # wait until job times out
     await asyncio.sleep(3)
@@ -64,5 +64,5 @@ async def test_forced_worker_stop(autoconn: Repid) -> None:
 
         assert runner.processed == 1
 
-    assert COUNTER1.value == 2  # type: ignore[attr-defined]
-    assert COUNTER2.value == 1  # type: ignore[attr-defined]
+    assert COUNTER1.value == 2
+    assert COUNTER2.value == 1

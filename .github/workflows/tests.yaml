@@ -23,6 +23,7 @@ jobs:
         - '3.10'
         - '3.11'
         - '3.12'
+        - '3.13'
 
     steps:
     - name: Checkout repository
@@ -53,6 +54,7 @@ jobs:
       with:
         name: coverage-${{ runner.os }}-py${{ matrix.python-version }}
         path: coverage
+        include-hidden-files: true
 
   coverage-combine:
     needs: [tests]

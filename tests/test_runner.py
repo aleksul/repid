@@ -35,7 +35,7 @@ def connection_with_faulty_consumer() -> Connection:
     return Connection(broker)
 
 
-@pytest.fixture()
+@pytest.fixture
 async def seed_faulty_consumer() -> Connection:
     conn = connection_with_faulty_consumer()
     await Queue(_connection=conn).declare()

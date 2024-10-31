@@ -31,7 +31,7 @@ class SomeClass:
         return "serializer"
 
 
-@pytest.fixture()
+@pytest.fixture
 def _entry_points(monkeypatch: pytest.MonkeyPatch) -> None:
     def mock_entry_points() -> dict[str, list[EntryPoint]]:
         return {
@@ -101,7 +101,7 @@ def _entry_points(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(importlib.metadata, "entry_points", mock_entry_points)
 
 
-@pytest.fixture()
+@pytest.fixture
 def _patch_config() -> Iterator[None]:
     with patch.multiple(
         Config,

@@ -5,7 +5,7 @@
 groups = ["default", "amqp", "cron", "docs", "lint", "pre-commit", "pydantic", "redis", "test", "tests"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:d6f5656986f59c303ae24483b0a373ea22ff74e8fce45c24cb3a8d6365009504"
+content_hash = "sha256:dd39df968582cdb9fa52b5d6d7f11fe73c3d682e3826e6796d4564e36d999e21"
 
 [[metadata.targets]]
 requires_python = ">=3.8"
@@ -497,7 +497,7 @@ files = [
 
 [[package]]
 name = "croniter"
-version = "2.0.7"
+version = "4.0.0"
 requires_python = "!=3.0.*,!=3.1.*,!=3.2.*,!=3.3.*,>=2.6"
 summary = "croniter provides iteration for datetime object with cron like format"
 groups = ["cron"]
@@ -506,8 +506,8 @@ dependencies = [
     "pytz>2021.1",
 ]
 files = [
-    {file = "croniter-2.0.7-py2.py3-none-any.whl", hash = "sha256:f15e80828d23920c4bb7f4d9340b932c9dcabecafc7775703c8b36d1253ed526"},
-    {file = "croniter-2.0.7.tar.gz", hash = "sha256:1041b912b4b1e03751a0993531becf77851ae6e8b334c9c76ffeffb8f055f53f"},
+    {file = "croniter-4.0.0-py2.py3-none-any.whl", hash = "sha256:312717b8017ad6052817934af563f6754b1f25cb942dcca1e617240aca4aa254"},
+    {file = "croniter-4.0.0.tar.gz", hash = "sha256:3df735b70d005b68414d80728987ecba4d71054a1bb1b011f6d475bdefdbeddd"},
 ]
 
 [[package]]

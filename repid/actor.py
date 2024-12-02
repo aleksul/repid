@@ -8,6 +8,8 @@ if TYPE_CHECKING:
 
 
 class ActorData(NamedTuple):
+    """ActorData tuple is used to hold data related to an actor."""
+
     fn: Callable[..., Coroutine]
     name: str
     queue: str
@@ -16,6 +18,8 @@ class ActorData(NamedTuple):
 
 
 class ActorResult(NamedTuple):
+    """ActorResult tuple is used to hold metadata of an actor's execution."""
+
     data: str | None
     success: bool
     exception: Exception | None

@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 
 
 class Job:
+    """Job class stores all of the job parameters, which will determine how it will be executed."""
+
     __slots__ = (
         "name",
         "queue",
@@ -80,6 +82,7 @@ class Job:
         store_result: bool | None = None,
         _connection: Connection | None = None,
     ) -> None:
+        """Job initializer - gets a connection and sets all necessary fields."""
         self._conn = _connection or Repid.get_magic_connection()
 
         self.name = name
@@ -184,6 +187,7 @@ class Job:
         return self.args or ""
 
     async def enqueue(self) -> tuple[RoutingKeyT, str, ParametersT]:
+        """Add the job to the queue, while storing args bucket if required."""
         key = self._construct_routing_key()
         parameters = self._construct_parameters()
         args = await self._construct_args()
@@ -192,20 +196,24 @@ class Job:
 
     @property
     def is_deferred(self) -> bool:
+        """Check if any of the deferred strategies was used."""
         return any((self.deferred_until, self.deferred_by, self.cron))
 
     @property
     def is_unique(self) -> bool:
+        """Check uniqueness of the job by the presense of the id."""
         return self.id_ is not None
 
     @property
     def is_overdue(self) -> bool:
+        """If the job has a time-to-live (TTL) set, determines if the job was overdue."""
         if self.ttl is not None:
             return datetime.now(tz=self.timestamp.tzinfo) > self.timestamp + self.ttl
         return False
 
     @property
     async def result(self) -> ResultBucketT | None:
+        """Retrieve result bucket of the job, if present."""
         data = await self._conn._rb.get_bucket(self.result_id)
         if isinstance(data, ResultBucketT):
             return data

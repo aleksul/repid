@@ -10,11 +10,11 @@ from repid.connections.in_memory import (
 __all__ = [
     "BucketBrokerT",
     "ConsumerT",
-    "MessageBrokerT",
     "DummyBucketBroker",
     "DummyMessageBroker",
     "InMemoryBucketBroker",
     "InMemoryMessageBroker",
+    "MessageBrokerT",
 ]
 
 if is_installed("aiormq"):

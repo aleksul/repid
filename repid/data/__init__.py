@@ -5,9 +5,9 @@ from .protocols import ResultBucketT as ResultBucketT
 from .protocols import RoutingKeyT as RoutingKeyT
 
 __all__ = [
-    "PrioritiesT",
     "BucketT",
     "ParametersT",
+    "PrioritiesT",
     "ResultBucketT",
     "RoutingKeyT",
 ]

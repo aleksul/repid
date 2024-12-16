@@ -19,12 +19,12 @@ class MessageCategory(str, Enum):
 
 class Message:
     __slots__ = (
-        "_key",
-        "raw_payload",
-        "parameters",
-        "_connection",
-        "_category",
         "__read_only",
+        "_category",
+        "_connection",
+        "_key",
+        "parameters",
+        "raw_payload",
     )
 
     def __init__(

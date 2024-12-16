@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 
 class Queue:
-    __slots__ = ("name", "_conn")
+    __slots__ = ("_conn", "name")
 
     def __init__(
         self,

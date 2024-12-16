@@ -8,4 +8,4 @@ warnings.warn(
 
 from repid.connections.in_memory import DummyBucketBroker, DummyMessageBroker  # noqa: E402
 
-__all__ = ["DummyMessageBroker", "DummyBucketBroker"]
+__all__ = ["DummyBucketBroker", "DummyMessageBroker"]

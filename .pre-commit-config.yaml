@@ -18,14 +18,14 @@ repos:
   - id: end-of-file-fixer
 
 - repo: https://github.com/astral-sh/ruff-pre-commit
-  rev: v0.7.1
+  rev: v0.8.3
   hooks:
   - id: ruff
     args: [--fix, --exit-non-zero-on-fix]
   - id: ruff-format
 
 - repo: https://github.com/igorshubovych/markdownlint-cli
-  rev: v0.42.0
+  rev: v0.43.0
   hooks:
   - id: markdownlint-fix
     args: [--config=pyproject.toml, --configPointer=/tool/markdownlint]

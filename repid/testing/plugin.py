@@ -109,14 +109,14 @@ def repid_get_in_memory_queue(repid_connection: Connection) -> GetInMemoryQueueT
 
 
 @pytest.fixture
-async def repid_declare_all_known_queues(  # noqa: PT004
+async def repid_declare_all_known_queues(
     _construct_repid_router_from_markers: Router,
 ) -> None:
     await Worker(routers=[_construct_repid_router_from_markers]).declare_all_queues()
 
 
 @pytest.fixture
-def _repid_app_with_event_log_modifiers(repid_app: Repid) -> EventLogModifiers:  # noqa: PT005
+def _repid_app_with_event_log_modifiers(repid_app: Repid) -> EventLogModifiers:
     return EventLogModifiers(
         message_broker=EventLogModifier(repid_app.connection.message_broker),
         args_bucket_broker=(
@@ -133,7 +133,7 @@ def _repid_app_with_event_log_modifiers(repid_app: Repid) -> EventLogModifiers: 
 
 
 @pytest.fixture
-def _repid_app_with_worker_modifier(  # noqa: PT005
+def _repid_app_with_worker_modifier(
     repid_app: Repid,
     _construct_repid_router_from_markers: Router,
 ) -> RunWorkerOnEnqueueModifier:
@@ -150,7 +150,7 @@ def _repid_app_with_worker_modifier(  # noqa: PT005
 
 
 @pytest.fixture
-def _repid_app_with_modifiers(  # noqa: PT005
+def _repid_app_with_modifiers(
     repid_app: Repid,
     _repid_app_with_event_log_modifiers: EventLogModifiers,
     _repid_app_with_worker_modifier: RunWorkerOnEnqueueModifier,
@@ -159,7 +159,7 @@ def _repid_app_with_modifiers(  # noqa: PT005
 
 
 @pytest.fixture
-def _construct_repid_router_from_markers(request: pytest.FixtureRequest) -> Router:  # noqa: PT005
+def _construct_repid_router_from_markers(request: pytest.FixtureRequest) -> Router:
     router = Router()
 
     for mark in request.node.iter_markers("repid"):

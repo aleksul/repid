@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Coroutine, NamedTuple
+from collections.abc import Callable, Coroutine
+from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     from repid.converter import ConverterT

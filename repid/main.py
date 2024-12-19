@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 from repid.config import Config
 from repid.connection import Connection

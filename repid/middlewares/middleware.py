@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Coroutine
 from inspect import getfullargspec, getmembers, isfunction, ismethod
-from typing import Any, Callable, Coroutine
+from typing import Any
 
 from repid._asyncify import asyncify
 from repid.logger import logger

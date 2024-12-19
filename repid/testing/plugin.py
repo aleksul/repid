@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import collections.abc
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from typing import AsyncIterator, Callable, List, Optional, Union
 from unittest.mock import MagicMock
 
 import pytest
@@ -17,9 +17,9 @@ from repid.router import Router
 from repid.testing.modifiers import EventLog, EventLogModifier, RunWorkerOnEnqueueModifier
 from repid.worker import Worker
 
-GetEventLogT = Callable[[], List[EventLog]]
-GetMockedActorT = Callable[[str], Optional[MagicMock]]
-GetInMemoryQueueT = Callable[[Union[Queue, str]], Optional[DummyQueue]]
+GetEventLogT = Callable[[], list[EventLog]]
+GetMockedActorT = Callable[[str], MagicMock | None]
+GetInMemoryQueueT = Callable[[Queue | str], DummyQueue | None]
 
 
 def pytest_configure(config: pytest.Config) -> None:

@@ -1,12 +1,6 @@
 from __future__ import annotations
 
-import sys
-from typing import TYPE_CHECKING, Any, cast
-
-if sys.version_info >= (3, 9):  # pragma: no cover
-    from typing import Annotated, get_origin
-else:  # pragma: no cover
-    from typing_extensions import Annotated, get_origin
+from typing import TYPE_CHECKING, Annotated, Any, cast, get_origin
 
 if TYPE_CHECKING:
     from repid.dependencies.protocols import DependencyT

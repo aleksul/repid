@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Iterable
+from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 from repid._processor import _Processor
 from repid.health_check_server import HealthCheckStatus

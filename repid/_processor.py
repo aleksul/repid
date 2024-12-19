@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Coroutine
 from datetime import datetime
-from typing import TYPE_CHECKING, Coroutine, cast
+from typing import TYPE_CHECKING, cast
 
 from repid._utils import _ArgsBucketInMessageId, _NoAction
 from repid.actor import ActorData, ActorResult
@@ -97,7 +98,7 @@ class _Processor:
 
             resolved = await asyncio.gather(*unresolved_dependencies_values)
 
-            dependency_kwargs = dict(zip(unresolved_dependencies_names, resolved))
+            dependency_kwargs = dict(zip(unresolved_dependencies_names, resolved, strict=False))
 
             args, kwargs = actor.converter.convert_inputs(payload)
             _result = await asyncio.wait_for(

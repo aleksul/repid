@@ -1,8 +1,8 @@
 import asyncio
 import os
+from collections.abc import AsyncIterator
 from datetime import timedelta
 from signal import SIGINT
-from typing import AsyncIterator
 
 import pytest
 

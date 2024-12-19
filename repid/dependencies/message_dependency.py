@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from functools import partial
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from repid._asyncify import asyncify
 from repid._utils import _NoAction

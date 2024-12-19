@@ -1,7 +1,7 @@
 import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Dict, Union
+from typing import Any
 
 from repid._utils import FROZEN_DATACLASS, JSON_ENCODER, SLOTS_DATACLASS
 
@@ -11,14 +11,14 @@ class ArgsBucket:
     data: str
 
     timestamp: datetime = field(default_factory=datetime.now)
-    ttl: Union[timedelta, None] = None
+    ttl: timedelta | None = None
 
     def encode(self) -> str:
         return JSON_ENCODER.encode(asdict(self))
 
     @classmethod
     def decode(cls, data: str) -> "ArgsBucket":
-        loaded: Dict[str, Any] = json.loads(data)
+        loaded: dict[str, Any] = json.loads(data)
 
         for key, value in loaded.items():
             if value is None:
@@ -50,17 +50,17 @@ class ResultBucket:
     finished_when: int
 
     success: bool = True
-    exception: Union[str, None] = None
+    exception: str | None = None
 
     timestamp: datetime = field(default_factory=datetime.now)
-    ttl: Union[timedelta, None] = None
+    ttl: timedelta | None = None
 
     def encode(self) -> str:
         return JSON_ENCODER.encode(asdict(self))
 
     @classmethod
     def decode(cls, data: str) -> "ResultBucket":
-        loaded: Dict[str, Any] = json.loads(data)
+        loaded: dict[str, Any] = json.loads(data)
 
         for key, value in loaded.items():
             if value is None:

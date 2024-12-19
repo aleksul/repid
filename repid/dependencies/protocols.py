@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 from enum import Enum
-from typing import Any, Protocol, Union
+from typing import Any, Protocol
 
 if sys.version_info >= (3, 11):  # pragma: no cover
     from typing import Self
@@ -32,4 +32,4 @@ class AnnotatedDependencyT(Protocol):
     async def resolve(self, *, context: ResolverContext) -> Any: ...
 
 
-DependencyT = Union[DirectDependencyT, AnnotatedDependencyT]
+DependencyT = DirectDependencyT | AnnotatedDependencyT

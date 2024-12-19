@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, MutableMapping
+from collections.abc import MutableMapping
+from typing import Any
 
 
 class _FormatWithExtraAdapter(logging.LoggerAdapter):

@@ -1,8 +1,9 @@
 {
 	"name": "Repid Devcontainer",
-	"image": "mcr.microsoft.com/devcontainers/python:0-3.8-bullseye",
+	"image": "mcr.microsoft.com/devcontainers/python:1-3.10-bookworm",
 	"features": {
-		"ghcr.io/devcontainers-contrib/features/pdm:2": {},
+		"ghcr.io/va-h/devcontainers-features/uv:1": {},
+		"ghcr.io/jungaretti/features/make:1": {},
 		"docker-from-docker": "latest"
 	},
 	"customizations": {
@@ -14,15 +15,18 @@
 			"extensions": [
 				"ms-python.python",
 				"ms-python.vscode-pylance",
+				"ms-python.debugpy",
 				"matangover.mypy",
 				"charliermarsh.ruff",
-				"ms-python.black-formatter",
-				"njpwerner.autodocstring",
 				"ryanluker.vscode-coverage-gutters",
-				"seatonjiang.gitmoji-vscode"
+				"seatonjiang.gitmoji-vscode",
+				"shardulm94.trailing-spaces",
+				"tamasfe.even-better-toml",
+				"redhat.vscode-yaml",
+				"davidanson.vscode-markdownlint"
 			]
 		}
 	},
-	"postCreateCommand": "pdm install -G :all && pdm run pre-commit install",
+	"postCreateCommand": "make install",
 	"remoteUser": "vscode"
 }

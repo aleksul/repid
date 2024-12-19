@@ -19,11 +19,8 @@ jobs:
       with:
         fetch-depth: 0
 
-    - name: Setup PDM
-      uses: pdm-project/setup-pdm@v4
-      with:
-        python-version: '3.8'
-        cache: true
+    - name: Setup uv
+      uses: astral-sh/setup-uv@v4
 
     - name: Publish to PyPI
-      run: pdm publish
+      run: uv publish --trusted-publishing always

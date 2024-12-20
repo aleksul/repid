@@ -22,13 +22,13 @@ class MessageDependency(Message):
     __repid_dependency__ = DependencyKind.DIRECT
 
     __slots__ = (
+        "__lazy_result_callback",
+        "__result_data",
+        "__result_exception",
+        "__result_success",
         "_actor_data",
         "_actor_processing_started_when",
         "_callbacks",
-        "__lazy_result_callback",
-        "__result_success",
-        "__result_data",
-        "__result_exception",
     )
 
     def __init__(

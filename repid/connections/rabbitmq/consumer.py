@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Iterable
-from typing import TYPE_CHECKING
+import weakref
+from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
 import aiormq
 from aiormq.abc import Basic
 
 from repid.connections.abc import ConsumerT
+from repid.connections.rabbitmq.utils import _Consumers
 from repid.data.priorities import PrioritiesT
 from repid.logger import logger
 from repid.message import MessageCategory
@@ -39,6 +41,40 @@ class _RabbitConsumer(ConsumerT):
         self._consumer_tag: str | None = None
         self.__is_paused: bool = False
         self.__is_consuming: bool = False
+        self.__channel: aiormq.abc.AbstractChannel | None = None
+
+    def _force_reset(self) -> None:  # pragma: no cover
+        self._consumer_tag = None
+        self.__is_paused = False
+        self.__is_consuming = False
+        self.server_side_cancel_event.clear()
+        while not self.queue.empty():
+            self.queue.get_nowait()
+
+    async def _get_or_open_channel(self) -> aiormq.abc.AbstractChannel:
+        if self.__channel is not None:
+            if not self.__channel.is_closed:
+                return self.__channel
+            logger.error(  # pragma: no cover
+                "RabbitMQ has closed consumer channel (number: {number}), reopening.",
+                extra={"number": self.__channel.number},
+            )
+            self._force_reset()  # pragma: no cover
+        connection = await self.broker._get_connection()
+        self.__channel = await connection.channel()
+        # patch consumers dict to hook into server-side cancel event
+        cast("aiormq.Channel", self.__channel).consumers = cast("dict[str, Callable]", _Consumers())
+        return self.__channel
+
+    def _get_channel_if_opened(self) -> aiormq.abc.AbstractChannel | None:
+        if self.__channel is not None:
+            if not self.__channel.is_closed:
+                return self.__channel
+            logger.error(  # pragma: no cover
+                "Cannot act on closed consumer channel (number: {number}).",
+                extra={"number": self.__channel.number},
+            )
+        return None
 
     async def consume(self) -> tuple[RoutingKeyT, str, ParametersT]:
         # fast-path without task creation
@@ -76,6 +112,9 @@ class _RabbitConsumer(ConsumerT):
                     "RabbitMQ has terminated consumer (tag: {tag}) server-side.",
                     extra={"tag": self._consumer_tag},
                 )
+                # clear the queue - those messages are probably already rejected on RabbitMQ side
+                while not self.queue.empty():
+                    self.queue.get_nowait()  # pragma: no cover
                 # attempt to restart the consumer
                 await self.start()
                 # if restart was successful - we can try to consume again
@@ -87,11 +126,12 @@ class _RabbitConsumer(ConsumerT):
     async def start(self) -> None:
         self.__is_consuming = True
         self.server_side_cancel_event.clear()
-        await self.broker._channel.basic_qos(
+        channel = await self._get_or_open_channel()
+        await channel.basic_qos(
             prefetch_size=0,
             prefetch_count=self.max_unacked_messages,
         )
-        confirmation = await self.broker._channel.basic_consume(
+        confirmation = await channel.basic_consume(
             self.broker.qnc(
                 self.queue_name,
                 delayed=self.category == MessageCategory.DELAYED,
@@ -107,14 +147,18 @@ class _RabbitConsumer(ConsumerT):
 
     async def pause(self) -> None:
         self.__is_paused = True
-        await self.broker._channel.basic_qos(
+        if (channel := self._get_channel_if_opened()) is None:
+            return
+        await channel.basic_qos(
             prefetch_size=0,
             prefetch_count=1,
         )
 
     async def unpause(self) -> None:
         self.__is_paused = False
-        await self.broker._channel.basic_qos(
+        if (channel := self._get_channel_if_opened()) is None:
+            return  # pragma: no cover
+        await channel.basic_qos(
             prefetch_size=0,
             prefetch_count=self.max_unacked_messages,
         )
@@ -123,18 +167,26 @@ class _RabbitConsumer(ConsumerT):
         self.__is_consuming = False
         if self._consumer_tag is None:
             return
-        confirmation = await self.broker._channel.basic_cancel(self._consumer_tag)
+        if (channel := self._get_channel_if_opened()) is None:
+            self._force_reset()  # pragma: no cover
+            return  # pragma: no cover
+        confirmation = await channel.basic_cancel(self._consumer_tag)
         if not isinstance(confirmation, Basic.CancelOk):  # pragma: no cover
             logger.error(
                 "Consumer (tag: {tag}) wasn't stopped properly.",
                 extra={"tag": self._consumer_tag},
             )
         rejects = []
-        while self.queue.qsize() > 0:
+        while not self.queue.empty():
             key, _, _ = self.queue.get_nowait()
-            tag = self.broker._id_to_delivery_tag.pop(key.id_, None)
-            if tag is not None:
-                rejects.append(self.broker._channel.basic_reject(tag))
+            tag_and_channel_ref = self.broker._id_to_delivery_tag.pop(key.id_, None)
+            if (
+                tag_and_channel_ref is not None
+                and (tag := tag_and_channel_ref[0])
+                and (channel_ref := tag_and_channel_ref[1]()) is not None
+                and channel is channel_ref
+            ):
+                rejects.append(channel.basic_reject(tag))
             else:  # pragma: no cover
                 logger.error(
                     "Can't reject unknown delivery tag for message ({routing_key}) "
@@ -157,10 +209,12 @@ class _RabbitConsumer(ConsumerT):
             )
             return
 
+        channel = message.channel
+
         # if consumer is paused or is not set to consume messages - reject the message
         if self.__is_paused or not self.__is_consuming:
             await asyncio.sleep(0.1)
-            await self.broker._channel.basic_reject(message.delivery_tag)
+            await channel.basic_reject(message.delivery_tag)
             logger.debug("Consumer is paused or is not set to consume message.")
             return
 
@@ -175,7 +229,7 @@ class _RabbitConsumer(ConsumerT):
         # reject the message with no topic set (== message wasn't scheduled by repid-like producer)
         if msg_topic is None:  # pragma: no cover
             await asyncio.sleep(0.1)  # poison message fix
-            await self.broker._channel.basic_reject(message.delivery_tag)
+            await channel.basic_reject(message.delivery_tag)
             logger.debug(
                 "Message has no topic set or message wasn't scheduled by repid-like producer.",
             )
@@ -184,7 +238,7 @@ class _RabbitConsumer(ConsumerT):
         # reject the message if the topic isn't in the range of specified
         if self.topics and msg_topic not in self.topics:
             await asyncio.sleep(0.1)  # poison message fix
-            await self.broker._channel.basic_reject(message.delivery_tag)
+            await channel.basic_reject(message.delivery_tag)
             logger.debug(
                 "Unknown message's topic. Check if Actor name matches Job or message topic name.",
             )
@@ -197,12 +251,12 @@ class _RabbitConsumer(ConsumerT):
 
         # put message to a dead queue if it's overdue
         if params.is_overdue and self.category == MessageCategory.NORMAL:
-            await self.broker._channel.basic_nack(message.delivery_tag, requeue=False)
+            await channel.basic_nack(message.delivery_tag, requeue=False)
             logger.debug("Message is overdue, placing it in dlx.")
             return
 
         # save delivery tag for the future
-        self.broker._id_to_delivery_tag[msg_id] = message.delivery_tag
+        self.broker._id_to_delivery_tag[msg_id] = (message.delivery_tag, weakref.ref(channel))
 
         # create a key object and put message in in-memory queue to be picked up soon
         await self.queue.put(

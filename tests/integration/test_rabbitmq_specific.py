@@ -9,6 +9,8 @@ from repid.connections.rabbitmq import RabbitMessageBroker
 if TYPE_CHECKING:
     from pytest_docker_tools import wrappers
 
+    from repid.connections.rabbitmq.consumer import _RabbitConsumer as RabbitConsumer
+
 
 async def test_server_side_cancel(
     rabbitmq_connection: Repid,
@@ -19,7 +21,7 @@ async def test_server_side_cancel(
         message_broker = cast(RabbitMessageBroker, conn.message_broker)
         await message_broker.queue_declare("default")
 
-        consumer = message_broker.get_consumer("default")
+        consumer = cast("RabbitConsumer", message_broker.get_consumer("default"))
 
         await consumer.start()
 
@@ -28,7 +30,10 @@ async def test_server_side_cancel(
         consumers = rabbitmq_container.exec_run("rabbitmqctl list_consumers")
         ctag = consumers.output.decode().split("\n")[2].split("\t")[2]
 
-        await message_broker._channel.basic_cancel(ctag)
+        channel = consumer._get_channel_if_opened()
+        assert channel is not None
+
+        await channel.basic_cancel(ctag)
 
         await Job("do_nothing").enqueue()
 

@@ -21,7 +21,7 @@ jobs:
         git config user.email github-actions@github.com
 
     - name: Setup uv
-      uses: astral-sh/setup-uv@v4
+      uses: astral-sh/setup-uv@v5
 
     - name: Install or update dependencies
       run: uv sync --only-group docs --no-install-project --frozen

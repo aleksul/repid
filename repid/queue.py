@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Iterable
+from typing import TYPE_CHECKING
 
 from repid._utils import VALID_NAME
 from repid.main import Repid

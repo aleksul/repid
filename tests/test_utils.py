@@ -1,4 +1,4 @@
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import pytest
 
@@ -17,7 +17,7 @@ from repid.data._parameters import Parameters
     "function",
     [dummy_wait_until, rabbitmq_wait_until, redis_wait_timestamp],
 )
-def test_wait_until_returns_none(params: Optional[Parameters], function: Callable) -> None:
+def test_wait_until_returns_none(params: Parameters | None, function: Callable) -> None:
     assert function(params=params) is None
 
 

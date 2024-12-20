@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Coroutine, Iterable
 from copy import deepcopy
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
     ClassVar,
-    Coroutine,
-    Dict,
-    Iterable,
     TypeVar,
 )
 
@@ -21,7 +18,7 @@ if TYPE_CHECKING:
     from repid.data.protocols import BucketT, ParametersT, ResultBucketT, RoutingKeyT
 
 EncodedPayloadT = str
-SignalEmitterT = Callable[[str, Dict[str, Any]], Coroutine]
+SignalEmitterT = Callable[[str, dict[str, Any]], Coroutine]
 WrappedABCSelf = TypeVar("WrappedABCSelf", bound="_WrappedABC")
 
 

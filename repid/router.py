@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import partial
-from typing import TYPE_CHECKING, Callable, TypeVar, overload
+from typing import TYPE_CHECKING, TypeVar, overload
 
 from repid._asyncify import asyncify
 from repid._utils import VALID_NAME

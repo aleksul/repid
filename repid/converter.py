@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import inspect
 import json
-from typing import TYPE_CHECKING, Any, Callable, Coroutine, Dict, List, Protocol, Tuple, TypeVar
+from collections.abc import Callable, Coroutine
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 from warnings import warn
 
 from repid._utils import JSON_ENCODER, get_dependency, is_installed
@@ -17,7 +18,7 @@ if TYPE_CHECKING:
     from repid.dependencies.protocols import DependencyT
 
 FnR = TypeVar("FnR", contravariant=True)  # noqa: PLC0105
-Params = Tuple[List, Dict]
+Params = tuple[list, dict]
 
 
 class ConverterT(Protocol[FnR]):

@@ -1,7 +1,7 @@
 import asyncio
-import sys
 import time
 from datetime import datetime, timedelta
+from typing import Annotated
 
 import pytest
 from annotated_types import Ge
@@ -17,11 +17,6 @@ from repid import (
     Router,
     Worker,
 )
-
-if sys.version_info >= (3, 10):
-    from typing import Annotated
-else:
-    from typing_extensions import Annotated
 
 pytestmark = pytest.mark.usefixtures("fake_connection")
 

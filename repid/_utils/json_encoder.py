@@ -11,7 +11,7 @@ if is_installed("pydantic"):
 
 class _RepidJSONEncoder(json.JSONEncoder):
     def default(self, obj: Any) -> Any:
-        if isinstance(obj, (datetime, date, time)):
+        if isinstance(obj, datetime | date | time):
             return obj.isoformat()
         if isinstance(obj, timedelta):
             return obj.total_seconds()

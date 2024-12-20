@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import wraps
 from time import perf_counter, time
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from repid._utils import FROZEN_DATACLASS, SLOTS_DATACLASS
 from repid.connections.abc import BucketBrokerT, ConsumerT, MessageBrokerT
@@ -27,7 +28,7 @@ class EventLogModifier:
     def __init__(self, parent: MessageBrokerT | BucketBrokerT) -> None:
         self._parent = parent
         self.events: list[EventLog] = []
-        if isinstance(self._parent, (BucketBrokerT, MessageBrokerT)):
+        if isinstance(self._parent, BucketBrokerT | MessageBrokerT):
             for method_name in self._parent.__WRAPPED_METHODS__:
                 setattr(self._parent, method_name, self.wrapper(getattr(self._parent, method_name)))
             if isinstance(self._parent, MessageBrokerT):

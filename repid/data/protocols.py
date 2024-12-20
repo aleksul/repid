@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import ClassVar, Protocol, Type, TypeVar, Union, runtime_checkable
+from typing import ClassVar, Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
 
 from repid.data.priorities import PrioritiesT
@@ -16,7 +16,7 @@ class SerializableT(Protocol[T_co]):
 
 class TimedT(Protocol):
     timestamp: datetime
-    ttl: Union[timedelta, None]
+    ttl: timedelta | None
 
     @property
     def is_overdue(self) -> bool:
@@ -53,43 +53,43 @@ class RetriesPropertiesT(Protocol):
 
 class ResultPropertiesT(Protocol):
     id_: str
-    ttl: Union[timedelta, None]
+    ttl: timedelta | None
 
     def __init__(
         self,
         *,
-        id_: Union[str, None] = None,
-        ttl: Union[timedelta, None] = None,
+        id_: str | None = None,
+        ttl: timedelta | None = None,
     ) -> None: ...
 
 
 class DelayPropertiesT(Protocol):
-    delay_until: Union[datetime, None]
-    defer_by: Union[timedelta, None]
-    cron: Union[str, None]
-    next_execution_time: Union[datetime, None]
+    delay_until: datetime | None
+    defer_by: timedelta | None
+    cron: str | None
+    next_execution_time: datetime | None
 
     def __init__(
         self,
         *,
-        delay_until: Union[datetime, None] = None,
-        defer_by: Union[timedelta, None] = None,
-        cron: Union[str, None] = None,
-        next_execution_time: Union[datetime, None] = None,
+        delay_until: datetime | None = None,
+        defer_by: timedelta | None = None,
+        cron: str | None = None,
+        next_execution_time: datetime | None = None,
     ) -> None: ...
 
 
 class ParametersT(SerializableT, TimedT, Protocol):
-    RETRIES_CLASS: ClassVar[Type[RetriesPropertiesT]]
-    RESULT_CLASS: ClassVar[Type[ResultPropertiesT]]
-    DELAY_CLASS: ClassVar[Type[DelayPropertiesT]]
+    RETRIES_CLASS: ClassVar[type[RetriesPropertiesT]]
+    RESULT_CLASS: ClassVar[type[ResultPropertiesT]]
+    DELAY_CLASS: ClassVar[type[DelayPropertiesT]]
 
     execution_timeout: timedelta
 
     # why property? See mypy docs
     # https://mypy.readthedocs.io/en/stable/common_issues.html#covariant-subtyping-of-mutable-protocol-members-is-rejected
     @property
-    def result(self) -> Union[ResultPropertiesT, None]: ...
+    def result(self) -> ResultPropertiesT | None: ...
 
     @property
     def retries(self) -> RetriesPropertiesT: ...
@@ -101,15 +101,15 @@ class ParametersT(SerializableT, TimedT, Protocol):
         self,
         *,
         execution_timeout: timedelta = timedelta(minutes=10),
-        result: Union[ResultPropertiesT, None] = None,
-        retries: Union[RetriesPropertiesT, None] = None,
-        delay: Union[DelayPropertiesT, None] = None,
+        result: ResultPropertiesT | None = None,
+        retries: RetriesPropertiesT | None = None,
+        delay: DelayPropertiesT | None = None,
         timestamp: datetime = datetime.now(),  # noqa: B008
-        ttl: Union[timedelta, None] = None,
+        ttl: timedelta | None = None,
     ) -> None: ...
 
     @property
-    def compute_next_execution_time(self) -> Union[datetime, None]:
+    def compute_next_execution_time(self) -> datetime | None:
         """Computes unix timestamp of the next execution time."""
 
     def _prepare_reschedule(self) -> "ParametersT": ...
@@ -124,8 +124,8 @@ class BucketT(SerializableT, TimedT, Protocol):
         self,
         *,
         data: str = "",
-        timestamp: Union[datetime, None] = None,
-        ttl: Union[timedelta, None] = None,
+        timestamp: datetime | None = None,
+        ttl: timedelta | None = None,
     ) -> None: ...
 
 
@@ -136,7 +136,7 @@ class ResultBucketT(BucketT, Protocol):
     finished_when: int
 
     success: bool = True
-    exception: Union[str, None] = None
+    exception: str | None = None
 
     def __init__(
         self,
@@ -145,7 +145,7 @@ class ResultBucketT(BucketT, Protocol):
         started_when: int = -1,
         finished_when: int = -1,
         success: bool = True,
-        exception: Union[str, None] = None,
-        timestamp: Union[datetime, None] = None,
-        ttl: Union[timedelta, None] = None,
+        exception: str | None = None,
+        timestamp: datetime | None = None,
+        ttl: timedelta | None = None,
     ) -> None: ...

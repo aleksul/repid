@@ -18,8 +18,6 @@ jobs:
       fail-fast: false
       matrix:
         python-version:
-        - '3.8'
-        - '3.9'
         - '3.10'
         - '3.11'
         - '3.12'
@@ -29,20 +27,17 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Setup PDM
-      uses: pdm-project/setup-pdm@v4
-      with:
-        python-version: ${{ matrix.python-version }}
-        cache: true
+    - name: Setup uv
+      uses: astral-sh/setup-uv@v4
 
     - name: Install or update dependencies
-      run: pdm sync -G :all --clean
+      run: uv sync --frozen --all-extras --all-groups --python ${{ matrix.python-version }}
 
     - name: Run tests
-      run: pdm run only-test --color=yes
+      run: uv run coverage run -m pytest --color=yes --diff-symbols --hypothesis-verbosity=normal tests/
 
     - name: Display coverage
-      run: pdm run report-coverage --fail-under=0
+      run: uv run coverage report --no-skip-covered --show-missing --fail-under=0
 
     - name: Rename .coverage file
       run: |

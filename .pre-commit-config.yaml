@@ -44,6 +44,6 @@ repos:
     name: mypy
     language: python
     pass_filenames: false
-    entry: pdm run mypy .
+    entry: uv run mypy .
     types: [python]
     require_serial: true

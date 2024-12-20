@@ -7,41 +7,22 @@
   "enabledManagers": ["pep621", "pip_requirements", "github-actions"],
   "rangeStrategy": "replace",
   "labels": ["dependencies"],
-  "platformAutomerge": true,
-  "separateMultipleMajor": true,
+  "lockFileMaintenance": {
+    "enabled": true
+  },
   "packageRules": [
     {
       "matchManagers": ["pep621"],
-      "updatePinnedDependencies": false
-    },
-    {
-      "matchManagers": ["pep621"],
-      "matchDepTypes": ["tool.pdm.dev-dependencies"],
-      "automerge": true,
-      "groupName": "Development dependencies",
-      "groupSlug": "dev"
-    },
-    {
-      "matchManagers": ["pep621"],
-      "matchDepTypes": ["project.dependencies", "project.optional-dependencies"],
-      "matchUpdateTypes": ["patch"],
-      "automerge": true,
-      "groupName": "Patch dependencies",
-      "groupSlug": "patch"
-    },
-    {
-      "matchManagers": ["pep621"],
-      "matchDepTypes": ["project.dependencies", "project.optional-dependencies"],
-      "matchUpdateTypes": ["minor"],
-      "groupName": "Minor dependencies",
-      "groupSlug": "minor"
+      "groupName": "Dependencies",
+      "updatePinnedDependencies": false,
+      "schedule": ["before 5am on monday"]
     },
     {
       "matchManagers": ["pip_requirements"],
       "matchPaths": ["benchmarks/requirements.txt"],
-      "automerge": true,
       "groupName": "Benchmark dependencies",
-      "groupSlug": "benchmark"
+      "groupSlug": "benchmark",
+      "schedule": ["before 5am on monday"]
     },
     {
       "matchManagers": ["github-actions"],

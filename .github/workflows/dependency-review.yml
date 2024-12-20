@@ -18,13 +18,11 @@ jobs:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
-    - name: Setup PDM
-      uses: pdm-project/setup-pdm@v4
-      with:
-        python-version: '3.8'
+    - name: Setup uv
+      uses: astral-sh/setup-uv@v4
 
     - name: Export requirements
-      run: pdm export --group :all --format requirements --output requirements.txt
+      run: uv export --format requirements-txt --frozen --all-groups --all-extras > requirements.txt
 
     - name: Dependency Review
       uses: actions/dependency-review-action@v4

@@ -2,7 +2,7 @@ import json
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, ClassVar, Dict, Type, Union
+from typing import TYPE_CHECKING, Any, ClassVar
 from uuid import uuid4
 
 from repid._utils import FROZEN_DATACLASS, JSON_ENCODER, SLOTS_DATACLASS, is_installed
@@ -28,21 +28,21 @@ class RetriesProperties:
 
     @classmethod
     def decode(cls, data: str) -> "RetriesProperties":
-        loaded: Dict[str, Any] = json.loads(data) if not isinstance(data, Dict) else data
+        loaded: dict[str, Any] = json.loads(data) if not isinstance(data, dict) else data
         return cls(**loaded)
 
 
 @dataclass(**FROZEN_DATACLASS, **SLOTS_DATACLASS)
 class ResultProperties:
     id_: str = field(default_factory=lambda: uuid4().hex)
-    ttl: Union[timedelta, None] = None
+    ttl: timedelta | None = None
 
     def encode(self) -> str:
         return JSON_ENCODER.encode(asdict(self))
 
     @classmethod
     def decode(cls, data: str) -> "ResultProperties":
-        loaded: Dict[str, Any] = json.loads(data) if not isinstance(data, Dict) else data
+        loaded: dict[str, Any] = json.loads(data) if not isinstance(data, dict) else data
 
         if (ttl := loaded.get("ttl")) is not None:
             loaded["ttl"] = timedelta(seconds=float(ttl))
@@ -52,17 +52,17 @@ class ResultProperties:
 
 @dataclass(**FROZEN_DATACLASS, **SLOTS_DATACLASS)
 class DelayProperties:
-    delay_until: Union[datetime, None] = None
-    defer_by: Union[timedelta, None] = None
-    cron: Union[str, None] = None
-    next_execution_time: Union[datetime, None] = None
+    delay_until: datetime | None = None
+    defer_by: timedelta | None = None
+    cron: str | None = None
+    next_execution_time: datetime | None = None
 
     def encode(self) -> str:
         return JSON_ENCODER.encode(asdict(self))
 
     @classmethod
     def decode(cls, data: str) -> "DelayProperties":
-        loaded: Dict[str, Any] = json.loads(data) if not isinstance(data, Dict) else data
+        loaded: dict[str, Any] = json.loads(data) if not isinstance(data, dict) else data
 
         for key, value in loaded.items():
             if value is None:
@@ -79,23 +79,23 @@ class DelayProperties:
 
 @dataclass(**FROZEN_DATACLASS, **SLOTS_DATACLASS)
 class Parameters:
-    RETRIES_CLASS: ClassVar[Type["RetriesPropertiesT"]] = RetriesProperties
-    RESULT_CLASS: ClassVar[Type["ResultPropertiesT"]] = ResultProperties
-    DELAY_CLASS: ClassVar[Type["DelayPropertiesT"]] = DelayProperties
+    RETRIES_CLASS: ClassVar[type["RetriesPropertiesT"]] = RetriesProperties
+    RESULT_CLASS: ClassVar[type["ResultPropertiesT"]] = ResultProperties
+    DELAY_CLASS: ClassVar[type["DelayPropertiesT"]] = DelayProperties
 
     execution_timeout: timedelta = field(default_factory=lambda: timedelta(minutes=10))
-    result: Union[ResultProperties, None] = None
+    result: ResultProperties | None = None
     retries: RetriesProperties = field(default_factory=RetriesProperties)
     delay: DelayProperties = field(default_factory=DelayProperties)
     timestamp: datetime = field(default_factory=datetime.now)
-    ttl: Union[timedelta, None] = None
+    ttl: timedelta | None = None
 
     def encode(self) -> str:
         return JSON_ENCODER.encode(asdict(self))
 
     @classmethod
     def decode(cls, data: str) -> "Parameters":
-        loaded: Dict[str, Any] = json.loads(data)
+        loaded: dict[str, Any] = json.loads(data)
 
         for key, value in loaded.items():
             if value is None:
@@ -120,7 +120,7 @@ class Parameters:
         return datetime.now(tz=self.timestamp.tzinfo) > self.timestamp + self.ttl
 
     @property
-    def compute_next_execution_time(self) -> Union[datetime, None]:
+    def compute_next_execution_time(self) -> datetime | None:
         now = datetime.now()
         if self.delay.delay_until is not None and self.delay.delay_until > now:
             return self.delay.delay_until

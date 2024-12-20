@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
+from typing import TYPE_CHECKING
 
 from repid.connections.abc import ConsumerT
 from repid.connections.redis.utils import (

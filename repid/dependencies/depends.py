@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from typing import TYPE_CHECKING, Any, Callable, Coroutine, cast
+from collections.abc import Callable, Coroutine
+from typing import TYPE_CHECKING, Any, cast
 
 from repid._asyncify import asyncify
 from repid._utils import get_dependency
@@ -55,7 +56,7 @@ class Depends:
 
         resolved = await asyncio.gather(*unresolved_dependencies_values)
 
-        dependency_kwargs = dict(zip(unresolved_dependencies_names, resolved))
+        dependency_kwargs = dict(zip(unresolved_dependencies_names, resolved, strict=False))
 
         return await self._fn(**dependency_kwargs)
 

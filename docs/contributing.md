@@ -8,7 +8,7 @@ Your contributions are invaluable to our community - thank you for being a part 
 
 1. [Create a fork](https://github.com/aleksul/repid/fork) of repid
 2. Clone your fork
-3. Install [PDM](https://pdm.fming.dev/latest/#installation)
+3. Install [uv](https://docs.astral.sh/uv/getting-started/installation/)
 4. Install dependencies in virtual environment
 5. Configure pre-commit
 6. Make your changes!
@@ -26,62 +26,43 @@ git clone https://github.com/__your_username__/repid.git
 cd repid
 ```
 
-#### PDM & venv
+#### uv & venv
 
-Repid uses [PDM](http://pdm.fming.dev) to manage virtual environment, dependencies &
+Repid uses [uv](https://docs.astral.sh/uv) to manage virtual environment, dependencies &
 package the project.
-
-!!! tip
-    Use `brew` or `pipx` when installing PDM to keep your system Python clean.
-
-    ```bash
-    brew install pdm
-    ```
-
-    ```bash
-    pipx install pdm
-    ```
 
 After installation is done, run the following command in the project's root directory:
 
 ```bash
-pdm install --group :all
+make install
 ```
 
 It will create virtual environment and install inside of it all dependencies, including those,
 which are needed for development.
 
 !!! important
-    Use lowest supported by `repid` version of Python (== 3.8 for now) for your venv.
-
-    You can use [pyenv](https://github.com/pyenv/pyenv) to set up multiple versions
-    of Python on your system.
+    Use lowest supported by `repid` version of Python (== 3.10 for now) for your venv.
 
 To activate a venv run:
 
 ```bash
-$(pdm venv activate)
+source .venv/bin/activate
 ```
 
-...or simply execute the needed command with `pdm run` prefix, e.g.
+...or simply execute the needed command with `uv run` prefix, e.g.
 
 ```bash
-pdm run mkdocs serve
+uv run mkdocs serve
 ```
 
 #### pre-commit
 
 `repid` uses [pre-commit](https://pre-commit.com) to run linters and formatters.
-To initialize `pre-commit` run:
-
-```bash
-pdm run pre-commit install --install-hooks
-```
 
 If you want to run all linters and formatters, execute the following command:
 
 ```bash
-pdm run pre-commit run -a
+uv run pre-commit run -a
 ```
 
 If you want to commit some changes disregarding pre-commit hooks, add `-n` or `--no-verify` flag
@@ -126,13 +107,13 @@ Apart from that, everything is automated via pytest (including creation of conta
 for integration testing!), so all you need to do is:
 
 ```bash
-pdm run pytest
+uv run pytest
 ```
 
-If you want to run test suite with all default arguments already set up - there is a PDM script:
+If you want to run test suite with all default arguments already set up - there is a prepared script:
 
 ```bash
-pdm run test
+make test
 ```
 
 #### VSCode and Dev Container

@@ -1,16 +1,11 @@
 from __future__ import annotations
 
-import sys
 from asyncio import create_task
+from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
 from functools import partial, update_wrapper
 from inspect import signature
-from typing import Any, Callable, Coroutine, Generic, TypeVar, overload
-
-if sys.version_info >= (3, 10):  # pragma: no cover
-    from typing import ParamSpec
-else:  # pragma: no cover
-    from typing_extensions import ParamSpec
+from typing import Any, Generic, ParamSpec, TypeVar, overload
 
 IsInsideMiddleware = ContextVar("IsInsideMiddleware", default=False)
 FnR = TypeVar("FnR")
@@ -79,7 +74,7 @@ class _middleware_wrapper(Generic[FnP, FnR]):  # noqa: N801
 
         # map arguments to their names
         signal_kwargs = kwargs.copy()
-        signal_kwargs.update(zip(self.parameters, args))
+        signal_kwargs.update(zip(self.parameters, args, strict=False))
 
         # emit `before` signal
         await self._repid_signal_emitter(f"before_{self.name}", signal_kwargs)

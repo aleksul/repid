@@ -135,7 +135,8 @@ async def test_dead_queue(autoconn: Repid) -> None:
         if type(broker) is RedisMessageBroker:
             assert await broker.conn.llen("q:default:5:dead") == 1
         elif type(broker) is RabbitMessageBroker:
-            msg = await broker._channel.basic_get("default:dead")
+            channel = await broker._channel
+            msg = await channel.basic_get("default:dead")
             assert msg is not None
             assert msg.header.properties.headers is not None
             assert msg.header.properties.headers.get("topic") == "awesome_job"

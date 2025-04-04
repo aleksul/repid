@@ -6,7 +6,7 @@
 
 install: .uv
 	uv sync --frozen --all-extras --all-groups --python 3.10
-	pre-commit install --install-hooks
+	uv run pre-commit install --install-hooks
 
 rebuild-lockfiles: .uv
 	uv lock --upgrade

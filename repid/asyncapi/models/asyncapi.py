@@ -17,7 +17,7 @@ Channels = Mapping[str, ReferenceModel | Channel] | None
 Operations = Mapping[str, ReferenceModel | Operation] | None
 
 
-class Asyncapi300Schema(TypedDict, total=False):
+class AsyncAPI3Schema(TypedDict, total=False):
     info: Required[Info]
     asyncapi: str
     id: str

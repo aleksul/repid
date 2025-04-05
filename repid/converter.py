@@ -31,6 +31,10 @@ class ConverterT(Protocol[FnR]):
     @property
     def dependencies(self) -> dict[str, DependencyT]: ...
 
+    def get_input_schema(self) -> dict[str, Any]: ...
+
+    def get_output_schema(self) -> dict[str, Any]: ...
+
 
 class DefaultConverter:
     def __new__(cls, fn: Callable[..., Coroutine[Any, Any, FnR]]) -> ConverterT[FnR]:  # type: ignore[misc]
@@ -54,17 +58,23 @@ class DefaultConverter:
     def dependencies(self) -> dict[str, DependencyT]:
         raise NotImplementedError  # pragma: no cover
 
+    def get_input_schema(self) -> dict[str, Any]:
+        raise NotImplementedError  # pragma: no cover
+
+    def get_output_schema(self) -> dict[str, Any]:
+        raise NotImplementedError  # pragma: no cover
+
 
 class BasicConverter:
     def __init__(self, fn: Callable[..., Coroutine[Any, Any, FnR]]) -> None:
         self.fn = fn
-        signature = inspect.signature(fn)
+        self.signature = inspect.signature(fn)
         self.args: dict[str, Any] = {}
         self.kwargs: dict[str, Any] = {}
         self.dependency_kwargs: dict[str, DependencyT] = {}
         self.all_args = False
         self.all_kwargs = False
-        for p in signature.parameters.values():
+        for p in self.signature.parameters.values():
             if p.kind == inspect.Parameter.POSITIONAL_ONLY:
                 if get_dependency(p.annotation) is not None:
                     raise ValueError("Dependencies in positional-only arguments are not supported.")
@@ -100,6 +110,12 @@ class BasicConverter:
     @property
     def dependencies(self) -> dict[str, DependencyT]:
         return self.dependency_kwargs
+
+    def get_input_schema(self) -> dict[str, Any]:
+        raise NotImplementedError("BasicConverter does not support schema generation.")
+
+    def get_output_schema(self) -> dict[str, Any]:
+        raise NotImplementedError("BasicConverter does not support schema generation.")
 
 
 class PydanticConverter:
@@ -186,6 +202,19 @@ class PydanticConverter:
     def dependencies(self) -> dict[str, DependencyT]:
         return self.dependency_kwargs
 
+    def get_input_schema(self) -> dict[str, Any]:
+        return self.input_pydantic_model.model_json_schema()
+
+    def get_output_schema(self) -> dict[str, Any]:
+        if not self.validate_output:
+            return {"type": "null"}
+
+        return (
+            self.output_type.model_json_schema()
+            if issubclass(self.output_type, BaseModel)
+            else self.output_pydantic_model.model_json_schema()
+        )
+
 
 class PydanticV1Converter(PydanticConverter):  # pragma: no cover
     def __init__(self, fn: Callable[..., Coroutine[Any, Any, FnR]]) -> None:
@@ -220,3 +249,16 @@ class PydanticV1Converter(PydanticConverter):  # pragma: no cover
                 return data.json()
             return self.output_type.parse_obj(data).json()
         return self.output_pydantic_model.parse_obj(data).json()
+
+    def get_input_schema(self) -> dict[str, Any]:
+        return self.input_pydantic_model.schema()
+
+    def get_output_schema(self) -> dict[str, Any]:
+        if not self.validate_output:
+            return {"type": "null"}
+
+        return (
+            self.output_type.schema()
+            if issubclass(self.output_type, BaseModel)
+            else self.output_pydantic_model.schema()
+        )

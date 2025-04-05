@@ -1,3 +1,4 @@
+from .asyncapi import AsyncAPIGenerator, generate_asyncapi_schema
 from .config import Config as Config
 from .connection import Connection as Connection
 from .connections import *  # noqa: F403

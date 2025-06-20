@@ -1,27 +1,27 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
-from .channels import Channel, ChannelBindingsObject, Parameter
-from .common import (
-    CorrelationId,
-    ExternalDocs,
-    MessageBindingsObject,
-    MessageObject,
-    MessageTrait,
-    ReferenceModel,
-    SecurityScheme,
-    Tag,
-)
-from .operations import (
-    Operation,
-    OperationBindingsObject,
-    OperationReply,
-    OperationReplyAddress,
-    OperationTrait,
-)
-from .servers import Server, ServerBindingsObject, ServerVariable
+if TYPE_CHECKING:
+    from .channels import Channel, ChannelBindingsObject, ChannelParameter
+    from .common import (
+        CorrelationId,
+        ExternalDocs,
+        MessageBindingsObject,
+        MessageObject,
+        MessageTrait,
+        ReferenceModel,
+        Tag,
+    )
+    from .operations import (
+        Operation,
+        OperationBindingsObject,
+        OperationReply,
+        OperationReplyAddress,
+        OperationTrait,
+    )
+    from .servers import Server, ServerBindingsObject, ServerVariable
 
 AnySchema = Any
 
@@ -30,19 +30,19 @@ class Components(TypedDict, total=False):
     schemas: Mapping[str, AnySchema]
     servers: Mapping[str, ReferenceModel | Server]
     channels: Mapping[str, ReferenceModel | Channel]
-    server_variables: Mapping[str, ReferenceModel | ServerVariable]
+    serverVariables: Mapping[str, ReferenceModel | ServerVariable]
     operations: Mapping[str, ReferenceModel | Operation]
     messages: Mapping[str, ReferenceModel | MessageObject]
-    security_schemes: Mapping[str, ReferenceModel | SecurityScheme]
-    parameters: Mapping[str, ReferenceModel | Parameter]
-    correlation_ids: Mapping[str, ReferenceModel | CorrelationId]
-    operation_traits: Mapping[str, ReferenceModel | OperationTrait]
-    message_traits: Mapping[str, ReferenceModel | MessageTrait]
+    securitySchemes: Mapping[str, ReferenceModel | Any]
+    parameters: Mapping[str, ReferenceModel | ChannelParameter]
+    correlationIds: Mapping[str, ReferenceModel | CorrelationId]
+    operationTraits: Mapping[str, ReferenceModel | OperationTrait]
+    messageTraits: Mapping[str, ReferenceModel | MessageTrait]
     replies: Mapping[str, ReferenceModel | OperationReply]
-    reply_addresses: Mapping[str, ReferenceModel | OperationReplyAddress]
-    server_bindings: Mapping[str, ReferenceModel | ServerBindingsObject]
-    channel_bindings: Mapping[str, ReferenceModel | ChannelBindingsObject]
-    operation_bindings: Mapping[str, ReferenceModel | OperationBindingsObject]
-    message_bindings: Mapping[str, ReferenceModel | MessageBindingsObject]
+    replyAddresses: Mapping[str, ReferenceModel | OperationReplyAddress]
+    serverBindings: Mapping[str, ReferenceModel | ServerBindingsObject]
+    channelBindings: Mapping[str, ReferenceModel | ChannelBindingsObject]
+    operationBindings: Mapping[str, ReferenceModel | OperationBindingsObject]
+    messageBindings: Mapping[str, ReferenceModel | MessageBindingsObject]
     tags: Mapping[str, ReferenceModel | Tag]
-    external_docs: Mapping[str, ReferenceModel | ExternalDocs]
+    externalDocs: Mapping[str, ReferenceModel | ExternalDocs]

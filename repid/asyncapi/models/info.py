@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 from typing_extensions import Required
 
-from .common import ExternalDocs, ReferenceModel, Tag
+if TYPE_CHECKING:
+    from .common import ExternalDocs, ReferenceModel, Tag
 
 
 class Contact(TypedDict, total=False):
@@ -23,8 +24,8 @@ class Info(TypedDict, total=False):
     title: Required[str]
     version: Required[str]
     description: str
-    terms_of_service: str
+    termsOfService: str
     contact: Contact
     license: License
     tags: Sequence[ReferenceModel | Tag]
-    external_docs: ReferenceModel | ExternalDocs
+    externalDocs: ReferenceModel | ExternalDocs

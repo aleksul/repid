@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 from typing_extensions import Required
 
-from .common import ExternalDocs, OperationBindingsObject, ReferenceModel, SecurityScheme, Tag
+if TYPE_CHECKING:
+    from .common import ExternalDocs, OperationBindingsObject, ReferenceModel, Tag
 
 
 class OperationReplyAddress(TypedDict, total=False):
@@ -19,22 +20,13 @@ class OperationReply(TypedDict, total=False):
     messages: Sequence[ReferenceModel]
 
 
-Title = str
-Summary = str
-Description = str
-SecurityRequirements = Sequence[ReferenceModel | SecurityScheme]
-Security = SecurityRequirements
-Tags = Sequence[ReferenceModel | Tag]
-ExternalDocsModel = ReferenceModel | ExternalDocs
-
-
 class OperationTrait(TypedDict, total=False):
-    title: Title
-    summary: Summary
-    description: Description
-    security: Security
-    tags: Tags
-    external_docs: ExternalDocsModel
+    title: str
+    summary: str
+    description: str
+    security: Sequence[ReferenceModel | Any]
+    tags: Sequence[ReferenceModel | Tag]
+    externalDocs: ReferenceModel | ExternalDocs
     bindings: ReferenceModel | OperationBindingsObject
 
 
@@ -47,7 +39,7 @@ class Operation(TypedDict, total=False):
     title: str
     summary: str
     description: str
-    security: SecurityRequirements
+    security: Sequence[ReferenceModel | Any]
     tags: Sequence[ReferenceModel | Tag]
-    external_docs: ReferenceModel | ExternalDocs
+    externalDocs: ReferenceModel | ExternalDocs
     bindings: ReferenceModel | OperationBindingsObject

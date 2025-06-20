@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
-from .common import ChannelBindingsObject, ExternalDocs, MessageObject, ReferenceModel, Tag
+if TYPE_CHECKING:
+    from .common import ChannelBindingsObject, ExternalDocs, MessageObject, ReferenceModel, Tag
 
 
-class Parameter(TypedDict, total=False):
+class ChannelParameter(TypedDict, total=False):
     description: str
     enum: Sequence[str]
     default: str
@@ -14,20 +15,17 @@ class Parameter(TypedDict, total=False):
     location: str
 
 
-Parameters = Mapping[str, ReferenceModel | Parameter] | None
-
-
-ChannelMessages = Mapping[str, ReferenceModel | MessageObject] | None
-
-
 class Channel(TypedDict, total=False):
     address: str | None
-    messages: ChannelMessages
-    parameters: Parameters
+    parameters: Mapping[  # describes parameters included in the channel address
+        str,
+        ReferenceModel | ChannelParameter,
+    ]
+    messages: Mapping[str, ReferenceModel | MessageObject]
     title: str
     summary: str
     description: str
     servers: Sequence[ReferenceModel]
     tags: Sequence[ReferenceModel | Tag]
-    external_docs: ReferenceModel | ExternalDocs
+    externalDocs: ReferenceModel | ExternalDocs
     bindings: ReferenceModel | ChannelBindingsObject

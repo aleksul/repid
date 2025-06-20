@@ -7,5 +7,4 @@ from .external_docs import ExternalDocs as ExternalDocs
 from .message import MessageObject as MessageObject
 from .message import MessageTrait as MessageTrait
 from .reference import ReferenceModel as ReferenceModel
-from .security import SecurityScheme as SecurityScheme
 from .tag import Tag as Tag

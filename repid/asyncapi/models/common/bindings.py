@@ -1,62 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal, TypedDict
-
-
-class Mqtt(TypedDict, total=False):
-    binding_version: Literal["0.2.0"]
-
-
-class Kafka(TypedDict, total=False):
-    binding_version: Literal["0.5.0", "0.4.0", "0.3.0"]
-
-
-class Jms(TypedDict, total=False):
-    binding_version: Literal["0.0.1"]
-
-
-class Ibmmq(TypedDict, total=False):
-    binding_version: Literal["0.1.0"]
-
-
-class Solace(TypedDict, total=False):
-    binding_version: Literal["0.4.0", "0.3.0", "0.2.0"]
-
-
-class Pulsar(TypedDict, total=False):
-    binding_version: Literal["0.1.0"]
-
-
-class Http(TypedDict, total=False):
-    binding_version: Literal["0.2.0", "0.3.0"]
-
-
-class Amqp(TypedDict, total=False):
-    binding_version: Literal["0.3.0"]
-
-
-class Anypointmq(TypedDict, total=False):
-    binding_version: Literal["0.0.1"]
-
-
-class Googlepubsub(TypedDict, total=False):
-    binding_version: Literal["0.2.0"]
-
-
-class Ws(TypedDict, total=False):
-    binding_version: Literal["0.1.0"]
-
-
-class Sns(TypedDict, total=False):
-    binding_version: Literal["0.1.0"]
-
-
-class Sqs(TypedDict, total=False):
-    binding_version: Literal["0.2.0"]
-
-
-class Nats(TypedDict, total=False):
-    binding_version: Literal["0.1.0"]
+from typing import Any, TypedDict
 
 
 class ServerBindingsObject(TypedDict, total=False):
@@ -64,74 +8,74 @@ class ServerBindingsObject(TypedDict, total=False):
     ws: Any
     amqp: Any
     amqp1: Any
-    mqtt: Mqtt
-    kafka: Kafka
+    mqtt: Any
+    kafka: Any
     anypointmq: Any
     nats: Any
-    jms: Jms
+    jms: Any
     sns: Any
     sqs: Any
     stomp: Any
     redis: Any
-    ibmmq: Ibmmq
-    solace: Solace
+    ibmmq: Any
+    solace: Any
     googlepubsub: Any
-    pulsar: Pulsar
+    pulsar: Any
 
 
 class OperationBindingsObject(TypedDict, total=False):
-    http: Http
+    http: Any
     ws: Any
-    amqp: Amqp
+    amqp: Any
     amqp1: Any
-    mqtt: Mqtt
-    kafka: Kafka
+    mqtt: Any
+    kafka: Any
     anypointmq: Any
-    nats: Nats
+    nats: Any
     jms: Any
-    sns: Sns
-    sqs: Sqs
+    sns: Any
+    sqs: Any
     stomp: Any
     redis: Any
     ibmmq: Any
-    solace: Solace
+    solace: Any
     googlepubsub: Any
 
 
 class ChannelBindingsObject(TypedDict, total=False):
     http: Any
-    ws: Ws
-    amqp: Amqp
+    ws: Any
+    amqp: Any
     amqp1: Any
     mqtt: Any
-    kafka: Kafka
-    anypointmq: Anypointmq
+    kafka: Any
+    anypointmq: Any
     nats: Any
-    jms: Jms
-    sns: Sns
-    sqs: Sqs
-    stomp: Any
-    redis: Any
-    ibmmq: Ibmmq
-    solace: Any
-    googlepubsub: Googlepubsub
-    pulsar: Pulsar
-
-
-class MessageBindingsObject(TypedDict, total=False):
-    http: Http
-    ws: Any
-    amqp: Amqp
-    amqp1: Any
-    mqtt: Mqtt
-    kafka: Kafka
-    anypointmq: Anypointmq
-    nats: Any
-    jms: Jms
+    jms: Any
     sns: Any
     sqs: Any
     stomp: Any
     redis: Any
-    ibmmq: Ibmmq
+    ibmmq: Any
     solace: Any
-    googlepubsub: Googlepubsub
+    googlepubsub: Any
+    pulsar: Any
+
+
+class MessageBindingsObject(TypedDict, total=False):
+    http: Any
+    ws: Any
+    amqp: Any
+    amqp1: Any
+    mqtt: Any
+    kafka: Any
+    anypointmq: Any
+    nats: Any
+    jms: Any
+    sns: Any
+    sqs: Any
+    stomp: Any
+    redis: Any
+    ibmmq: Any
+    solace: Any
+    googlepubsub: Any

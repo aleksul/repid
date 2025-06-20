@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from typing_extensions import Required
 
-from .bindings import MessageBindingsObject
-from .correlation_id import CorrelationId
-from .external_docs import ExternalDocs
-from .reference import ReferenceModel
-from .tag import Tag
+if TYPE_CHECKING:
+    from .bindings import MessageBindingsObject
+    from .correlation_id import CorrelationId
+    from .external_docs import ExternalDocs
+    from .reference import ReferenceModel
+    from .tag import Tag
 
 AnySchema = Any
 
@@ -32,31 +33,31 @@ MessageExampleObject = MessageExampleObject1 | MessageExampleObject2
 
 
 class MessageTrait(TypedDict, total=False):
-    content_type: str
+    contentType: str
     headers: AnySchema
-    correlation_id: ReferenceModel | CorrelationId
+    correlationId: ReferenceModel | CorrelationId
     tags: Sequence[ReferenceModel | Tag]
     summary: str
     name: str
     title: str
     description: str
-    external_docs: ReferenceModel | ExternalDocs
+    externalDocs: ReferenceModel | ExternalDocs
     deprecated: bool
     examples: Sequence[MessageExampleObject]
     bindings: ReferenceModel | MessageBindingsObject
 
 
 class MessageObject(TypedDict, total=False):
-    content_type: str
+    contentType: str
     headers: AnySchema
     payload: AnySchema
-    correlation_id: ReferenceModel | CorrelationId
+    correlationId: ReferenceModel | CorrelationId
     tags: Sequence[ReferenceModel | Tag]
     summary: str
     name: str
     title: str
     description: str
-    external_docs: ReferenceModel | ExternalDocs
+    externalDocs: ReferenceModel | ExternalDocs
     deprecated: bool
     examples: Sequence[MessageExampleObject]
     bindings: ReferenceModel | MessageBindingsObject

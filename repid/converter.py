@@ -3,55 +3,43 @@ from __future__ import annotations
 import inspect
 import json
 from collections.abc import Callable, Coroutine
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar
-from warnings import warn
+from typing import TYPE_CHECKING, Any, Protocol
 
-from repid._utils import JSON_ENCODER, get_dependency, is_installed
+from repid._utils import get_dependency, is_installed
 
 if is_installed("pydantic"):
     from pydantic import BaseModel, Field, create_model
 
-    if is_installed("pydantic", ">=2.0.0,<3.0.0"):
-        from pydantic import RootModel
-
 if TYPE_CHECKING:
     from repid.dependencies.protocols import DependencyT
 
-FnR = TypeVar("FnR", contravariant=True)  # noqa: PLC0105
 Params = tuple[list, dict]
 
 
-class ConverterT(Protocol[FnR]):
-    def __init__(self, fn: Callable[..., Coroutine[Any, Any, FnR]]) -> None: ...
+class ConverterT(Protocol):
+    def __init__(self, fn: Callable[..., Coroutine]) -> None: ...
 
-    def convert_inputs(self, data: str) -> Params: ...
-
-    def convert_outputs(self, data: FnR) -> str: ...
+    def convert_inputs(self, data: bytes, content_type: str | None) -> Params: ...
 
     @property
     def dependencies(self) -> dict[str, DependencyT]: ...
 
     def get_input_schema(self) -> dict[str, Any]: ...
 
-    def get_output_schema(self) -> dict[str, Any]: ...
-
 
 class DefaultConverter:
-    def __new__(cls, fn: Callable[..., Coroutine[Any, Any, FnR]]) -> ConverterT[FnR]:  # type: ignore[misc]
+    def __new__(cls, fn: Callable[..., Coroutine]) -> ConverterT:  # type: ignore[misc]
         if is_installed("pydantic", ">=2.0.0,<3.0.0"):
             return PydanticConverter(fn)
-        if is_installed("pydantic", ">=1.0.0,<2.0.0"):
-            return PydanticV1Converter(fn)
+        if is_installed("pydantic"):
+            raise ValueError("Unsupported Pydantic version, only 2.x is supported.")
         return BasicConverter(fn)
 
     # pretend to be an implementation of ConverterT
-    def __init__(self, fn: Callable[..., Coroutine[Any, Any, FnR]]) -> None:
+    def __init__(self, fn: Callable[..., Coroutine]) -> None:
         raise NotImplementedError  # pragma: no cover
 
-    def convert_inputs(self, data: str) -> Params:
-        raise NotImplementedError  # pragma: no cover
-
-    def convert_outputs(self, data: FnR) -> str:
+    def convert_inputs(self, data: bytes, content_type: str | None) -> Params:
         raise NotImplementedError  # pragma: no cover
 
     @property
@@ -61,12 +49,9 @@ class DefaultConverter:
     def get_input_schema(self) -> dict[str, Any]:
         raise NotImplementedError  # pragma: no cover
 
-    def get_output_schema(self) -> dict[str, Any]:
-        raise NotImplementedError  # pragma: no cover
-
 
 class BasicConverter:
-    def __init__(self, fn: Callable[..., Coroutine[Any, Any, FnR]]) -> None:
+    def __init__(self, fn: Callable[..., Coroutine]) -> None:
         self.fn = fn
         self.signature = inspect.signature(fn)
         self.args: dict[str, Any] = {}
@@ -92,9 +77,11 @@ class BasicConverter:
             elif p.kind == inspect.Parameter.VAR_KEYWORD:
                 self.all_kwargs = True
 
-    def convert_inputs(self, data: str) -> Params:
+    def convert_inputs(self, data: bytes, content_type: str | None) -> Params:
         if not data:
             return ([], {})
+        if content_type not in (None, "application/json"):
+            raise ValueError(f"Unsupported content type: {content_type}")
         loaded: dict[str, Any] = json.loads(data)
         args = [loaded.pop(name, self.args[name]) for name in self.args]
         kwargs = {name: loaded.pop(name, self.kwargs[name]) for name in self.kwargs}
@@ -104,9 +91,6 @@ class BasicConverter:
             args.extend(loaded.values())
         return (args, kwargs)
 
-    def convert_outputs(self, data: FnR) -> str:
-        return JSON_ENCODER.encode(data)
-
     @property
     def dependencies(self) -> dict[str, DependencyT]:
         return self.dependency_kwargs
@@ -114,12 +98,9 @@ class BasicConverter:
     def get_input_schema(self) -> dict[str, Any]:
         raise NotImplementedError("BasicConverter does not support schema generation.")
 
-    def get_output_schema(self) -> dict[str, Any]:
-        raise NotImplementedError("BasicConverter does not support schema generation.")
-
 
 class PydanticConverter:
-    def __init__(self, fn: Callable[..., Coroutine[Any, Any, FnR]]) -> None:
+    def __init__(self, fn: Callable[..., Coroutine]) -> None:
         self.fn = fn
         signature = inspect.signature(fn)
 
@@ -158,30 +139,13 @@ class PydanticConverter:
             },
         )
 
-        self.validate_output = True
-        if (
-            signature.return_annotation is inspect.Parameter.empty
-            or signature.return_annotation is None
-        ):
-            self.validate_output = False
+    def convert_inputs(self, data: bytes, content_type: str | None) -> Params:
+        if not data:
+            return ([], {})
 
-        if self.validate_output:
-            self.output_type: type = signature.return_annotation
-            if not issubclass(self.output_type, BaseModel):
-                self.output_pydantic_model = self._generate_output_model(
-                    fn.__name__,
-                    signature.return_annotation,
-                )
+        if content_type not in (None, "application/json"):
+            raise ValueError(f"Unsupported content type: {content_type}")
 
-    @staticmethod
-    def _generate_output_model(fn_name: str, return_annotation: Any) -> BaseModel:
-        return create_model(  # type: ignore[return-value]
-            f"{fn_name}_output_repid_model",
-            __base__=RootModel,
-            root=(return_annotation, Field()),
-        )
-
-    def convert_inputs(self, data: str) -> Params:
         loaded = dict(self.input_pydantic_model.model_validate_json(data))
 
         if self.args:
@@ -189,76 +153,9 @@ class PydanticConverter:
 
         return ([], loaded)
 
-    def convert_outputs(self, data: FnR) -> str:
-        if not self.validate_output:  # there is not type to validate
-            return JSON_ENCODER.encode(data)  # fallback to JSON encoding
-        if issubclass(self.output_type, BaseModel):
-            if isinstance(data, BaseModel):
-                return data.model_dump_json()
-            return self.output_type.model_validate(data).model_dump_json()
-        return self.output_pydantic_model.model_validate(data).model_dump_json()
-
     @property
     def dependencies(self) -> dict[str, DependencyT]:
         return self.dependency_kwargs
 
     def get_input_schema(self) -> dict[str, Any]:
         return self.input_pydantic_model.model_json_schema()
-
-    def get_output_schema(self) -> dict[str, Any]:
-        if not self.validate_output:
-            return {"type": "null"}
-
-        return (
-            self.output_type.model_json_schema()
-            if issubclass(self.output_type, BaseModel)
-            else self.output_pydantic_model.model_json_schema()
-        )
-
-
-class PydanticV1Converter(PydanticConverter):  # pragma: no cover
-    def __init__(self, fn: Callable[..., Coroutine[Any, Any, FnR]]) -> None:
-        super().__init__(fn)
-        warn(
-            "Pydantic v1 converter will be removed after Pydantic v2 becomes mainstream"
-            "and is not included in Repid's test suite.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-    @staticmethod
-    def _generate_output_model(fn_name: str, return_annotation: Any) -> BaseModel:
-        return create_model(  # type: ignore[return-value]
-            f"{fn_name}_output_repid_model",
-            __root__=(return_annotation, Field()),
-        )
-
-    def convert_inputs(self, data: str) -> Params:
-        loaded = dict(self.input_pydantic_model.parse_raw(data))
-
-        if self.args:
-            return ([loaded.pop(arg) for arg in self.args], loaded)
-
-        return ([], loaded)
-
-    def convert_outputs(self, data: FnR) -> str:
-        if not self.validate_output:  # there is not type to validate
-            return JSON_ENCODER.encode(data)  # fallback to JSON encoding
-        if issubclass(self.output_type, BaseModel):
-            if isinstance(data, BaseModel):
-                return data.json()
-            return self.output_type.parse_obj(data).json()
-        return self.output_pydantic_model.parse_obj(data).json()
-
-    def get_input_schema(self) -> dict[str, Any]:
-        return self.input_pydantic_model.schema()
-
-    def get_output_schema(self) -> dict[str, Any]:
-        if not self.validate_output:
-            return {"type": "null"}
-
-        return (
-            self.output_type.schema()
-            if issubclass(self.output_type, BaseModel)
-            else self.output_pydantic_model.schema()
-        )

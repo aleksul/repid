@@ -1,31 +1,166 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable
-from typing import TYPE_CHECKING
+from collections.abc import Coroutine
+from functools import partial
+from typing import TYPE_CHECKING, Any
 
-from repid._processor import _Processor
+from repid.connections.abc import ServerT, SubscriberT
+from repid.dependencies.resolver_context import ResolverContext
 from repid.health_check_server import HealthCheckStatus
 from repid.logger import logger
-from repid.main import Repid
 
 if TYPE_CHECKING:
-    from repid.actor import ActorData
-    from repid.connection import Connection
-    from repid.connections import ConsumerT
-    from repid.data import ParametersT, RoutingKeyT
+    from repid.connections.abc import ReceivedMessageT
+    from repid.data.actor import ActorData
     from repid.health_check_server import HealthCheckServer
 
 
-class _Runner(_Processor):
+async def _resolve_dependencies(
+    message: ReceivedMessageT,
+    actor: ActorData,
+) -> dict[str, Any]:
+    context = ResolverContext(message=message, actor=actor)
+
+    unresolved_dependencies: dict[str, Coroutine] = {
+        dep_name: dep.resolve(context=context)
+        for dep_name, dep in actor.converter.dependencies.items()
+    }
+
+    unresolved_dependencies_names, unresolved_dependencies_values = (
+        unresolved_dependencies.keys(),
+        unresolved_dependencies.values(),
+    )
+
+    resolved = await asyncio.gather(*unresolved_dependencies_values)
+
+    return dict(zip(unresolved_dependencies_names, resolved, strict=False))
+
+
+async def _actor_execution(
+    message: ReceivedMessageT,
+    actor: ActorData,
+) -> Any:
+    if actor.converter.dependencies:
+        dependency_kwargs = await _resolve_dependencies(message, actor)
+    else:
+        dependency_kwargs = {}
+    args, kwargs = actor.converter.convert_inputs(
+        data=message.payload,
+        content_type=message.content_type,
+    )
+    return await actor.fn(*args, **kwargs, **dependency_kwargs)
+
+
+async def _actor_run(
+    actor: ActorData,
+    message: ReceivedMessageT,
+) -> None:
+    if (
+        not message.is_acted_on  # theoretically a server can automatically ack the message on receive
+        and actor.confirmation_mode == "ack_first"
+    ):
+        await message.ack()
+
+    logger_extra = {
+        "actor_name": actor.name,
+        "time_limit": actor.timeout,
+    }
+
+    exception = None
+
+    try:
+        if actor.timeout is None or actor.timeout <= 0 or actor.timeout == float("inf"):
+            await actor.middleware_pipeline(_actor_execution, message, actor)
+        else:
+            await asyncio.wait_for(
+                actor.middleware_pipeline(_actor_execution, message, actor),
+                timeout=actor.timeout,
+            )
+
+    except Exception as exc:  # noqa: BLE001
+        exception = exc
+        logger.debug(
+            "Error inside of an actor '{actor_name}' on message {message_id}.",
+            extra=logger_extra,
+            exc_info=exc,
+        )
+    else:
+        logger.debug(
+            "Actor '{actor_name}' finished successfully on message {message_id}.",
+            extra=logger_extra,
+        )
+
+    if not message.is_acted_on:
+        if actor.confirmation_mode == "auto":
+            if exception is None:
+                await message.ack()
+            else:
+                await message.nack()
+        elif actor.confirmation_mode == "always_ack":
+            await message.ack()
+        elif actor.confirmation_mode == "manual":
+            logger.warning(
+                "Actor '{actor_name}' is in 'manual' confirmation mode, "
+                "but the message is not acknowledged.",
+                extra=logger_extra,
+            )
+
+
+async def _actor_run_with_event(
+    actor: ActorData,
+    message: ReceivedMessageT,
+    cancel_event: asyncio.Event,
+    cancel_event_task: asyncio.Task,
+) -> None:
+    process_task = asyncio.create_task(_actor_run(actor, message))
+    await asyncio.wait(
+        {cancel_event_task, process_task},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+    if cancel_event.is_set():
+        process_task.cancel()
+        if not message.is_acted_on:
+            await message.reject()
+        return
+    await process_task
+
+
+class _Runner:
+    """State-management class for consuming messages and ensuring tasks are getting processed.
+    It ensures proper concurrency limit with semaphore. It can also track amount of processed tasks.
+    It has 2 events, which are used to create a graceful shutdown: stop_consume_event closes inflow
+    of new messages, and cancel_event cancels all currently running tasks. Objects of this class
+    are single-use only."""
+
+    __slots__ = (
+        "_cancel_event_task",
+        "_health_check_server",
+        "_limiter",
+        "_processed",
+        "_server_subscriber",
+        "_stop_consume_event_task",
+        "_tasks",
+        "_tasks_concurrency_limit",
+        "_tasks_processed",
+        "_wait_for_cancel_task",
+        "cancel_event",
+        "max_tasks",
+        "server",
+        "stop_consume_event",
+    )
+
     def __init__(
         self,
+        server: ServerT,
         max_tasks: int = float("inf"),  # type: ignore[assignment]
         tasks_concurrency_limit: int = 1000,
         health_check_server: HealthCheckServer | None = None,
-        _connection: Connection | None = None,
     ):
-        self._conn = _connection or Repid.get_magic_connection()
+        self.server = server
+        self._server_subscriber: SubscriberT | None = None
+
+        self._processed = 0
 
         self._tasks: set[asyncio.Task] = set()
         self._wait_for_cancel_task: asyncio.Task | None = None
@@ -40,7 +175,9 @@ class _Runner(_Processor):
 
         self._health_check_server = health_check_server
 
-        super().__init__(self._conn)
+    @property
+    def processed(self) -> int:
+        return self._processed
 
     @property
     def max_tasks_hit(self) -> bool:
@@ -70,82 +207,55 @@ class _Runner(_Processor):
         if self.max_tasks_hit:
             self.stop_consume_event.set()
 
-    async def _process_with_event(
-        self,
-        actor: ActorData,
-        key: RoutingKeyT,
-        payload: str,
-        parameters: ParametersT,
-    ) -> None:
-        process_task = asyncio.create_task(self.process(actor, key, payload, parameters))
-        await asyncio.wait(
-            {self.cancel_event_task, process_task},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        if self.cancel_event.is_set():
-            process_task.cancel()
-            await self._conn.message_broker.reject(key)
-            return
-        await process_task
-
-    async def _run_consumer(
-        self,
-        consumer: ConsumerT,
-        actors: dict[str, ActorData],
-    ) -> None:
-        async for key, payload, params in consumer:
-            actor = actors[key.topic]
+    async def message_handler(self, actors: list[ActorData], message: ReceivedMessageT) -> None:
+        for actor in actors:
+            if not actor.routing_strategy(message):
+                continue
             if self._limiter.locked():
-                await consumer.pause()
-                await self._limiter.acquire()
-                await consumer.unpause()
+                if (
+                    self.server.capabilities["supports_concurrency_limit"]
+                    and self._server_subscriber is not None
+                ):
+                    await self._server_subscriber.pause()
+                    await self._limiter.acquire()
+                    await self._server_subscriber.resume()
+                else:
+                    await self._limiter.acquire()
             else:
                 await self._limiter.acquire()
-            t = asyncio.create_task(self._process_with_event(actor, key, payload, params))
+            t = asyncio.create_task(
+                _actor_run_with_event(
+                    actor,
+                    message,
+                    self.cancel_event,
+                    self.cancel_event_task,
+                ),
+            )
             self._tasks.add(t)
             t.add_done_callback(self._task_callback)
+            break
 
-    async def run_one_queue(
-        self,
-        queue_name: str,
-        topics: Iterable[str],
-        actors: dict[str, ActorData],
-    ) -> ConsumerT:
-        consumer = self._conn.message_broker.get_consumer(
-            queue_name,
-            topics,
-            self._tasks_concurrency_limit,
+    async def run(self, channels_to_actors: dict[str, list[ActorData]]) -> None:
+        self._server_subscriber = await self.server.subscribe(
+            channels_to_callbacks={
+                channel: partial(self.message_handler, actors)
+                for channel, actors in channels_to_actors.items()
+            },
+            concurrency_limit=self._tasks_concurrency_limit,
         )
-        await consumer.start()
-        consume_task = asyncio.create_task(self._run_consumer(consumer, actors))
         await asyncio.wait(
-            {self.stop_consume_event_task, consume_task},
+            {self.stop_consume_event_task, self._server_subscriber.task},
             return_when=asyncio.FIRST_COMPLETED,
         )
         if (
-            consume_task.done()
-            and not consume_task.cancelled()
-            and (exc := consume_task.exception()) is not None
+            self._server_subscriber.task.done()
+            and not self._server_subscriber.task.cancelled()
+            and (exc := self._server_subscriber.task.exception()) is not None
         ):
-            logger.critical(
-                "Error while running consumer on queue '{queue_name}'.",
-                extra={"queue_name": queue_name},
-                exc_info=exc,
-            )
+            logger.critical("Error while running consumer.", exc_info=exc)
             if self._health_check_server is not None:
                 self._health_check_server.health_status = HealthCheckStatus.UNHEALTHY
-        if self.stop_consume_event.is_set():
-            consume_task.cancel()
-        await consumer.pause()
-        return consumer
-
-    async def stop_wait_and_cancel(self, wait_for: float) -> None:
-        self.stop_consume_event.set()
-        await asyncio.sleep(wait_for)
-        self.cancel_event.set()
-
-    def sync_stop_wait_and_cancel(self, wait_for: float) -> None:
-        self._wait_for_cancel_task = asyncio.create_task(self.stop_wait_and_cancel(wait_for))
+        await self._server_subscriber.close()
 
     async def finish_gracefully(self, timeout: float) -> None:
         logger.debug("Gracefully finishing runner.")
@@ -161,3 +271,4 @@ class _Runner(_Processor):
         if self._wait_for_cancel_task is not None:
             self._wait_for_cancel_task.cancel()
         self.cancel_event.set()
+        logger.debug("Runner finished gracefully.")

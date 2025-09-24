@@ -6,11 +6,10 @@ from dataclasses import asdict, dataclass
 from enum import IntEnum
 from wsgiref.handlers import format_date_time
 
-from repid._utils import FROZEN_DATACLASS, SLOTS_DATACLASS
 from repid.logger import logger
 
 
-@dataclass(**FROZEN_DATACLASS, **SLOTS_DATACLASS)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class HealthCheckServerSettings:
     address: str = "0.0.0.0"  # noqa: S104
     port: int = 8080

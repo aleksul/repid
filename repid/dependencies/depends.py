@@ -3,51 +3,47 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Callable, Coroutine
-from typing import TYPE_CHECKING, Any, cast
+from concurrent.futures import Executor
+from typing import TYPE_CHECKING, Any
 
-from repid._asyncify import asyncify
 from repid._utils import get_dependency
-from repid.dependencies.protocols import DependencyKind
+from repid._utils.asyncify import asyncify
 
 if TYPE_CHECKING:
-    from repid.dependencies.protocols import AnnotatedDependencyT, DirectDependencyT
     from repid.dependencies.resolver_context import ResolverContext
 
 
 class Depends:
-    __repid_dependency__ = DependencyKind.ANNOTATED
-
     __slots__ = (
         "_fn",
         "_subdependencies",
     )
 
-    def __init__(self, fn: Callable[..., Any | Coroutine], *, run_in_process: bool = False) -> None:
-        self._fn = asyncify(fn, run_in_process=run_in_process)
+    def __init__(
+        self,
+        fn: Callable[..., Any | Coroutine],
+        *,
+        run_in_process: bool = False,
+        pool_executor: Executor | None = None,
+    ) -> None:
+        self._fn = asyncify(fn, run_in_process=run_in_process, executor=pool_executor)
         self._update_subdependencies()
 
-    def override(self, fn: Callable[..., Any | Coroutine], *, run_in_process: bool = False) -> None:
-        self._fn = asyncify(fn, run_in_process=run_in_process)
+    def override(
+        self,
+        fn: Callable[..., Any | Coroutine],
+        *,
+        run_in_process: bool = False,
+        pool_executor: Executor | None = None,
+    ) -> None:
+        self._fn = asyncify(fn, run_in_process=run_in_process, executor=pool_executor)
         self._update_subdependencies()
 
     async def resolve(self, *, context: ResolverContext) -> Any:
-        unresolved_dependencies: dict[str, Coroutine] = {}
-
-        for dep_name, dep in self._subdependencies.items():
-            dep_kind = getattr(dep, "__repid_dependency__", "")
-            if dep_kind == DependencyKind.DIRECT:
-                unresolved_dependencies[dep_name] = (
-                    cast("DirectDependencyT", dep)
-                    .construct_as_dependency(context=context)
-                    .resolve()
-                )
-            elif dep_kind == DependencyKind.ANNOTATED:
-                unresolved_dependencies[dep_name] = cast("AnnotatedDependencyT", dep).resolve(
-                    context=context,
-                )
-            else:  # pragma: no cover
-                # this should never happen
-                raise ValueError("Unsupported dependency argument.")
+        unresolved_dependencies: dict[str, Coroutine] = {
+            dep_name: dep.resolve(context=context)
+            for dep_name, dep in self._subdependencies.items()
+        }
 
         unresolved_dependencies_names, unresolved_dependencies_values = (
             unresolved_dependencies.keys(),

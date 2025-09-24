@@ -1,230 +1,143 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from collections.abc import Callable, Coroutine, Iterable
-from copy import deepcopy
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    ClassVar,
-    TypeVar,
-)
-
-from repid.config import Config
-from repid.message import MessageCategory
-from repid.middlewares import middleware_wrapper
+import asyncio
+from collections.abc import Callable, Coroutine, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
 if TYPE_CHECKING:
-    from repid.data.protocols import BucketT, ParametersT, ResultBucketT, RoutingKeyT
+    from repid.asyncapi.models.common import (
+        ExternalDocs,
+        ServerBindingsObject,
+        Tag,
+    )
+    from repid.asyncapi.models.servers import ServerVariable
 
-EncodedPayloadT = str
-SignalEmitterT = Callable[[str, dict[str, Any]], Coroutine]
-WrappedABCSelf = TypeVar("WrappedABCSelf", bound="_WrappedABC")
 
-
-class _WrappedABC(ABC):  # noqa: B024
-    __WRAPPED_METHODS__: tuple[str, ...] = ()
-
-    def __new__(
-        cls: type[WrappedABCSelf],
-        *args: Any,  # noqa: ARG003
-        **kwargs: Any,  # noqa: ARG003
-    ) -> WrappedABCSelf:
-        inst = super().__new__(cls)
-
-        for method in inst.__WRAPPED_METHODS__:
-            setattr(inst, method, middleware_wrapper(getattr(inst, method)))
-
-        return inst
+class BaseMessageT(Protocol):
+    @property
+    def payload(self) -> bytes: ...
 
     @property
-    def _signal_emitter(self) -> SignalEmitterT | None:
-        if not hasattr(self, "_signal_emitter_var"):
-            return None
-        return self._signal_emitter_var
+    def headers(self) -> dict[str, str] | None: ...
 
-    @_signal_emitter.setter
-    def _signal_emitter(self, signal_emitter: SignalEmitterT) -> None:
-        self._signal_emitter_var = signal_emitter
-        for method in self.__WRAPPED_METHODS__:
-            getattr(self, method)._repid_signal_emitter = signal_emitter
+    @property
+    def content_type(self) -> str | None: ...
 
 
-class ConsumerT(_WrappedABC):
-    __WRAPPED_METHODS__ = ("consume",)
+class SentMessageT(BaseMessageT, Protocol):
+    pass
 
-    @abstractmethod
-    def __init__(
+
+class ReceivedMessageT(BaseMessageT, Protocol):
+    @property
+    def channel(self) -> str: ...
+
+    @property
+    def is_acted_on(self) -> bool: ...
+
+    async def ack(self) -> None: ...
+
+    async def nack(self) -> None: ...
+
+    async def reject(self) -> None: ...
+
+    async def reply(
         self,
-        broker: MessageBrokerT,
-        queue_name: str,
-        topics: Iterable[str] | None = None,
-        max_unacked_messages: int | None = None,
-        category: MessageCategory = MessageCategory.NORMAL,
+        *,
+        message: SentMessageT,
+        channel: str | None = None,  # if None, message will be sent to the same channel
     ) -> None: ...
 
-    @abstractmethod
-    async def start(self) -> None:
-        """Start to consume messages from the queue."""
 
-    @abstractmethod
-    async def pause(self) -> None:
-        """Pause message consumption."""
-
-    @abstractmethod
-    async def unpause(self) -> None:
-        """Unpause message consumption."""
-
-    @abstractmethod
-    async def finish(self) -> None:
-        """Finish to consume messages.
-        Reject all messages (if any),
-        which are currently related to this consumer."""
-
-    @abstractmethod
-    async def consume(self) -> tuple[RoutingKeyT, EncodedPayloadT, ParametersT]:
-        """Consume one message. Consumer must be started."""
-
-    async def __aenter__(self) -> ConsumerT:  # noqa: PYI034
-        await self.start()
-        return self
-
-    async def __aexit__(self, *exc: object) -> None:
-        await self.finish()
-
-    def __aiter__(self) -> ConsumerT:
-        return self
-
-    async def __anext__(self) -> tuple[RoutingKeyT, EncodedPayloadT, ParametersT]:
-        return await self.consume()
+class CapabilitiesT(TypedDict):
+    supports_acknowledgments: bool
+    supports_persistence: bool
+    supports_reply: bool
+    supports_concurrency_limit: bool
 
 
-class MessageBrokerT(_WrappedABC):
-    CONSUMER_CLASS: ClassVar[type[ConsumerT]]
+class SubscriberT(Protocol):
+    @property
+    def is_active(self) -> bool: ...
 
-    ROUTING_KEY_CLASS: ClassVar[type[RoutingKeyT]]
-    PARAMETERS_CLASS: ClassVar[type[ParametersT]]
+    @property
+    def task(self) -> asyncio.Task: ...
 
-    __WRAPPED_METHODS__ = (
-        "enqueue",
-        "reject",
-        "ack",
-        "nack",
-        "requeue",
-        "queue_declare",
-        "queue_flush",
-        "queue_delete",
-    )
+    async def pause(self) -> None: ...
 
-    @abstractmethod
+    async def resume(self) -> None: ...
+
+    async def close(self) -> None: ...
+
+
+class ServerT(Protocol):
+    @property
+    def host(self) -> str: ...
+
+    @property
+    def protocol(self) -> str: ...
+
+    @property
+    def pathname(self) -> str | None: ...
+
+    @property
+    def title(self) -> str | None: ...
+
+    @property
+    def summary(self) -> str | None: ...
+
+    @property
+    def description(self) -> str | None: ...
+
+    @property
+    def protocol_version(self) -> str | None: ...
+
+    @property
+    def variables(self) -> Mapping[str, ServerVariable] | None: ...
+
+    @property
+    def security(self) -> Sequence[Any] | None: ...
+
+    @property
+    def tags(self) -> Sequence[Tag] | None: ...
+
+    @property
+    def external_docs(self) -> ExternalDocs | None: ...
+
+    @property
+    def bindings(self) -> ServerBindingsObject | None: ...
+
+    # capabilities
+
+    @property
+    def capabilities(self) -> CapabilitiesT: ...
+
+    # connection lifecycle management
+
+    @property
+    def is_connected(self) -> bool: ...
+
     async def connect(self) -> None: ...
 
-    @abstractmethod
     async def disconnect(self) -> None: ...
 
-    def get_consumer(
+    def connection(self) -> AbstractAsyncContextManager[ServerT]: ...
+
+    # message publishing
+
+    async def publish(
         self,
-        queue_name: str,
-        topics: Iterable[str] | None = None,
-        max_unacked_messages: int | None = None,
-        category: MessageCategory = MessageCategory.NORMAL,
-    ) -> ConsumerT:
-        """Consumes messages from the specified queue.
-        If topics are specified, each message will be checked for compliance with one of the topics.
-        Otherwise every message from the queue can be consumed.
-        Consumer should inform the broker that job execution is started.
-        Some brokers can adjust their load based on max_unacked_messages parameter.
-        """
+        *,
+        channel: str,
+        message: SentMessageT,
+    ) -> None: ...
 
-        consumer = self.CONSUMER_CLASS(self, queue_name, topics, max_unacked_messages, category)
-        consumer._signal_emitter = self._signal_emitter
-        return consumer
+    # message receiving
 
-    @abstractmethod
-    async def enqueue(
+    async def subscribe(
         self,
-        key: RoutingKeyT,
-        payload: EncodedPayloadT = "",
-        params: ParametersT | None = None,
-    ) -> None:
-        """Appends the message to the queue."""
-
-    @abstractmethod
-    async def reject(self, key: RoutingKeyT) -> None:
-        """Informs message broker that job needs to be rescheduled on another worker."""
-
-    @abstractmethod
-    async def ack(self, key: RoutingKeyT) -> None:
-        """Informs message broker that job execution succeed."""
-
-    @abstractmethod
-    async def nack(self, key: RoutingKeyT) -> None:
-        """Informs message broker that job execution failed."""
-
-    @abstractmethod
-    async def requeue(
-        self,
-        key: RoutingKeyT,
-        payload: EncodedPayloadT = "",
-        params: ParametersT | None = None,
-    ) -> None:
-        """Re-queues the message with payload/parameters. Routing key must stay the same."""
-
-    @abstractmethod
-    async def queue_declare(self, queue_name: str) -> None:
-        """Creates the specified queue."""
-
-    @abstractmethod
-    async def queue_flush(self, queue_name: str) -> None:
-        """Empties the queue. Doesn't delete the queue itself."""
-
-    @abstractmethod
-    async def queue_delete(self, queue_name: str) -> None:
-        """Deletes the queue with all of its messages."""
-
-    def __new__(  # noqa: PYI034
-        cls: type[MessageBrokerT],
-        *args: Any,  # noqa: ARG003
-        **kwargs: Any,  # noqa: ARG003s
-    ) -> MessageBrokerT:
-        cls.ROUTING_KEY_CLASS = deepcopy(Config.ROUTING_KEY)
-        cls.PARAMETERS_CLASS = deepcopy(Config.PARAMETERS)
-
-        return super().__new__(cls)
-
-
-class BucketBrokerT(_WrappedABC):
-    BUCKET_CLASS: type[BucketT | ResultBucketT]
-
-    __WRAPPED_METHODS__ = (
-        "get_bucket",
-        "store_bucket",
-        "delete_bucket",
-    )
-
-    @abstractmethod
-    async def connect(self) -> None: ...
-
-    @abstractmethod
-    async def disconnect(self) -> None: ...
-
-    @abstractmethod
-    async def get_bucket(self, id_: str) -> BucketT | None:
-        """Retrivies the bucket."""
-
-    @abstractmethod
-    async def store_bucket(self, id_: str, payload: BucketT) -> None:
-        """Stores the bucket."""
-
-    @abstractmethod
-    async def delete_bucket(self, id_: str) -> None:
-        """Deletes the bucket."""
-
-    def __new__(  # noqa: PYI034
-        cls: type[BucketBrokerT],
-        *args: Any,  # noqa: ARG003
-        **kwargs: Any,  # noqa: ARG003
-    ) -> BucketBrokerT:
-        cls.BUCKET_CLASS = deepcopy(Config.BUCKET)
-
-        return super().__new__(cls)
+        *,
+        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
+        concurrency_limit: int | None = None,
+    ) -> SubscriberT: ...

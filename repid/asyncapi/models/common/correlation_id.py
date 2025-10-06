@@ -1,6 +1,10 @@
+import sys
 from typing import TypedDict
 
-from typing_extensions import Required
+if sys.version_info >= (3, 11):
+    from typing import Required
+else:
+    from typing_extensions import Required
 
 
 class CorrelationId(TypedDict, total=False):

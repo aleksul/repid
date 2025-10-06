@@ -6,6 +6,7 @@ from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any, Protocol
 
 from repid._utils import get_dependency, is_installed
+from repid.data import ConverterInputSchema
 
 if is_installed("pydantic"):
     from pydantic import BaseModel, Field, create_model
@@ -24,7 +25,7 @@ class ConverterT(Protocol):
     @property
     def dependencies(self) -> dict[str, DependencyT]: ...
 
-    def get_input_schema(self) -> dict[str, Any]: ...
+    def get_input_schema(self) -> ConverterInputSchema: ...
 
 
 class DefaultConverter:
@@ -46,7 +47,7 @@ class DefaultConverter:
     def dependencies(self) -> dict[str, DependencyT]:
         raise NotImplementedError  # pragma: no cover
 
-    def get_input_schema(self) -> dict[str, Any]:
+    def get_input_schema(self) -> ConverterInputSchema:
         raise NotImplementedError  # pragma: no cover
 
 
@@ -95,7 +96,7 @@ class BasicConverter:
     def dependencies(self) -> dict[str, DependencyT]:
         return self.dependency_kwargs
 
-    def get_input_schema(self) -> dict[str, Any]:
+    def get_input_schema(self) -> ConverterInputSchema:
         raise NotImplementedError("BasicConverter does not support schema generation.")
 
 
@@ -157,5 +158,8 @@ class PydanticConverter:
     def dependencies(self) -> dict[str, DependencyT]:
         return self.dependency_kwargs
 
-    def get_input_schema(self) -> dict[str, Any]:
-        return self.input_pydantic_model.model_json_schema()
+    def get_input_schema(self) -> ConverterInputSchema:
+        return ConverterInputSchema(
+            payload_schema=self.input_pydantic_model.model_json_schema(),
+            content_type="application/json",
+        )

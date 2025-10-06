@@ -134,6 +134,7 @@ class Router:
         fn: None = None,
         /,
         name: str | None = None,
+        *,
         confirmation_mode: Literal["auto", "always_ack", "ack_first", "manual"] = "auto",
         routing_strategy: RoutingStrategyT = topic_based_routing_strategy,
         channel: Channel | str | None = None,
@@ -149,6 +150,7 @@ class Router:
         tags: Sequence[Tag] | None = None,
         external_docs: ExternalDocs | None = None,
         bindings: OperationBindingsObject | None = None,
+        deprecated: bool = False,
     ) -> Callable[[YourFunc], YourFunc]: ...
 
     @overload
@@ -157,6 +159,7 @@ class Router:
         fn: YourFunc,
         /,
         name: str | None = None,
+        *,
         confirmation_mode: Literal["auto", "always_ack", "ack_first", "manual"] = "auto",
         routing_strategy: RoutingStrategyT = topic_based_routing_strategy,
         channel: Channel | str | None = None,
@@ -172,6 +175,7 @@ class Router:
         tags: Sequence[Tag] | None = None,
         external_docs: ExternalDocs | None = None,
         bindings: OperationBindingsObject | None = None,
+        deprecated: bool = False,
     ) -> YourFunc: ...
 
     def actor(
@@ -179,6 +183,7 @@ class Router:
         fn: YourFunc | None = None,
         /,
         name: str | None = None,
+        *,
         confirmation_mode: Literal["auto", "always_ack", "ack_first", "manual"] = "auto",
         routing_strategy: RoutingStrategyT = topic_based_routing_strategy,
         channel: Channel | str | None = None,
@@ -194,6 +199,7 @@ class Router:
         tags: Sequence[Tag] | None = None,
         external_docs: ExternalDocs | None = None,
         bindings: OperationBindingsObject | None = None,
+        deprecated: bool = False,
     ) -> YourFunc | Callable[[YourFunc], YourFunc]:
         """Actor decorator.
 
@@ -258,6 +264,8 @@ class Router:
                 External documentation for the actor to be displayed in AsyncAPI schema.
             bindings (OperationBindingsObject | None, optional):
                 Operation bindings for the actor, used to specify protocol-specific details.
+            deprecated (bool, optional):
+                Whether the actor is deprecated. Defaults to False.
 
         Returns:
             YourFunc: your initial function.
@@ -281,6 +289,7 @@ class Router:
                 tags=tags,
                 external_docs=external_docs,
                 bindings=bindings,
+                deprecated=deprecated,
             )
 
         if converter is None:
@@ -331,6 +340,7 @@ class Router:
             tags=tuple(tags) if tags is not None else None,
             external_docs=external_docs,
             bindings=bindings,
+            deprecated=deprecated,
         )
 
         self._actors_per_channel_address[channel_address].append(actor_data)

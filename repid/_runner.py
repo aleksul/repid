@@ -51,11 +51,12 @@ async def _actor_execution(
     )
     return await actor.fn(*args, **kwargs, **dependency_kwargs)
 
+ActorResultT = Any
 
 async def _actor_run(
     actor: ActorData,
     message: ReceivedMessageT,
-) -> None:
+) -> ActorResultT | Exception:
     if (
         not message.is_acted_on  # theoretically a server can automatically ack the message on receive
         and actor.confirmation_mode == "ack_first"
@@ -68,12 +69,13 @@ async def _actor_run(
     }
 
     exception = None
+    result = None
 
     try:
         if actor.timeout is None or actor.timeout <= 0 or actor.timeout == float("inf"):
-            await actor.middleware_pipeline(_actor_execution, message, actor)
+            result = await actor.middleware_pipeline(_actor_execution, message, actor)
         else:
-            await asyncio.wait_for(
+            result = await asyncio.wait_for(
                 actor.middleware_pipeline(_actor_execution, message, actor),
                 timeout=actor.timeout,
             )
@@ -105,6 +107,8 @@ async def _actor_run(
                 "but the message is not acknowledged.",
                 extra=logger_extra,
             )
+
+    return exception if exception is not None else result
 
 
 async def _actor_run_with_event(

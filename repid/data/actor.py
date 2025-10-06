@@ -37,3 +37,4 @@ class ActorData:
     tags: tuple[Tag, ...] | None = None
     external_docs: ExternalDocs | None = None
     bindings: OperationBindingsObject | None = None
+    deprecated: bool = False

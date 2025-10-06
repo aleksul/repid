@@ -15,5 +15,5 @@ from .router import Router as Router
 from .router import RouterDefaults as RouterDefaults
 from .serializer import SerializerT as SerializerT
 from .serializer import default_serializer as default_serializer
-
-# from .testing import *  # Removed, testing module not to be used
+from .test_client import TestClient as TestClient
+from .test_client import TestMessage as TestMessage

@@ -1,6 +1,7 @@
 from .actor import ActorData as ActorData
 from .channel import Channel as Channel
 from .contact import Contact as Contact
+from .converter_input_schema import ConverterInputSchema as ConverterInputSchema
 from .external_docs import ExternalDocs as ExternalDocs
 from .license import License as License
 from .message import Message as Message

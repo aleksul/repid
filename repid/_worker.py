@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import signal
 import sys
-from collections import defaultdict
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
@@ -40,7 +39,7 @@ class _Worker:
 
         self.register_signals: frozenset[signal.Signals] = (
             frozenset(
-                [signal.SIGINT, signal.SIGTERM] if register_signals is None else register_signals
+                [signal.SIGINT, signal.SIGTERM] if register_signals is None else register_signals,
             )
             if sys.platform != "emscripten"
             else frozenset()

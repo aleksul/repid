@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import sys
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, TypedDict
 
-from typing_extensions import Required
+if sys.version_info >= (3, 11):
+    from typing import Required
+else:
+    from typing_extensions import Required
 
 if TYPE_CHECKING:
     from .channels import Channel

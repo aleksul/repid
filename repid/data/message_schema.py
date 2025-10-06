@@ -45,5 +45,5 @@ class MessageSchema:
     tags: tuple[Tag, ...] | None = None
     external_docs: ExternalDocs | None = None
     deprecated: bool = False
-    examples: MessageExample | None = None
+    examples: tuple[MessageExample, ...] | None = None
     bindings: MessageBindingsObject | None = None

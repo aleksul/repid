@@ -55,7 +55,7 @@ class CapabilitiesT(TypedDict):
     supports_acknowledgments: bool
     supports_persistence: bool
     supports_reply: bool
-    supports_concurrency_limit: bool
+    supports_lightweight_pause: bool
 
 
 class SubscriberT(Protocol):

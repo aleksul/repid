@@ -1,4 +1,4 @@
-from .asyncapi import AsyncAPIGenerator
+from .asyncapi import AsyncAPIGenerator as AsyncAPIGenerator
 from .connections import *  # noqa: F403
 from .converter import BasicConverter as BasicConverter
 from .converter import DefaultConverter as DefaultConverter

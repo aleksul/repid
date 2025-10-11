@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
-class Channel:
+class Channel:  # noqa: PLW1641
     address: str
     title: str | None = None
     summary: str | None = None

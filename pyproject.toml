@@ -13,7 +13,7 @@ lint = [
   "mypy>=1.13.0",
   "types-redis>=4.6.0.20241004",
   "types-croniter>=4.0.0.20241030",
-  "ruff>=0.7.1"
+  "ruff>=0.14.0"
 ]
 pre-commit = [
   "pre-commit>=3.5.0"
@@ -56,9 +56,9 @@ readme = "README.md"
 requires-python = ">=3.10"
 
 [project.optional-dependencies]
-amqp = ["aiormq<7.0.0,>=6.4.0"]
+amqp = ["aiormq<7.0.0,>=6.9.0"]
 pydantic = ["pydantic>=2.0.0,<3.0.0"]
-redis = ["redis<6.0.0,>=5.0.0"]
+redis = ["redis<7.0.0,>=6.0.0"]
 
 [project.urls]
 documentation = "https://repid.aleksul.space"

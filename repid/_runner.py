@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Coroutine
+import math
+from collections.abc import Awaitable, Callable, Coroutine
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
@@ -51,7 +52,9 @@ async def _actor_execution(
     )
     return await actor.fn(*args, **kwargs, **dependency_kwargs)
 
+
 ActorResultT = Any
+
 
 async def _actor_run(
     actor: ActorData,
@@ -111,11 +114,12 @@ async def _actor_run(
     return exception if exception is not None else result
 
 
-async def _actor_run_with_event(
+async def _actor_run_with_cancel_event_and_callback(
     actor: ActorData,
     message: ReceivedMessageT,
     cancel_event: asyncio.Event,
     cancel_event_task: asyncio.Task,
+    callback: Callable[[], Awaitable],
 ) -> None:
     process_task = asyncio.create_task(_actor_run(actor, message))
     await asyncio.wait(
@@ -128,6 +132,7 @@ async def _actor_run_with_event(
             await message.reject()
         return
     await process_task
+    await callback()
 
 
 class _Runner:
@@ -143,11 +148,12 @@ class _Runner:
         "_limiter",
         "_processed",
         "_server_subscriber",
+        "_server_subscriber_concurrency_unpause_threshold",
+        "_server_subscriber_pause_lock",
+        "_server_subscriber_was_paused",
         "_stop_consume_event_task",
         "_tasks",
         "_tasks_concurrency_limit",
-        "_tasks_processed",
-        "_wait_for_cancel_task",
         "cancel_event",
         "max_tasks",
         "server",
@@ -159,15 +165,25 @@ class _Runner:
         server: ServerT,
         max_tasks: int = float("inf"),  # type: ignore[assignment]
         tasks_concurrency_limit: int = 1000,
+        concurrency_unpause_percent: float = 0.1,  # 10 percent
         health_check_server: HealthCheckServer | None = None,
     ):
         self.server = server
         self._server_subscriber: SubscriberT | None = None
+        self._server_subscriber_concurrency_unpause_threshold = max(
+            math.ceil(tasks_concurrency_limit * concurrency_unpause_percent),
+            1,
+        )
+        if self._server_subscriber_concurrency_unpause_threshold > tasks_concurrency_limit:
+            raise ValueError(
+                "Subscriber will never unpause, because unpause threshold is higher than concurrency limit.",
+            )
+        self._server_subscriber_was_paused = False
+        self._server_subscriber_pause_lock = asyncio.Lock()
 
         self._processed = 0
 
         self._tasks: set[asyncio.Task] = set()
-        self._wait_for_cancel_task: asyncio.Task | None = None
 
         self.stop_consume_event = asyncio.Event()
         self.cancel_event = asyncio.Event()
@@ -175,7 +191,6 @@ class _Runner:
         self.max_tasks = max_tasks
         self._tasks_concurrency_limit = tasks_concurrency_limit
         self._limiter = asyncio.Semaphore(tasks_concurrency_limit)
-        self._tasks_processed = 0
 
         self._health_check_server = health_check_server
 
@@ -187,7 +202,7 @@ class _Runner:
     def max_tasks_hit(self) -> bool:
         return (
             self.max_tasks
-            - self._tasks_processed
+            - self._processed
             - (self._tasks_concurrency_limit - self._limiter._value)
             <= 0
         )
@@ -207,72 +222,110 @@ class _Runner:
     def _task_callback(self, task: asyncio.Task) -> None:
         self._tasks.discard(task)
         self._limiter.release()
-        self._tasks_processed += 1
+        self._processed += 1
         if self.max_tasks_hit:
             self.stop_consume_event.set()
 
-    async def message_handler(self, actors: list[ActorData], message: ReceivedMessageT) -> None:
-        for actor in actors:
-            if not actor.routing_strategy(message):
-                continue
-            if self._limiter.locked():
-                if (
-                    self.server.capabilities["supports_concurrency_limit"]
-                    and self._server_subscriber is not None
-                ):
-                    await self._server_subscriber.pause()
-                    await self._limiter.acquire()
+    async def _actor_run_callback(self) -> None:
+        if (
+            self._server_subscriber_was_paused
+            and self._server_subscriber is not None
+            and self._tasks_concurrency_limit - self._limiter._value
+            > self._server_subscriber_concurrency_unpause_threshold
+        ):
+            async with self._server_subscriber_pause_lock:
+                if self._server_subscriber_was_paused:  # double check inside of the lock
                     await self._server_subscriber.resume()
-                else:
-                    await self._limiter.acquire()
-            else:
-                await self._limiter.acquire()
-            t = asyncio.create_task(
-                _actor_run_with_event(
-                    actor,
-                    message,
-                    self.cancel_event,
-                    self.cancel_event_task,
-                ),
-            )
-            self._tasks.add(t)
-            t.add_done_callback(self._task_callback)
-            break
+                    self._server_subscriber_was_paused = False
 
-    async def run(self, channels_to_actors: dict[str, list[ActorData]]) -> None:
+    async def _message_handler(self, actors: list[ActorData], message: ReceivedMessageT) -> None:
+        actor = next(filter(lambda actor: actor.routing_strategy(message), actors), None)
+        if actor is None:
+            # TODO: after the same message is seen multiple times - nack it instead of reject
+            logger.warning(
+                "No actor found for message on channel '{channel}'.",
+                extra={"channel": message.channel},
+            )
+            await message.reject()
+            return
+
+        if (
+            self._limiter.locked()
+            and self.server.capabilities["supports_lightweight_pause"]
+            and self._server_subscriber is not None
+        ):
+            async with self._server_subscriber_pause_lock:
+                if not self._server_subscriber_was_paused:
+                    await self._server_subscriber.pause()
+                    self._server_subscriber_was_paused = True
+            await self._limiter.acquire()
+        else:
+            await self._limiter.acquire()
+
+        t = asyncio.create_task(
+            _actor_run_with_cancel_event_and_callback(
+                actor,
+                message,
+                self.cancel_event,
+                self.cancel_event_task,
+                self._actor_run_callback,
+            ),
+        )
+        self._tasks.add(t)
+        t.add_done_callback(self._task_callback)
+
+    async def run(
+        self,
+        channels_to_actors: dict[str, list[ActorData]],
+        graceful_termination_timeout: float,
+    ) -> None:
         self._server_subscriber = await self.server.subscribe(
             channels_to_callbacks={
-                channel: partial(self.message_handler, actors)
+                channel: partial(self._message_handler, actors)
                 for channel, actors in channels_to_actors.items()
             },
             concurrency_limit=self._tasks_concurrency_limit,
         )
+        subscriber_task = self._server_subscriber.task
         await asyncio.wait(
-            {self.stop_consume_event_task, self._server_subscriber.task},
+            {self.stop_consume_event_task, subscriber_task},
             return_when=asyncio.FIRST_COMPLETED,
         )
         if (
-            self._server_subscriber.task.done()
-            and not self._server_subscriber.task.cancelled()
-            and (exc := self._server_subscriber.task.exception()) is not None
+            subscriber_task.done()
+            and not subscriber_task.cancelled()
+            and (exc := subscriber_task.exception()) is not None
         ):
             logger.critical("Error while running consumer.", exc_info=exc)
             if self._health_check_server is not None:
                 self._health_check_server.health_status = HealthCheckStatus.UNHEALTHY
-        await self._server_subscriber.close()
 
-    async def finish_gracefully(self, timeout: float) -> None:
         logger.debug("Gracefully finishing runner.")
+        try:
+            await self._server_subscriber.pause()
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "Error while pausing subscriber during graceful shutdown.",
+                exc_info=exc,
+            )
+
         self.stop_consume_event.set()
         if self._tasks:
             _, pending = await asyncio.wait(
                 self._tasks,
                 return_when=asyncio.ALL_COMPLETED,
-                timeout=timeout,
+                timeout=graceful_termination_timeout,
             )
             if pending:
                 logger.error("Some tasks timeouted when gracefully finishing runner.")
-        if self._wait_for_cancel_task is not None:
-            self._wait_for_cancel_task.cancel()
         self.cancel_event.set()
+
+        try:
+            await self._server_subscriber.close()
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "Error while closing subscriber during graceful shutdown.",
+                exc_info=exc,
+            )
+
         logger.debug("Runner finished gracefully.")

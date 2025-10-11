@@ -74,12 +74,13 @@ class _Worker:
         logger.debug("Starting consumer.")
 
         try:
-            await runner.run(channels_to_actors=self.centralized_router._actors_per_channel_address)
+            await runner.run(
+                channels_to_actors=self.centralized_router._actors_per_channel_address,
+                graceful_termination_timeout=self.graceful_shutdown_time,
+            )
         except asyncio.CancelledError as exc:
             logger.critical("Worker was cancelled.", exc_info=exc)
             raise
-
-        await runner.finish_gracefully(timeout=self.graceful_shutdown_time)
 
         if self.health_check_server is not None:
             await asyncio.wait_for(

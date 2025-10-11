@@ -47,6 +47,7 @@ class ReceivedMessageT(BaseMessageT, Protocol):
         *,
         message: SentMessageT,
         channel: str | None = None,  # if None, message will be sent to the same channel
+        server_specific_parameters: dict[str, Any] | None = None,
     ) -> None: ...
 
 
@@ -131,6 +132,7 @@ class ServerT(Protocol):
         *,
         channel: str,
         message: SentMessageT,
+        server_specific_parameters: dict[str, Any] | None = None,
     ) -> None: ...
 
     # message receiving

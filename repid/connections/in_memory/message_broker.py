@@ -107,6 +107,7 @@ class InMemoryReceivedMessage(ReceivedMessageT):
         *,
         message: SentMessageT,
         channel: str | None = None,
+        server_specific_parameters: dict[str, Any] | None = None,  # noqa: ARG002
     ) -> None:
         if self._acted_on:
             return
@@ -158,20 +159,20 @@ class InMemorySubscriber(SubscriberT):
 
     # --- SubscriberT protocol ---
     @property
-    def is_active(self) -> bool:  # type: ignore[override]
+    def is_active(self) -> bool:
         return not self._closed and any(not t.done() for t in self._channel_tasks.values())
 
     @property
-    def task(self) -> asyncio.Task:  # type: ignore[override]
+    def task(self) -> asyncio.Task:
         return self._supervisor_task
 
-    async def pause(self) -> None:  # type: ignore[override]
+    async def pause(self) -> None:
         self._paused_event.clear()
 
-    async def resume(self) -> None:  # type: ignore[override]
+    async def resume(self) -> None:
         self._paused_event.set()
 
-    async def close(self) -> None:  # type: ignore[override]
+    async def close(self) -> None:
         if self._closed:
             return
         self._closed = True
@@ -306,7 +307,7 @@ class InMemoryServer(ServerT):
             "supports_acknowledgments": True,
             "supports_persistence": False,
             "supports_reply": True,
-            "supports_concurrency_limit": True,
+            "supports_lightweight_pause": True,
         }
 
     @property
@@ -336,6 +337,7 @@ class InMemoryServer(ServerT):
         *,
         channel: str,
         message: SentMessageT,
+        server_specific_parameters: dict[str, Any] | None = None,  # noqa: ARG002
     ) -> None:
         if not self._connected:
             raise RuntimeError("Server is not connected")

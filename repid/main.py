@@ -111,6 +111,7 @@ class Repid:
         headers: dict[str, str] | None = None,
         content_type: str | None = None,
         server_name: str | None = None,
+        server_specific_parameters: dict[str, Any] | None = None,
     ) -> None:
         operation = self._messages.get_operation(operation_id)
         if operation is None:
@@ -131,6 +132,7 @@ class Repid:
                 headers=headers,
                 content_type=content_type,
             ),
+            server_specific_parameters=server_specific_parameters,
         )
 
     async def send_message_json(
@@ -141,6 +143,7 @@ class Repid:
         headers: dict[str, str] | None = None,
         serializer: SerializerT | None = None,
         server_name: str | None = None,
+        server_specific_parameters: dict[str, Any] | None = None,
     ) -> None:
         serializer = serializer if serializer is not None else self.default_serializer
         await self.send_message(
@@ -149,4 +152,5 @@ class Repid:
             headers=headers,
             content_type="application/json",
             server_name=server_name,
+            server_specific_parameters=server_specific_parameters,
         )

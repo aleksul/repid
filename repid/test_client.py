@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from datetime import datetime
 from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
-from exceptiongroup import suppress
 from typing_extensions import Self
 
 from repid._runner import _actor_run

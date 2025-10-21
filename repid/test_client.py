@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from typing_extensions import Self
 
 from repid._runner import _actor_run
-from repid.data import Message
+from repid.data import MessageData
 from repid.message_registry import MessageRegistry
 
 if TYPE_CHECKING:
@@ -60,7 +60,7 @@ class TestMessage:
         self._is_acked = False
         self._is_nacked = False
         self._is_rejected = False
-        self._reply_messages: list[tuple[str, Message]] = []
+        self._reply_messages: list[tuple[str, MessageData]] = []
         self._exception: Exception | None = None
         self._result: Any = None
         self._processed = False
@@ -145,7 +145,7 @@ class TestMessage:
     async def reply(
         self,
         *,
-        message: Message,
+        message: MessageData,
         channel: str | None = None,
     ) -> None:
         """Reply to the message with a new message."""

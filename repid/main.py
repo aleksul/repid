@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from repid._worker import _Worker
 from repid.asyncapi import AsyncAPI3Schema, AsyncAPIGenerator
-from repid.data import Message, RunnerInfo
+from repid.data import MessageData, RunnerInfo
 from repid.message_registry import MessageRegistry
 from repid.router import Router
 from repid.serializer import default_serializer as repid_default_serializer
@@ -127,7 +127,7 @@ class Repid:
 
         await server.publish(
             channel=operation.channel.address,
-            message=Message(
+            message=MessageData(
                 payload=payload,
                 headers=headers,
                 content_type=content_type,

@@ -98,6 +98,11 @@ class AmqpReceivedMessage:
     def is_acted_on(self) -> bool:
         return self._is_acted_on
 
+    @property
+    def message_id(self) -> str | None:
+        value = self._message.header.properties.message_id
+        return str(value) if value is not None else None
+
     async def ack(self) -> None:
         if self._is_acted_on:
             return

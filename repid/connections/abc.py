@@ -36,6 +36,10 @@ class ReceivedMessageT(BaseMessageT, Protocol):
     @property
     def is_acted_on(self) -> bool: ...
 
+    @property
+    def message_id(self) -> str | None:
+        """Unique identifier of a message if provided by the message broker."""
+
     async def ack(self) -> None: ...
 
     async def nack(self) -> None: ...

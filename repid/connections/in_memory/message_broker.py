@@ -5,6 +5,7 @@ import contextlib
 from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from repid.connections.abc import (
     CapabilitiesT,
@@ -33,11 +34,13 @@ class InMemorySentMessage(SentMessageT):
         headers: dict[str, str] | None = None,
         correlation_id: str | None = None,
         content_type: str | None = "text/plain",
+        message_id: str | None = None,
     ) -> None:
         self._payload = payload
         self._headers = headers
         self._correlation_id = correlation_id
         self._content_type = content_type
+        self._message_id = message_id
 
     @property
     def payload(self) -> bytes:
@@ -54,6 +57,10 @@ class InMemorySentMessage(SentMessageT):
     @property
     def content_type(self) -> str | None:
         return self._content_type
+
+    @property
+    def message_id(self) -> str | None:
+        return self._message_id
 
 
 class InMemoryReceivedMessage(ReceivedMessageT):
@@ -74,6 +81,10 @@ class InMemoryReceivedMessage(ReceivedMessageT):
     @property
     def content_type(self) -> str | None:
         return self._message.content_type
+
+    @property
+    def message_id(self) -> str | None:
+        return self._message.message_id
 
     @property
     def channel(self) -> str:
@@ -120,6 +131,7 @@ class InMemoryReceivedMessage(ReceivedMessageT):
                     payload=message.payload,
                     headers=message.headers,
                     content_type=message.content_type,
+                    message_id=message.message_id,
                 ),
             )
             # if different channel requested and not existing create queue and enqueue
@@ -337,7 +349,7 @@ class InMemoryServer(ServerT):
         *,
         channel: str,
         message: SentMessageT,
-        server_specific_parameters: dict[str, Any] | None = None,  # noqa: ARG002
+        server_specific_parameters: dict[str, Any] | None = None,
     ) -> None:
         if not self._connected:
             raise RuntimeError("Server is not connected")
@@ -345,10 +357,21 @@ class InMemoryServer(ServerT):
         if channel not in self.queues:
             self.queues[channel] = DummyQueue()
 
+        if (
+            server_specific_parameters is not None
+            and "message_id" in server_specific_parameters
+            and isinstance(server_specific_parameters["message_id"], str)
+            and server_specific_parameters["message_id"]
+        ):
+            message_id = server_specific_parameters["message_id"]
+        else:
+            message_id = str(uuid4())
+
         msg = DummyQueue.Message(
             payload=message.payload,
             headers=message.headers,
             content_type=message.content_type,
+            message_id=message_id,
         )
         self.queues[channel].queue.put_nowait(msg)
 

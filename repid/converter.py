@@ -4,12 +4,13 @@ import asyncio
 import inspect
 import json
 from collections.abc import Callable, Coroutine
-from typing import Annotated, Any, Protocol, get_args, get_origin
+from typing import Annotated, Any, Protocol, cast, get_args, get_origin
 
 from repid._utils import is_installed
 from repid.connections.abc import ReceivedMessageT
 from repid.data import ActorData, ConverterInputSchema, CorrelationId
 from repid.dependencies._utils import DependencyContext, DependencyT, get_dependency
+from repid.dependencies.depends import Depends as DependsClass
 from repid.dependencies.header_dependency import Header
 
 if is_installed("pydantic"):
@@ -24,8 +25,14 @@ async def _resolve_dependencies(
     actor: ActorData,
     parsed_headers: dict[int, Any],
     dependencies: dict[str, DependencyT],
+    provided_params: dict[int, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    context = DependencyContext(message=message, actor=actor, parsed_headers=parsed_headers)
+    context = DependencyContext(
+        message=message,
+        actor=actor,
+        parsed_headers=parsed_headers,
+        provided_params=provided_params or {},
+    )
 
     unresolved_dependencies: dict[str, Coroutine] = {
         dep_name: dep.resolve(context=context) for dep_name, dep in dependencies.items()
@@ -128,21 +135,50 @@ class BasicConverter:
             elif p.kind == inspect.Parameter.VAR_KEYWORD:
                 self.all_kwargs = True
 
+    def _parse_payload(self, message: ReceivedMessageT) -> dict[str, Any]:
+        payload_bytes = message.payload
+        content_type = message.content_type
+        if not payload_bytes:
+            return {}
+        if content_type not in (None, "application/json"):
+            raise ValueError(f"Unsupported content type: {content_type}")
+        return cast(dict[str, Any], json.loads(payload_bytes))
+
+    def _decode_headers_basic(self, message: ReceivedMessageT) -> dict[int, Any]:
+        raw_headers: dict[str, str] = message.headers or {}
+        parsed_headers: dict[int, Any] = {}
+        for dep_arg_name, dep in self.dependency_kwargs.items():
+            if isinstance(dep, Header):
+                header_param = self._param_by_name[dep_arg_name]
+                header_name = dep._name or header_param.name
+                parsed_headers[id(dep)] = raw_headers.get(header_name)
+        # Include header dependencies from Depends sub-dependencies
+        for _dep_arg_name, dep in self.dependency_kwargs.items():
+            if isinstance(dep, DependsClass):
+                for name, header_dep, _p in dep.iter_header_dependencies():
+                    header_name = header_dep._name or name
+                    parsed_headers[id(header_dep)] = raw_headers.get(header_name)
+        return parsed_headers
+
+    def _collect_depends_simple_values(self, loaded: dict[str, Any]) -> dict[int, dict[str, Any]]:
+        provided_params: dict[int, dict[str, Any]] = {}
+        for _dep_arg_name, dep in self.dependency_kwargs.items():
+            if isinstance(dep, DependsClass):
+                dep_values: dict[str, Any] = {}
+                for name, _param in dep.iter_simple_params():
+                    if name in loaded:
+                        dep_values[name] = loaded.pop(name)
+                if dep_values:
+                    provided_params[id(dep)] = dep_values
+        return provided_params
+
     async def convert_inputs(
         self,
         *,
         message: ReceivedMessageT,
         actor: ActorData,
     ) -> FnParams:
-        # parse payload
-        payload_bytes = message.payload
-        content_type = message.content_type
-
-        loaded: dict[str, Any] = {}
-        if payload_bytes:
-            if content_type not in (None, "application/json"):
-                raise ValueError(f"Unsupported content type: {content_type}")
-            loaded = json.loads(payload_bytes)
+        loaded = self._parse_payload(message)
 
         # map payload to function parameters
         args = [loaded.pop(name, self.args[name]) for name in self.args]
@@ -152,14 +188,9 @@ class BasicConverter:
         elif self.all_args:
             args.extend(loaded.values())
 
-        # decode headers for header dependencies (no typing coercion here)
-        raw_headers: dict[str, str] = message.headers or {}
-        parsed_headers: dict[int, Any] = {}
-        for dep_arg_name, dep in self.dependency_kwargs.items():
-            if isinstance(dep, Header):
-                header_param = self._param_by_name[dep_arg_name]
-                header_name = dep._name or header_param.name
-                parsed_headers[id(dep)] = raw_headers.get(header_name)
+        # decode headers and collect Depends simple params
+        parsed_headers = self._decode_headers_basic(message)
+        provided_params = self._collect_depends_simple_values(loaded)
 
         # resolve dependencies (including headers, message, and Depends)
         resolved = await _resolve_dependencies(
@@ -167,6 +198,7 @@ class BasicConverter:
             actor=actor,
             parsed_headers=parsed_headers,
             dependencies=self.dependency_kwargs,
+            provided_params=provided_params,
         )
 
         kwargs.update(resolved)
@@ -239,6 +271,7 @@ class PydanticConverter:
 
     def _build_headers_model(self) -> Any | None:
         header_fields: dict[str, tuple[Any, Any]] = {}
+        # Top-level header dependencies
         for name, dep in self.dependency_kwargs.items():
             if isinstance(dep, Header):
                 p = self._param_by_name[name]
@@ -251,6 +284,19 @@ class PydanticConverter:
                 else:
                     field_def = Field(p.default, alias=alias)
                 header_fields[name] = (base_type, field_def)
+        # Header dependencies inside Depends
+        for _dep_arg_name, dep in self.dependency_kwargs.items():
+            if isinstance(dep, DependsClass):
+                for name, header_dep, p in dep.iter_header_dependencies():
+                    base_type = self._unwrap_annotated(
+                        p.annotation if p.annotation is not inspect.Parameter.empty else Any,
+                    )
+                    alias = header_dep._name or name
+                    if p.default is inspect.Parameter.empty:
+                        field_def = Field(..., alias=alias)
+                    else:
+                        field_def = Field(p.default, alias=alias)
+                    header_fields[name] = (base_type, field_def)
 
         if not header_fields:
             return None
@@ -260,22 +306,55 @@ class PydanticConverter:
             **header_fields,
         )
 
+    def _parse_payload(self, message: ReceivedMessageT) -> tuple[dict[str, Any], dict[str, Any]]:
+        payload_bytes = message.payload
+        content_type = message.content_type
+        if not payload_bytes:
+            return {}, {}
+        if content_type not in (None, "application/json"):
+            raise ValueError(f"Unsupported content type: {content_type}")
+        raw_payload = cast(dict[str, Any], json.loads(payload_bytes))
+        validated = cast(
+            dict[str, Any],
+            dict(self.input_pydantic_model.model_validate(raw_payload)),
+        )
+        return validated, raw_payload
+
+    def _decode_headers_pydantic(self, message: ReceivedMessageT) -> dict[int, Any]:
+        parsed_headers: dict[int, Any] = {}
+        if self.headers_pydantic_model is None:
+            return parsed_headers
+        raw_headers: dict[str, str] = message.headers or {}
+        headers_obj = self.headers_pydantic_model.model_validate(raw_headers)
+        for name, dep in self.dependency_kwargs.items():
+            if isinstance(dep, Header):
+                parsed_headers[id(dep)] = getattr(headers_obj, name)
+        # Include headers from Depends sub-dependencies
+        for _nm, dep in self.dependency_kwargs.items():
+            if isinstance(dep, DependsClass):
+                for name, header_dep, _p in dep.iter_header_dependencies():
+                    parsed_headers[id(header_dep)] = getattr(headers_obj, name)
+        return parsed_headers
+
+    def _collect_depends_simple_values(self, kwargs: dict[str, Any]) -> dict[int, dict[str, Any]]:
+        provided_params: dict[int, dict[str, Any]] = {}
+        for _nm, dep in self.dependency_kwargs.items():
+            if isinstance(dep, DependsClass):
+                dep_values: dict[str, Any] = {}
+                for simple_name, _param in dep.iter_simple_params():
+                    if simple_name in kwargs:
+                        dep_values[simple_name] = kwargs.pop(simple_name)
+                if dep_values:
+                    provided_params[id(dep)] = dep_values
+        return provided_params
+
     async def convert_inputs(
         self,
         *,
         message: ReceivedMessageT,
         actor: ActorData,
     ) -> FnParams:
-        # parse payload
-        payload_bytes = message.payload
-        content_type = message.content_type
-
-        loaded: dict[str, Any] = {}
-        if payload_bytes:
-            if content_type not in (None, "application/json"):
-                raise ValueError(f"Unsupported content type: {content_type}")
-            # payload is bytes -> validate from JSON
-            loaded = dict(self.input_pydantic_model.model_validate_json(payload_bytes))
+        loaded, raw_payload = self._parse_payload(message)
 
         # map payload to function parameters
         if self.args:
@@ -285,14 +364,18 @@ class PydanticConverter:
             args = []
             kwargs = loaded
 
-        # decode and validate headers for header dependencies
-        parsed_headers: dict[int, Any] = {}
-        if self.headers_pydantic_model is not None:
-            raw_headers: dict[str, str] = message.headers or {}
-            headers_obj = self.headers_pydantic_model.model_validate(raw_headers)
-            for name, dep in self.dependency_kwargs.items():
-                if isinstance(dep, Header):
-                    parsed_headers[id(dep)] = getattr(headers_obj, name)
+        # decode and validate headers and collect Depends simple params
+        parsed_headers = self._decode_headers_pydantic(message)
+        # collect simple params for Depends from raw payload keys
+        provided_params: dict[int, dict[str, Any]] = {}
+        for _nm, dep in self.dependency_kwargs.items():
+            if isinstance(dep, DependsClass):
+                dep_values: dict[str, Any] = {}
+                for simple_name, _param in dep.iter_simple_params():
+                    if simple_name in raw_payload:
+                        dep_values[simple_name] = raw_payload[simple_name]
+                if dep_values:
+                    provided_params[id(dep)] = dep_values
 
         # resolve dependencies and merge into kwargs
         resolved = await _resolve_dependencies(
@@ -300,6 +383,7 @@ class PydanticConverter:
             actor=actor,
             parsed_headers=parsed_headers,
             dependencies=self.dependency_kwargs,
+            provided_params=provided_params,
         )
         kwargs.update(resolved)
 

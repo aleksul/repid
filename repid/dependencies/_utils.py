@@ -17,6 +17,7 @@ class DependencyContext:
     message: ReceivedMessageT
     actor: ActorData
     parsed_headers: dict[int, Any]
+    provided_params: dict[int, dict[str, Any]]
 
 
 @runtime_checkable

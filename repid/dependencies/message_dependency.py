@@ -3,13 +3,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Annotated
 
 if TYPE_CHECKING:
+    from repid._utils import DependencyContext
     from repid.connections.abc import ReceivedMessageT
-    from repid.dependencies.resolver_context import ResolverContext
 
 
 class MessageDependency:
-    async def resolve(self, *, context: ResolverContext) -> ReceivedMessageT:
+    """Dependency annotation that indicates that the argument resolves to the received message."""
+
+    async def resolve(self, *, context: DependencyContext) -> ReceivedMessageT:
         return context.message
 
 
-MessageDependencyT = Annotated["ReceivedMessageT", MessageDependency()]
+# Type alias for convenience
+Message = Annotated[ReceivedMessageT, MessageDependency()]

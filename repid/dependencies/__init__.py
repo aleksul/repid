@@ -1,5 +1,4 @@
 from .depends import Depends as Depends
+from .header_dependency import Header as Header
+from .message_dependency import Message as Message
 from .message_dependency import MessageDependency as MessageDependency
-from .message_dependency import MessageDependencyT as MessageDependencyT
-from .protocols import DependencyT as DependencyT
-from .resolver_context import ResolverContext as ResolverContext

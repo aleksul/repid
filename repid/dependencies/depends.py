@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from repid._utils import asyncify, get_dependency
 
 if TYPE_CHECKING:
-    from repid.dependencies.resolver_context import ResolverContext
+    from repid._utils import DependencyContext
 
 
 class Depends:
@@ -38,7 +38,7 @@ class Depends:
         self._fn = asyncify(fn, run_in_process=run_in_process, executor=pool_executor)
         self._update_subdependencies()
 
-    async def resolve(self, *, context: ResolverContext) -> Any:
+    async def resolve(self, *, context: DependencyContext) -> Any:
         unresolved_dependencies: dict[str, Coroutine] = {
             dep_name: dep.resolve(context=context)
             for dep_name, dep in self._subdependencies.items()

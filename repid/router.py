@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, overload
 
 from repid._utils import asyncify
 from repid.converter import DefaultConverter
-from repid.data import ActorData, Channel
+from repid.data import ActorData, Channel, CorrelationId
 
 if TYPE_CHECKING:
     from concurrent.futures import Executor
@@ -151,6 +151,7 @@ class Router:
         external_docs: ExternalDocs | None = None,
         bindings: OperationBindingsObject | None = None,
         deprecated: bool = False,
+        correlation_id: CorrelationId | None = None,
     ) -> Callable[[YourFunc], YourFunc]: ...
 
     @overload
@@ -176,6 +177,7 @@ class Router:
         external_docs: ExternalDocs | None = None,
         bindings: OperationBindingsObject | None = None,
         deprecated: bool = False,
+        correlation_id: CorrelationId | None = None,
     ) -> YourFunc: ...
 
     def actor(
@@ -200,6 +202,7 @@ class Router:
         external_docs: ExternalDocs | None = None,
         bindings: OperationBindingsObject | None = None,
         deprecated: bool = False,
+        correlation_id: CorrelationId | None = None,
     ) -> YourFunc | Callable[[YourFunc], YourFunc]:
         """Actor decorator.
 
@@ -266,6 +269,8 @@ class Router:
                 Operation bindings for the actor, used to specify protocol-specific details.
             deprecated (bool, optional):
                 Whether the actor is deprecated. Defaults to False.
+            correlation_id (CorrelationId | None, optional):
+                Correlation ID location descriptor for messages handled by the actor.
 
         Returns:
             YourFunc: your initial function.
@@ -290,6 +295,7 @@ class Router:
                 external_docs=external_docs,
                 bindings=bindings,
                 deprecated=deprecated,
+                correlation_id=correlation_id,
             )
 
         if converter is None:
@@ -332,7 +338,7 @@ class Router:
             middleware_pipeline=middleware_pipeline,
             channel_address=channel_address,
             timeout=timeout if timeout is not None else self.defaults.timeout,
-            converter=converter(fn),
+            converter=converter(fn, correlation_id=correlation_id),
             title=title,
             summary=summary or " ".join([part.capitalize() for part in fn.__name__.split("_")]),
             description=description or fn.__doc__,

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from repid._utils import DependencyContext
+    from repid.dependencies._utils import DependencyContext
 
 
 class Header:

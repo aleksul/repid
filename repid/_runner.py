@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import math
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from repid.connections.abc import ServerT, SubscriberT
-from repid.dependencies.resolver_context import ResolverContext
 from repid.health_check_server import HealthCheckStatus
 from repid.logger import logger
 
@@ -17,43 +16,15 @@ if TYPE_CHECKING:
     from repid.health_check_server import HealthCheckServer
 
 
-async def _resolve_dependencies(
-    message: ReceivedMessageT,
-    actor: ActorData,
-) -> dict[str, Any]:
-    context = ResolverContext(message=message, actor=actor)
-
-    unresolved_dependencies: dict[str, Coroutine] = {
-        dep_name: dep.resolve(context=context)
-        for dep_name, dep in actor.converter.dependencies.items()
-    }
-
-    unresolved_dependencies_names, unresolved_dependencies_values = (
-        unresolved_dependencies.keys(),
-        unresolved_dependencies.values(),
-    )
-
-    resolved = await asyncio.gather(*unresolved_dependencies_values)
-
-    return dict(zip(unresolved_dependencies_names, resolved, strict=False))
+ActorResultT = Any
 
 
 async def _actor_execution(
     message: ReceivedMessageT,
     actor: ActorData,
-) -> Any:
-    if actor.converter.dependencies:
-        dependency_kwargs = await _resolve_dependencies(message, actor)
-    else:
-        dependency_kwargs = {}
-    args, kwargs = actor.converter.convert_inputs(
-        data=message.payload,
-        content_type=message.content_type,
-    )
-    return await actor.fn(*args, **kwargs, **dependency_kwargs)
-
-
-ActorResultT = Any
+) -> ActorResultT:
+    args, kwargs = await actor.converter.convert_inputs(message=message, actor=actor)
+    return await actor.fn(*args, **kwargs)
 
 
 async def _actor_run(

@@ -5,7 +5,9 @@ from .converter import DefaultConverter as DefaultConverter
 from .converter import PydanticConverter as PydanticConverter
 from .data import *  # noqa: F403
 from .dependencies import Depends as Depends
-from .dependencies import MessageDependencyT as MessageDependencyT
+from .dependencies import Header as Header
+from .dependencies import Message as Message
+from .dependencies import MessageDependency as MessageDependency
 from .health_check_server import HealthCheckServer as HealthCheckServer
 from .health_check_server import HealthCheckServerSettings as HealthCheckServerSettings
 from .health_check_server import HealthCheckStatus as HealthCheckStatus

@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Annotated
 
 if TYPE_CHECKING:
-    from repid._utils import DependencyContext
     from repid.connections.abc import ReceivedMessageT
+    from repid.dependencies._utils import DependencyContext
 
 
 class MessageDependency:
@@ -15,4 +15,4 @@ class MessageDependency:
 
 
 # Type alias for convenience
-Message = Annotated[ReceivedMessageT, MessageDependency()]
+Message = Annotated["ReceivedMessageT", MessageDependency()]

@@ -6,10 +6,11 @@ from collections.abc import Callable, Coroutine
 from concurrent.futures import Executor
 from typing import TYPE_CHECKING, Any
 
-from repid._utils import asyncify, get_dependency
+from repid._utils import asyncify
+from repid.dependencies._utils import get_dependency
 
 if TYPE_CHECKING:
-    from repid._utils import DependencyContext
+    from repid.dependencies._utils import DependencyContext
 
 
 class Depends:

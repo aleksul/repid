@@ -40,6 +40,7 @@ async def _actor_run(
     logger_extra = {
         "actor_name": actor.name,
         "time_limit": actor.timeout,
+        "message_id": message.message_id,
     }
 
     exception = None

@@ -6,8 +6,7 @@ from collections.abc import Callable, Coroutine
 from concurrent.futures import Executor
 from typing import TYPE_CHECKING, Any
 
-from repid._utils import get_dependency
-from repid._utils.asyncify import asyncify
+from repid._utils import asyncify, get_dependency
 
 if TYPE_CHECKING:
     from repid.dependencies.resolver_context import ResolverContext

@@ -7,7 +7,7 @@ from functools import partial
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, overload
 
-from repid._utils.asyncify import asyncify
+from repid._utils import asyncify
 from repid.converter import DefaultConverter
 from repid.data import ActorData, Channel
 

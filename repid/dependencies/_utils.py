@@ -16,8 +16,10 @@ if TYPE_CHECKING:
 class DependencyContext:
     message: ReceivedMessageT
     actor: ActorData
-    parsed_headers: dict[int, Any]
-    provided_params: dict[int, dict[str, Any]]
+    parsed_args: list[Any]
+    parsed_kwargs: dict[str, Any]
+    parsed_headers: dict[str, Any]
+    headers_id_to_name: dict[int, str]
 
 
 @runtime_checkable

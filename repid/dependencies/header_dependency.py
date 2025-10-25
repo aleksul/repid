@@ -20,4 +20,4 @@ class Header:
         self._name = name
 
     async def resolve(self, *, context: DependencyContext) -> Any:
-        return context.parsed_headers[id(self)]
+        return context.parsed_headers[context.headers_id_to_name[id(self)]]

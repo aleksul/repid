@@ -18,7 +18,7 @@ class Depends:
     __slots__ = (
         "_fn",
         "_params",
-        "_simple_params",
+        "_payload_arguments",
         "_subdependencies",
     )
 
@@ -43,7 +43,6 @@ class Depends:
         self._update_subdependencies()
 
     async def resolve(self, *, context: DependencyContext) -> Any:
-        # Resolve sub-dependencies first
         unresolved_dependencies: dict[str, Coroutine] = {
             dep_name: dep.resolve(context=context)
             for dep_name, dep in self._subdependencies.items()
@@ -56,27 +55,29 @@ class Depends:
 
         dependency_kwargs = dict(zip(unresolved_dependencies_names, resolved, strict=False))
 
-        # Merge simple parameters parsed by converters for this Depends instance
-        simple_values = context.provided_params.get(id(self), {})
-        all_kwargs = {**simple_values, **dependency_kwargs}
+        payload_arguments = {}
+        for name in self._payload_arguments:
+            param = self._params[name]
+            if name in context.parsed_kwargs:
+                payload_arguments[name] = context.parsed_kwargs[name]
+            elif param.default is not inspect.Parameter.empty:
+                payload_arguments[name] = param.default
+            else:
+                raise ValueError(f"Missing required argument '{name}' in payload.")
 
-        return await self._fn(**all_kwargs)
+        return await self._fn(**{**payload_arguments, **dependency_kwargs})
 
     def _update_subdependencies(self) -> None:
         self._subdependencies: dict[str, DependencyT] = {}
-        self._simple_params: set[str] = set()
+        self._payload_arguments: set[str] = set()
         self._params: dict[str, inspect.Parameter] = {}
 
-        signature = inspect.signature(self._fn)
+        signature = inspect.signature(self._fn, eval_str=True)
 
         for p in signature.parameters.values():
             self._params[p.name] = p
-            if (
-                p.kind == inspect.Parameter.POSITIONAL_ONLY
-                and get_dependency(p.annotation) is not None
-            ):
-                raise ValueError("Dependencies in positional-only arguments are not supported.")
-
+            if p.kind == inspect.Parameter.POSITIONAL_ONLY:
+                raise ValueError("Positional-only arguments in dependencies are not supported.")
             if p.kind in (
                 inspect.Parameter.POSITIONAL_OR_KEYWORD,
                 inspect.Parameter.KEYWORD_ONLY,
@@ -85,19 +86,19 @@ class Depends:
                 if dep is not None:
                     self._subdependencies[p.name] = dep
                 else:
-                    # simple param; value will be provided by converter via context
-                    self._simple_params.add(p.name)
+                    self._payload_arguments.add(p.name)
 
-    # Expose simple parameter names for converters
-    def iter_simple_params(self) -> Generator[tuple[str, inspect.Parameter], None, None]:
-        for name in self._simple_params:
-            yield name, self._params[name]
+    def _iter_payload_arguments(self) -> Generator[inspect.Parameter, None, None]:
+        for name in self._payload_arguments:
+            yield self._params[name]
+        for _sub_name, dep in self._subdependencies.items():
+            if isinstance(dep, Depends):
+                yield from dep._iter_payload_arguments()
 
-    # Expose header sub-dependencies for converters
-    def iter_header_dependencies(
-        self,
-    ) -> Generator[tuple[str, Header, inspect.Parameter], None, None]:
+    def _iter_header_arguments(self) -> Generator[tuple[Header, inspect.Parameter], None, None]:
         for name, dep in self._subdependencies.items():
             if isinstance(dep, Header):
                 p = self._params[name]
-                yield name, dep, p
+                yield dep, p
+            elif isinstance(dep, Depends):
+                yield from dep._iter_header_arguments()

@@ -62,10 +62,9 @@ def asyncify(
     @wraps(fn)
     async def inner(*args: FnP.args, **kwargs: FnP.kwargs) -> FnR:
         loop = asyncio.get_running_loop()
-        with executor as pool:
-            return await loop.run_in_executor(
-                pool,
-                partial(fn, *args, **kwargs),  # type: ignore[arg-type]
-            )
+        return await loop.run_in_executor(
+            executor,
+            partial(fn, *args, **kwargs),  # type: ignore[arg-type]
+        )
 
     return inner

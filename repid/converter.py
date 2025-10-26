@@ -58,6 +58,7 @@ class ConverterT(Protocol):
         self,
         fn: Callable[..., Coroutine],
         *,
+        fn_locals: dict[str, Any] | None = None,
         correlation_id: CorrelationId | None,
     ) -> None: ...
 
@@ -76,13 +77,14 @@ class DefaultConverter:
         cls,
         fn: Callable[..., Coroutine],
         *,
+        fn_locals: dict[str, Any] | None = None,
         correlation_id: CorrelationId | None,
     ) -> ConverterT:
         if is_installed("pydantic", ">=2.0.0,<3.0.0"):
-            return PydanticConverter(fn, correlation_id=correlation_id)
+            return PydanticConverter(fn, fn_locals=fn_locals, correlation_id=correlation_id)
         if is_installed("pydantic"):
             raise ValueError("Unsupported Pydantic version, only 2.x is supported.")
-        return BasicConverter(fn, correlation_id=correlation_id)
+        return BasicConverter(fn, fn_locals=fn_locals, correlation_id=correlation_id)
 
     # pretend to be an implementation of ConverterT
     def __init__(
@@ -110,17 +112,23 @@ class BasicConverter:
         self,
         fn: Callable[..., Coroutine],
         *,
+        fn_locals: dict[str, Any] | None = None,
         correlation_id: CorrelationId | None,
     ) -> None:
         self.fn = fn
         self.correlation_id = correlation_id
-        self.signature = inspect.signature(fn, eval_str=True)
+        signature = inspect.signature(
+            fn,
+            eval_str=True,
+            locals=fn_locals,
+            globals=fn.__globals__,
+        )
         self.args: dict[str, Any] = {}
         self.kwargs: dict[str, Any] = {}
         self.dependency_kwargs: dict[str, DependencyT] = {}
         self.all_args = False
         self.all_kwargs = False
-        for p in self.signature.parameters.values():
+        for p in signature.parameters.values():
             if p.kind == inspect.Parameter.POSITIONAL_ONLY:
                 if get_dependency(p.annotation) is not None:
                     raise ValueError("Dependencies in positional-only arguments are not supported.")
@@ -138,11 +146,11 @@ class BasicConverter:
             elif p.kind == inspect.Parameter.VAR_KEYWORD:
                 self.all_kwargs = True
         self.headers_id_to_name = self._build_headers_id_to_name_mapping(
-            self.signature,
+            signature,
             self.dependency_kwargs,
         )
         self.header_defaults = self._build_header_defaults(
-            self.signature,
+            signature,
             self.dependency_kwargs,
         )
 
@@ -225,11 +233,17 @@ class PydanticConverter:
         self,
         fn: Callable[..., Coroutine],
         *,
+        fn_locals: dict[str, Any] | None = None,
         correlation_id: CorrelationId | None,
     ) -> None:
         self.fn = fn
         self.correlation_id = correlation_id
-        signature = inspect.signature(fn, eval_str=True)
+        signature = inspect.signature(
+            fn,
+            eval_str=True,
+            locals=fn_locals,
+            globals=fn.__globals__,
+        )
 
         self.args, self.kwargs, self.dependency_kwargs = self._parse_signature(signature)
 

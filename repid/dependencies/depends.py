@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 class Depends:
     __slots__ = (
         "_fn",
+        "_fn_locals",
         "_params",
         "_payload_arguments",
         "_subdependencies",
@@ -30,6 +31,14 @@ class Depends:
         pool_executor: Executor | None = None,
     ) -> None:
         self._fn = asyncify(fn, run_in_process=run_in_process, executor=pool_executor)
+
+        self._fn_locals = None
+        current_frame = inspect.currentframe()
+        if current_frame is not None:
+            previous_frame = current_frame.f_back
+            if previous_frame is not None:
+                self._fn_locals = previous_frame.f_locals
+
         self._update_subdependencies()
 
     def override(
@@ -72,7 +81,12 @@ class Depends:
         self._payload_arguments: set[str] = set()
         self._params: dict[str, inspect.Parameter] = {}
 
-        signature = inspect.signature(self._fn, eval_str=True)
+        signature = inspect.signature(
+            self._fn,
+            eval_str=True,
+            locals=self._fn_locals,
+            globals=self._fn.__globals__,
+        )
 
         for p in signature.parameters.values():
             self._params[p.name] = p

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from collections import defaultdict
 from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass
@@ -298,6 +299,13 @@ class Router:
                 correlation_id=correlation_id,
             )
 
+        fn_locals: dict[str, Any] | None = None
+        current_frame = inspect.currentframe()
+        if current_frame is not None:
+            previous_frame = current_frame.f_back
+            if previous_frame is not None:
+                fn_locals = previous_frame.f_locals
+
         if converter is None:
             converter = self.defaults.converter
 
@@ -338,7 +346,7 @@ class Router:
             middleware_pipeline=middleware_pipeline,
             channel_address=channel_address,
             timeout=timeout if timeout is not None else self.defaults.timeout,
-            converter=converter(fn, correlation_id=correlation_id),
+            converter=converter(fn, fn_locals=fn_locals, correlation_id=correlation_id),
             title=title,
             summary=summary or " ".join([part.capitalize() for part in fn.__name__.split("_")]),
             description=description or fn.__doc__,

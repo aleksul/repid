@@ -180,6 +180,7 @@ class AmqpServer:
             message: The message to publish
             server_specific_parameters: RabbitMQ-specific options:
                 Message Properties:
+                - exchange: Exchange to publish to (default: "")
                 - priority: Message priority (0-9)
                 - expiration: Message TTL in milliseconds (e.g., 60000 for 60 seconds)
                 - delivery_mode: 1 (non-persistent) or 2 (persistent, default: 2)
@@ -257,6 +258,7 @@ class AmqpServer:
         # Publish the message (no queue declaration)
         confirmation = await amqp_channel.basic_publish(
             body=message.payload,
+            exchange=params.get("exchange", ""),
             routing_key=channel,
             properties=properties,
             mandatory=mandatory,

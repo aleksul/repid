@@ -5,7 +5,7 @@ import inspect
 import itertools
 import json
 from collections.abc import Callable, Coroutine, Iterable
-from typing import Any, Protocol, cast, get_args
+from typing import Any, Protocol, cast
 
 from repid._utils import is_installed
 from repid.connections.abc import ReceivedMessageT
@@ -16,6 +16,7 @@ from repid.dependencies.header_dependency import Header
 
 if is_installed("pydantic"):
     from pydantic import BaseModel, Field, create_model
+    from pydantic.fields import FieldInfo
 
 
 FnParams = tuple[list, dict]
@@ -322,7 +323,7 @@ class PydanticConverter:
                     )
                     or (
                         param.default is inspect.Parameter.empty
-                        and not isinstance(fields[param.name][1], Field)  # type: ignore[arg-type]
+                        and not isinstance(fields[param.name][1], FieldInfo)
                     )
                 ):
                     raise ValueError(
@@ -341,7 +342,7 @@ class PydanticConverter:
         return create_model(model_name, **fields)  # type: ignore[call-overload, no-any-return]
 
     @staticmethod
-    def _build_headers_model(  # noqa: C901, PLR0912
+    def _build_headers_model(
         model_name: str,
         signature: inspect.Signature,
         dependency_kwargs: dict[str, DependencyT],
@@ -349,14 +350,6 @@ class PydanticConverter:
         header_fields: dict[str, tuple[Any, Any]] = {}
         for name, dependency in dependency_kwargs.items():
             if isinstance(dependency, Header):
-                if (
-                    header_annotation := signature.parameters[name].annotation
-                ) is not inspect.Parameter.empty:
-                    args = get_args(header_annotation)
-                    header_type = args[0] if args else Any
-                else:
-                    header_type = Any
-
                 param = signature.parameters[name]
                 header_name = dependency._name or name
 
@@ -377,7 +370,7 @@ class PydanticConverter:
                         )
                         or (
                             param.default is inspect.Parameter.empty
-                            and not isinstance(header_fields[header_name][1], Field)  # type: ignore[arg-type]
+                            and not isinstance(header_fields[header_name][1], FieldInfo)
                         )
                     ):
                         raise ValueError(
@@ -387,7 +380,7 @@ class PydanticConverter:
                     continue
 
                 header_fields[header_name] = (
-                    header_type,
+                    param.annotation if param.annotation is not inspect.Parameter.empty else Any,
                     param.default if param.default is not inspect.Parameter.empty else Field(),
                 )
             if isinstance(dependency, DependsClass):
@@ -395,12 +388,6 @@ class PydanticConverter:
                     header_dependency,
                     header_parameter,
                 ) in dependency._iter_header_arguments():
-                    if header_parameter.annotation is not inspect.Parameter.empty:
-                        args = get_args(header_parameter.annotation)
-                        header_type = args[0] if args else Any
-                    else:
-                        header_type = Any
-
                     header_name = header_dependency._name or header_parameter.name
 
                     if header_name in header_fields:
@@ -420,7 +407,7 @@ class PydanticConverter:
                             )
                             or (
                                 header_parameter.default is inspect.Parameter.empty
-                                and not isinstance(header_fields[header_name][1], Field)  # type: ignore[arg-type]
+                                and not isinstance(header_fields[header_name][1], FieldInfo)
                             )
                         ):
                             raise ValueError(
@@ -430,7 +417,9 @@ class PydanticConverter:
                         continue
 
                     header_fields[header_name] = (
-                        header_type,
+                        header_parameter.annotation
+                        if header_parameter.annotation is not inspect.Parameter.empty
+                        else Any,
                         header_parameter.default
                         if header_parameter.default is not inspect.Parameter.empty
                         else Field(),

@@ -4,31 +4,27 @@ requires = ['hatchling', 'hatch-vcs']
 
 [dependency-groups]
 docs = [
-  "mkdocs-material>=9.5.43",
+  "mkdocs-material>=9.6.22",
   "mike>=2.1.3",
-  "mkdocs-glightbox>=0.4.0",
-  "setuptools>=75.3.0"
+  "mkdocs-glightbox>=0.5.2",
+  "setuptools>=80.9.0"
 ]
 lint = [
-  "mypy>=1.13.0",
-  "types-redis>=4.6.0.20241004",
-  "types-croniter>=4.0.0.20241030",
-  "ruff>=0.14.0"
+  "mypy>=1.18.2",
+  "ruff>=0.14.2"
 ]
 pre-commit = [
-  "pre-commit>=3.5.0"
+  "pre-commit>=4.3.0"
 ]
 tests = [
   "pytest>=8.3.3",
-  "pytest-asyncio==0.21.2",
-  "pytest-pretty>=1.2.0",
-  "pytest-clarity>=1.0.1",
-  "pytest-lazy-fixtures>=1.1.1",
-  "pytest-docker-tools>=3.1.3",
-  "pytest-timeout>=2.3.1",
-  "coverage[toml]>=7.6.1",
-  "hypothesis>=6.113.0",
-  "httpx>=0.27.2"
+  "pytest-asyncio>=1.2.0",
+  "pytest-lazy-fixtures>=1.4.0",
+  "pytest-docker-tools>=3.1.9",
+  "pytest-timeout>=2.4.0",
+  "coverage[toml]>=7.11.0",
+  "hypothesis>=6.142.4",
+  "httpx>=0.28.1"
 ]
 
 [project]
@@ -41,6 +37,7 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Programming Language :: Python :: Implementation :: CPython",
   "Typing :: Typed"
 ]

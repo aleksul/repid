@@ -9,12 +9,13 @@ from typing import TYPE_CHECKING, Any, cast
 
 from aiormq.abc import Basic as BasicAbc
 
+from repid.data import MessageData
 from repid.logger import logger
 
 if TYPE_CHECKING:
     import aiormq
 
-    from repid.connections.abc import ReceivedMessageT, SentMessageT
+    from repid.connections.abc import ReceivedMessageT
 
     from .message_broker import AmqpServer
 
@@ -127,14 +128,21 @@ class AmqpReceivedMessage:
     async def reply(
         self,
         *,
-        message: SentMessageT,
+        payload: bytes,
+        headers: dict[str, str] | None = None,
+        content_type: str | None = None,
         channel: str | None = None,
         server_specific_parameters: dict[str, Any] | None = None,
     ) -> None:
+        await self.ack()
         reply_channel = channel or self._channel_name
         await self._server.publish(
             channel=reply_channel,
-            message=message,
+            message=MessageData(
+                payload=payload,
+                headers=headers,
+                content_type=content_type,
+            ),
             server_specific_parameters=server_specific_parameters,
         )
 

@@ -10,10 +10,12 @@ from repid._runner import _Runner
 from repid.health_check_server import HealthCheckServer
 from repid.logger import logger
 from repid.router import Router
+from repid.serializer import default_serializer as repid_default_serializer
 
 if TYPE_CHECKING:
     from repid.connections.abc import ServerT
     from repid.health_check_server import HealthCheckServerSettings
+    from repid.serializer import SerializerT
 
 
 class _Worker:
@@ -26,6 +28,7 @@ class _Worker:
         tasks_limit: int = 1000,
         register_signals: Iterable[signal.Signals] | None = None,
         health_check_server: HealthCheckServerSettings | None = None,
+        default_serializer: SerializerT | None = None,
     ):
         self.server: ServerT = server
         self.centralized_router = router
@@ -49,6 +52,8 @@ class _Worker:
         if health_check_server is not None:
             self.health_check_server = HealthCheckServer(health_check_server)
 
+        self.default_serializer = default_serializer or repid_default_serializer
+
     async def run(self) -> _Runner:
         logger.info("Starting to run worker.")
 
@@ -60,6 +65,7 @@ class _Worker:
             max_tasks=self.messages_limit,
             tasks_concurrency_limit=self.tasks_limit,
             health_check_server=self.health_check_server,
+            default_serializer=self.default_serializer,
         )
 
         if not self.centralized_router.actors:

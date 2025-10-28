@@ -49,10 +49,13 @@ class ReceivedMessageT(BaseMessageT, Protocol):
     async def reply(
         self,
         *,
-        message: SentMessageT,
+        payload: bytes,
+        headers: dict[str, str] | None = None,
+        content_type: str | None = None,
         channel: str | None = None,  # if None, message will be sent to the same channel
         server_specific_parameters: dict[str, Any] | None = None,
-    ) -> None: ...
+    ) -> None:
+        """Atomically (if supporter by the server) ack and reply to the message."""
 
 
 class CapabilitiesT(TypedDict):

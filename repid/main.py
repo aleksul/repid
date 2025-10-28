@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import signal
 from collections.abc import Iterable, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, overload
 
 from repid._worker import _Worker
 from repid.asyncapi import AsyncAPI3Schema, AsyncAPIGenerator
@@ -84,6 +84,7 @@ class Repid:
             tasks_limit=tasks_limit,
             register_signals=register_signals,
             health_check_server=health_check_server,
+            default_serializer=self.default_serializer,
         )
         runner = await worker.run()
         return RunnerInfo(processed=runner.processed)
@@ -103,19 +104,27 @@ class Repid:
             external_docs=self.external_docs,
         ).generate_schema()
 
-    async def send_message(
+    async def _send_message(
         self,
-        operation_id: str,
-        payload: bytes,
         *,
+        channel: str | None = None,
+        operation_id: str | None = None,
+        payload: bytes,
         headers: dict[str, str] | None = None,
         content_type: str | None = None,
         server_name: str | None = None,
         server_specific_parameters: dict[str, Any] | None = None,
     ) -> None:
-        operation = self._messages.get_operation(operation_id)
-        if operation is None:
-            raise ValueError(f"Operation '{operation_id}' not found.")
+        if channel is None and operation_id is None:
+            raise ValueError("Either 'channel' or 'operation_id' must be specified.")
+        if channel is not None and operation_id is not None:
+            raise ValueError("Specify either 'channel' or 'operation_id', not both.")
+
+        if operation_id is not None:
+            operation = self._messages.get_operation(operation_id)
+            if operation is None:
+                raise ValueError(f"Operation '{operation_id}' not found.")
+            operation_channel = operation.channel.address
 
         server = self._servers.get_server(server_name)
         if server is None:
@@ -126,7 +135,7 @@ class Repid:
             )
 
         await server.publish(
-            channel=operation.channel.address,
+            channel=channel if channel is not None else operation_channel,
             message=MessageData(
                 payload=payload,
                 headers=headers,
@@ -135,20 +144,91 @@ class Repid:
             server_specific_parameters=server_specific_parameters,
         )
 
+    @overload
+    async def send_message(
+        self,
+        *,
+        operation_id: str,
+        payload: bytes,
+        headers: dict[str, str] | None = None,
+        content_type: str | None = None,
+        server_name: str | None = None,
+        server_specific_parameters: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    @overload
+    async def send_message(
+        self,
+        *,
+        channel: str,
+        payload: bytes,
+        headers: dict[str, str] | None = None,
+        content_type: str | None = None,
+        server_name: str | None = None,
+        server_specific_parameters: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    async def send_message(
+        self,
+        *,
+        channel: str | None = None,
+        operation_id: str | None = None,
+        payload: bytes,
+        headers: dict[str, str] | None = None,
+        content_type: str | None = None,
+        server_name: str | None = None,
+        server_specific_parameters: dict[str, Any] | None = None,
+    ) -> None:
+        await self._send_message(
+            channel=channel,
+            operation_id=operation_id,
+            payload=payload,
+            headers=headers,
+            content_type=content_type,
+            server_name=server_name,
+            server_specific_parameters=server_specific_parameters,
+        )
+
+    @overload
     async def send_message_json(
         self,
+        *,
         operation_id: str,
         payload: Any,
+        headers: dict[str, str] | None = None,
+        serializer: SerializerT | None = None,
+        server_name: str | None = None,
+        server_specific_parameters: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    @overload
+    async def send_message_json(
+        self,
         *,
+        channel: str,
+        payload: Any,
+        headers: dict[str, str] | None = None,
+        serializer: SerializerT | None = None,
+        server_name: str | None = None,
+        server_specific_parameters: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    async def send_message_json(
+        self,
+        *,
+        operation_id: str | None = None,
+        channel: str | None = None,
+        payload: Any,
         headers: dict[str, str] | None = None,
         serializer: SerializerT | None = None,
         server_name: str | None = None,
         server_specific_parameters: dict[str, Any] | None = None,
     ) -> None:
         serializer = serializer if serializer is not None else self.default_serializer
-        await self.send_message(
+        await self._send_message(
+            channel=channel,
             operation_id=operation_id,
-            payload=serializer(payload).encode(),
+            payload=serializer(payload),
             headers=headers,
             content_type="application/json",
             server_name=server_name,

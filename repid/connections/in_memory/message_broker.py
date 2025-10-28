@@ -116,7 +116,9 @@ class InMemoryReceivedMessage(ReceivedMessageT):
     async def reply(
         self,
         *,
-        message: SentMessageT,
+        payload: bytes,
+        headers: dict[str, str] | None = None,
+        content_type: str | None = None,
         channel: str | None = None,
         server_specific_parameters: dict[str, Any] | None = None,  # noqa: ARG002
     ) -> None:
@@ -125,20 +127,19 @@ class InMemoryReceivedMessage(ReceivedMessageT):
         self._acted_on = True
         # if channel specified, send there; otherwise to original channel
         target_channel = channel or self._channel
-        if isinstance(message, InMemorySentMessage):
-            self._queue.queue.put_nowait(
-                DummyQueue.Message(
-                    payload=message.payload,
-                    headers=message.headers,
-                    content_type=message.content_type,
-                    message_id=message.message_id,
-                ),
-            )
-            # if different channel requested and not existing create queue and enqueue
-            if target_channel != self._channel:
-                # naive cross-channel: just ensure a queue exists (cannot access server queues here)
-                # so we fallback to current queue (document limitation)
-                pass
+        self._queue.queue.put_nowait(
+            DummyQueue.Message(
+                payload=payload,
+                headers=headers,
+                content_type=content_type,
+                message_id=str(uuid4()),
+            ),
+        )
+        # if different channel requested and not existing create queue and enqueue
+        if target_channel != self._channel:
+            # naive cross-channel: just ensure a queue exists (cannot access server queues here)
+            # so we fallback to current queue (document limitation)
+            pass
 
 
 class InMemorySubscriber(SubscriberT):

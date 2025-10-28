@@ -1,20 +1,57 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import suppress
 from datetime import datetime
 from types import TracebackType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, overload
+from uuid import uuid4
 
 from typing_extensions import Self
 
 from repid._runner import _actor_run
+from repid.connections.abc import ServerT
 from repid.data import MessageData
 from repid.message_registry import MessageRegistry
 
 if TYPE_CHECKING:
     from repid.main import Repid
     from repid.serializer import SerializerT
+
+
+class _MockServer:
+    """Mock server for test client that implements minimal ServerT protocol."""
+
+    def __init__(self, test_client: TestClient) -> None:
+        self._test_client = test_client
+
+    async def publish(
+        self,
+        *,
+        channel: str,
+        message: MessageData,
+        server_specific_parameters: dict[str, Any] | None = None,  # noqa: ARG002
+    ) -> None:
+        """Publish a message to a channel by queuing it in the test client."""
+        # Find operation ID for the channel
+        operation_id = None
+        for op_id, operation in self._test_client.app.messages._operations.items():
+            if operation.channel.address == channel:
+                operation_id = op_id
+                break
+
+        if operation_id:
+            # Create and track the message
+            test_message = TestMessage(
+                operation_id=operation_id,
+                payload=message.payload,
+                headers=message.headers,
+                content_type=message.content_type,
+                channel=channel,
+            )
+            self._test_client._sent_messages.append(test_message)
+            await self._test_client._message_queue.put((operation_id, test_message))
 
 
 class TestMessage:
@@ -35,6 +72,7 @@ class TestMessage:
         "_is_acked",
         "_is_nacked",
         "_is_rejected",
+        "_message_id",
         "_operation_id",
         "_payload",
         "_processed",
@@ -56,6 +94,7 @@ class TestMessage:
         self._headers = headers
         self._content_type = content_type
         self._channel = channel
+        self._message_id = str(uuid4())
         self._timestamp = datetime.now()
         self._is_acked = False
         self._is_nacked = False
@@ -89,6 +128,11 @@ class TestMessage:
     def channel(self) -> str:
         """Channel the message was received on."""
         return self._channel
+
+    @property
+    def message_id(self) -> str:
+        """Unique identifier for this message."""
+        return self._message_id
 
     @property
     def timestamp(self) -> datetime:
@@ -145,11 +189,19 @@ class TestMessage:
     async def reply(
         self,
         *,
-        message: MessageData,
+        payload: bytes,
+        headers: dict[str, str] | None = None,
+        content_type: str | None = None,
         channel: str | None = None,
+        server_specific_parameters: dict[str, Any] | None = None,  # noqa: ARG002
     ) -> None:
         """Reply to the message with a new message."""
         reply_channel = channel if channel is not None else self._channel
+        message = MessageData(
+            payload=payload,
+            headers=headers,
+            content_type=content_type,
+        )
         self._reply_messages.append((reply_channel, message))
 
 
@@ -185,89 +237,183 @@ class TestClient:
         self._sent_messages: list[TestMessage] = []
         self._processed_messages: list[TestMessage] = []
         self._message_queue: asyncio.Queue[tuple[str, TestMessage]] = asyncio.Queue()
+        self._mock_server: ServerT = _MockServer(self)  # type: ignore[assignment]
 
     @property
     def messages(self) -> MessageRegistry:
         """Access to the message registry (same as Repid app)."""
         return self.app.messages
 
-    async def send_message(
+    async def _send_message(
         self,
-        operation_id: str,
-        payload: bytes,
         *,
+        channel: str | None = None,
+        operation_id: str | None = None,
+        payload: bytes | dict | list,
         headers: dict[str, str] | None = None,
         content_type: str | None = None,
         server_name: str | None = None,  # noqa: ARG002
+        server_specific_parameters: dict[str, Any] | None = None,  # noqa: ARG002
     ) -> None:
-        """Send a raw message (mimics Repid.send_message).
+        """Internal method to send a message."""
+        if channel is None and operation_id is None:
+            raise ValueError("Either 'channel' or 'operation_id' must be specified.")
+        if channel is not None and operation_id is not None:
+            raise ValueError("Specify either 'channel' or 'operation_id', not both.")
 
-        Messages are queued for processing instead of being sent to a real server.
+        # Get channel from operation_id if needed
+        if operation_id is not None:
+            operation = self.app.messages.get_operation(operation_id)
+            if operation is None:
+                if self.raise_on_actor_not_found:
+                    raise ValueError(f"Operation '{operation_id}' not found.")
+                return
+            channel = operation.channel.address
 
-        Args:
-            operation_id (str): The operation ID to send to
-            payload (bytes): Raw message payload
-            headers (dict[str, str] | None, optional): Optional message headers. Defaults to None.
-            content_type (str | None, optional): Content type of the payload. Defaults to None.
-            server_name (str | None, optional): Has no effect in test client, included for interface compatibility.
-
-        Raises:
-            ValueError: If the operation ID is not found.
-        """
-        # Get the channel for this operation
-        operation = self.app.messages.get_operation(operation_id)
-        if operation is None:
-            if self.raise_on_actor_not_found:
-                raise ValueError(f"Operation '{operation_id}' not found.")
-            return
-
-        channel = operation.channel.address
+        # Convert dict/list to JSON bytes if needed
+        if isinstance(payload, (dict, list)):
+            payload_bytes = json.dumps(payload).encode()
+            if content_type is None:
+                content_type = "application/json"
+        else:
+            payload_bytes = payload
 
         # Create and track message
         test_message = TestMessage(
-            operation_id=operation_id,
-            payload=payload,
+            operation_id=operation_id or "",  # Use empty string if sending by channel
+            payload=payload_bytes,
             headers=headers,
             content_type=content_type,
-            channel=channel,
+            channel=channel,  # type: ignore[arg-type]
         )
         self._sent_messages.append(test_message)
 
         if self.auto_process:
             await self._process_message(test_message)
         else:
-            await self._message_queue.put((operation_id, test_message))
+            await self._message_queue.put((operation_id or "", test_message))
 
+    @overload
+    async def send_message(
+        self,
+        *,
+        operation_id: str,
+        payload: bytes,
+        headers: dict[str, str] | None = None,
+        content_type: str | None = None,
+        server_name: str | None = None,
+        server_specific_parameters: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    @overload
+    async def send_message(
+        self,
+        *,
+        channel: str,
+        payload: bytes,
+        headers: dict[str, str] | None = None,
+        content_type: str | None = None,
+        server_name: str | None = None,
+        server_specific_parameters: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    async def send_message(
+        self,
+        *,
+        channel: str | None = None,
+        operation_id: str | None = None,
+        payload: bytes,
+        headers: dict[str, str] | None = None,
+        content_type: str | None = None,
+        server_name: str | None = None,
+        server_specific_parameters: dict[str, Any] | None = None,
+    ) -> None:
+        """Send a raw message (mimics Repid.send_message).
+
+        Messages are queued for processing instead of being sent to a real server.
+
+        Args:
+            channel (str | None, optional): The channel to send to. Mutually exclusive with operation_id.
+            operation_id (str | None, optional): The operation ID to send to. Mutually exclusive with channel.
+            payload (bytes): Message payload
+            headers (dict[str, str] | None, optional): Optional message headers. Defaults to None.
+            content_type (str | None, optional): Content type of the payload. Defaults to None.
+            server_name (str | None, optional): Has no effect in test client, included for interface compatibility.
+            server_specific_parameters (dict[str, Any] | None, optional): Has no effect in test client, included for interface compatibility.
+
+        Raises:
+            ValueError: If neither or both channel and operation_id are specified, or if the operation ID is not found.
+        """
+        await self._send_message(
+            channel=channel,
+            operation_id=operation_id,
+            payload=payload,
+            headers=headers,
+            content_type=content_type,
+            server_name=server_name,
+            server_specific_parameters=server_specific_parameters,
+        )
+
+    @overload
     async def send_message_json(
         self,
+        *,
         operation_id: str,
         payload: Any,
-        *,
         headers: dict[str, str] | None = None,
         serializer: SerializerT | None = None,
         server_name: str | None = None,
+        server_specific_parameters: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    @overload
+    async def send_message_json(
+        self,
+        *,
+        channel: str,
+        payload: Any,
+        headers: dict[str, str] | None = None,
+        serializer: SerializerT | None = None,
+        server_name: str | None = None,
+        server_specific_parameters: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    async def send_message_json(
+        self,
+        *,
+        channel: str | None = None,
+        operation_id: str | None = None,
+        payload: Any,
+        headers: dict[str, str] | None = None,
+        serializer: SerializerT | None = None,
+        server_name: str | None = None,
+        server_specific_parameters: dict[str, Any] | None = None,
     ) -> None:
         """Send a JSON message (mimics Repid.send_message_json).
 
         Messages are queued for processing instead of being sent to a real server.
 
         Args:
-            operation_id (str): The operation ID to send to
+            channel (str | None, optional): The channel to send to. Mutually exclusive with operation_id.
+            operation_id (str | None, optional): The operation ID to send to. Mutually exclusive with channel.
             payload (Any): JSON message payload
             headers (dict[str, str] | None, optional): Optional message headers. Defaults to None.
             serializer (SerializerT | None, optional): Serializer to use for the payload. Defaults to None, which will use the app's default serializer.
             server_name (str | None, optional): Has no effect in test client, included for interface compatibility.
+            server_specific_parameters (dict[str, Any] | None, optional): Has no effect in test client, included for interface compatibility.
 
         Raises:
-            ValueError: If the operation ID is not found.
+            ValueError: If neither or both channel and operation_id are specified, or if the operation ID is not found.
         """
         serializer = serializer if serializer is not None else self.app.default_serializer
-        await self.send_message(
+        await self._send_message(
+            channel=channel,
             operation_id=operation_id,
-            payload=serializer(payload).encode(),
+            payload=serializer(payload),
             headers=headers,
             content_type="application/json",
             server_name=server_name,
+            server_specific_parameters=server_specific_parameters,
         )
 
     async def _process_message(self, test_message: TestMessage) -> TestMessage:
@@ -291,7 +437,12 @@ class TestClient:
         actor = actors[0]
 
         # _actor_run returns either the result or the exception
-        actor_result = await _actor_run(actor, test_message)  # type: ignore[arg-type]
+        actor_result = await _actor_run(
+            actor,
+            test_message,
+            self._mock_server,
+            self.app.default_serializer,
+        )
 
         if isinstance(actor_result, Exception):
             test_message._exception = actor_result

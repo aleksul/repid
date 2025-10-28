@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from repid.connections.abc import ReceivedMessageT
     from repid.data.actor import ActorData
     from repid.health_check_server import HealthCheckServer
+    from repid.serializer import SerializerT
 
 
 ActorResultT = Any
@@ -22,14 +23,23 @@ ActorResultT = Any
 async def _actor_execution(
     message: ReceivedMessageT,
     actor: ActorData,
+    server: ServerT,
+    default_serializer: SerializerT,
 ) -> ActorResultT:
-    args, kwargs = await actor.converter.convert_inputs(message=message, actor=actor)
+    args, kwargs = await actor.converter.convert_inputs(
+        message=message,
+        actor=actor,
+        server=server,
+        default_serializer=default_serializer,
+    )
     return await actor.fn(*args, **kwargs)
 
 
 async def _actor_run(
     actor: ActorData,
     message: ReceivedMessageT,
+    server: ServerT,
+    default_serializer: SerializerT,
 ) -> ActorResultT | Exception:
     if (
         not message.is_acted_on  # theoretically a server can automatically ack the message on receive
@@ -48,10 +58,18 @@ async def _actor_run(
 
     try:
         if actor.timeout is None or actor.timeout <= 0 or actor.timeout == float("inf"):
-            result = await actor.middleware_pipeline(_actor_execution, message, actor)
+            result = await actor.middleware_pipeline(
+                partial(_actor_execution, server=server, default_serializer=default_serializer),
+                message,
+                actor,
+            )
         else:
             result = await asyncio.wait_for(
-                actor.middleware_pipeline(_actor_execution, message, actor),
+                actor.middleware_pipeline(
+                    partial(_actor_execution, server=server, default_serializer=default_serializer),
+                    message,
+                    actor,
+                ),
                 timeout=actor.timeout,
             )
 
@@ -89,11 +107,13 @@ async def _actor_run(
 async def _actor_run_with_cancel_event_and_callback(
     actor: ActorData,
     message: ReceivedMessageT,
+    server: ServerT,
+    default_serializer: SerializerT,
     cancel_event: asyncio.Event,
     cancel_event_task: asyncio.Task,
     callback: Callable[[], Awaitable],
 ) -> None:
-    process_task = asyncio.create_task(_actor_run(actor, message))
+    process_task = asyncio.create_task(_actor_run(actor, message, server, default_serializer))
     await asyncio.wait(
         {cancel_event_task, process_task},
         return_when=asyncio.FIRST_COMPLETED,
@@ -127,6 +147,7 @@ class _Runner:
         "_tasks",
         "_tasks_concurrency_limit",
         "cancel_event",
+        "default_serializer",
         "max_tasks",
         "server",
         "stop_consume_event",
@@ -134,11 +155,13 @@ class _Runner:
 
     def __init__(
         self,
+        *,
         server: ServerT,
         max_tasks: int = float("inf"),  # type: ignore[assignment]
         tasks_concurrency_limit: int = 1000,
         concurrency_unpause_percent: float = 0.1,  # 10 percent
         health_check_server: HealthCheckServer | None = None,
+        default_serializer: SerializerT,
     ):
         self.server = server
         self._server_subscriber: SubscriberT | None = None
@@ -165,6 +188,8 @@ class _Runner:
         self._limiter = asyncio.Semaphore(tasks_concurrency_limit)
 
         self._health_check_server = health_check_server
+
+        self.default_serializer = default_serializer
 
     @property
     def processed(self) -> int:
@@ -238,6 +263,8 @@ class _Runner:
             _actor_run_with_cancel_event_and_callback(
                 actor,
                 message,
+                self.server,
+                self.default_serializer,
                 self.cancel_event,
                 self.cancel_event_task,
                 self._actor_run_callback,

@@ -1,12 +1,11 @@
-from __future__ import annotations
-
 from enum import Enum
+from typing import Any
 
 TYPE = "TYPE"
 VALUE = "VALUE"
 
 
-class AMQPTypes(str, Enum):
+class AMQPTypes:
     null = "NULL"
     boolean = "BOOL"
     ubyte = "UBYTE"
@@ -30,23 +29,40 @@ class AMQPTypes(str, Enum):
     described = "DESCRIBED"
 
 
-class FieldDefinition(str, Enum):
+class FieldDefinition(Enum):
+    role = "role"
+    sender_settle_mode = "sender-settle-mode"
+    receiver_settle_mode = "receiver-settle-mode"
+    handle = "handle"
+    seconds = "seconds"
+    milliseconds = "milliseconds"
+    delivery_tag = "delivery-tag"
+    delivery_number = "delivery-number"
+    transfer_number = "transfer-number"
+    sequence_no = "sequence-no"
+    message_format = "message-format"
+    ietf_language_tag = "ietf-language-tag"
     fields = "fields"
+    error = "error"
+    sasl_code = "sasl-code"
     annotations = "annotations"
     message_id = "message-id"
     app_properties = "application-properties"
+    terminus_durability = "terminus-durability"
+    expiry_policy = "terminus-expiry-policy"
+    distribution_mode = "distribution-mode"
     node_properties = "node-properties"
     filter_set = "filter-set"
 
 
-class ObjDefinition(str, Enum):
+class ObjDefinition(Enum):
     source = "source"
     target = "target"
     delivery_state = "delivery-state"
     error = "error"
 
 
-class ConstructorBytes(bytes, Enum):
+class ConstructorBytes:
     null = b"\x40"
     bool = b"\x56"
     bool_true = b"\x41"
@@ -83,3 +99,21 @@ class ConstructorBytes(bytes, Enum):
     array_small = b"\xe0"
     array_large = b"\xf0"
     descriptor = b"\x00"
+
+
+class SASLCode(Enum):
+    #: Connection authentication succeeded.
+    ok = 0
+    #: Connection authentication failed due to an unspecified problem with the supplied credentials.
+    auth = 1
+    #: Connection authentication failed due to a system error.
+    sys = 2
+    #: Connection authentication failed due to a system error that is unlikely to be corrected without intervention.
+    sys_perm = 3
+    #: Connection authentication failed due to a transient system error.
+    sys_temp = 4
+
+
+class AMQPTAnnotation:
+    def __init__(self, type_: Any) -> None:
+        self.type = type_

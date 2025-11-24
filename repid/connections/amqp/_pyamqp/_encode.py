@@ -3,16 +3,15 @@ from __future__ import annotations
 import calendar
 import struct
 import uuid
-from collections.abc import Callable, Collection, Iterable, Sequence, Sized
+from collections.abc import Callable, Collection, Generator, Iterable, Sequence, Sized
+from dataclasses import fields
 from datetime import datetime
-from typing import Any, TypeAlias, cast
+from typing import Any, TypeAlias, cast, get_type_hints
 
 from typing_extensions import Buffer
 
 from . import performatives
-from .constants import INT32_MAX, INT32_MIN
-from .message import Header, Message, Properties
-from .types import (
+from .amqptypes import (
     TYPE,
     VALUE,
     AMQPTypes,
@@ -20,26 +19,11 @@ from .types import (
     FieldDefinition,
     ObjDefinition,
 )
+from .constants import INT32_MAX, INT32_MIN
+from .message import AnnotatedMessage as Message
+from .message import BareMessage, Header, MessageBodyType, Properties
 
-Performative: TypeAlias = (
-    performatives.OpenFrame
-    | performatives.BeginFrame
-    | performatives.AttachFrame
-    | performatives.FlowFrame
-    | performatives.TransferFrame
-    | performatives.DispositionFrame
-    | performatives.DetachFrame
-    | performatives.EndFrame
-    | performatives.CloseFrame
-    | performatives.SASLMechanism
-    | performatives.SASLInit
-    | performatives.SASLChallenge
-    | performatives.SASLResponse
-    | performatives.SASLOutcome
-    | Message
-    | Header
-    | Properties
-)
+Performative: TypeAlias = performatives.Performative | Message | Header | Properties
 
 _FRAME_OFFSET = b"\x02"
 _FRAME_TYPE = b"\x00"
@@ -865,6 +849,13 @@ def encode_unknown(  # noqa: C901, PLR0912
         raise TypeError(f"Unable to encode unknown value: {value}")
 
 
+def _wrap_simple(type_: str) -> Callable[[Any], dict[str, Any]]:
+    def wrapper(value: Any) -> dict[str, Any]:
+        return {TYPE: type_, VALUE: value}
+
+    return wrapper
+
+
 _FIELD_DEFINITIONS: dict[FieldDefinition, Callable[[Any], Any]] = {
     FieldDefinition.fields: encode_fields,
     FieldDefinition.annotations: encode_annotations,
@@ -872,6 +863,22 @@ _FIELD_DEFINITIONS: dict[FieldDefinition, Callable[[Any], Any]] = {
     FieldDefinition.app_properties: encode_application_properties,
     FieldDefinition.node_properties: encode_node_properties,
     FieldDefinition.filter_set: encode_filter_set,
+    FieldDefinition.role: _wrap_simple(AMQPTypes.boolean),
+    FieldDefinition.sender_settle_mode: _wrap_simple(AMQPTypes.ubyte),
+    FieldDefinition.receiver_settle_mode: _wrap_simple(AMQPTypes.ubyte),
+    FieldDefinition.handle: _wrap_simple(AMQPTypes.uint),
+    FieldDefinition.seconds: _wrap_simple(AMQPTypes.uint),
+    FieldDefinition.milliseconds: _wrap_simple(AMQPTypes.uint),
+    FieldDefinition.delivery_tag: _wrap_simple(AMQPTypes.binary),
+    FieldDefinition.delivery_number: _wrap_simple(AMQPTypes.uint),
+    FieldDefinition.transfer_number: _wrap_simple(AMQPTypes.uint),
+    FieldDefinition.sequence_no: _wrap_simple(AMQPTypes.uint),
+    FieldDefinition.message_format: _wrap_simple(AMQPTypes.uint),
+    FieldDefinition.ietf_language_tag: _wrap_simple(AMQPTypes.symbol),
+    FieldDefinition.sasl_code: _wrap_simple(AMQPTypes.ubyte),
+    FieldDefinition.terminus_durability: _wrap_simple(AMQPTypes.uint),
+    FieldDefinition.expiry_policy: _wrap_simple(AMQPTypes.symbol),
+    FieldDefinition.distribution_mode: _wrap_simple(AMQPTypes.symbol),
 }
 
 _ENCODE_MAP = {
@@ -911,10 +918,10 @@ def describe_performative(performative: Performative) -> dict[str, Sequence[Coll
     body: list[dict[str, Any]] = []
     if isinstance(performative, Message):
         raise TypeError("Message performative should not be described here.")
-    for field_def in performative._definition:
+    for field_def in performative.DEFINITION:
         if field_def is None:
             continue
-        value = getattr(performative, field_def.name)
+        value = getattr(performative, field_def.name, None)
         if value is None:
             body.append({TYPE: AMQPTypes.null, VALUE: None})
         elif isinstance(field_def.type, FieldDefinition):
@@ -942,14 +949,14 @@ def describe_performative(performative: Performative) -> dict[str, Sequence[Coll
     return {
         TYPE: AMQPTypes.described,
         VALUE: (
-            {TYPE: AMQPTypes.ulong, VALUE: performative._code},
+            {TYPE: AMQPTypes.ulong, VALUE: performative.CODE},
             {TYPE: AMQPTypes.list, VALUE: body},
         ),
     }
 
 
 def encode_payload(output: bytearray, payload: Message) -> bytes:  # noqa: C901
-    if payload.header:  # header
+    if payload.header:
         # TODO: Header and Properties encoding can be optimized to
         #  1. not encoding trailing None fields
         #  Possible fix 1:
@@ -964,7 +971,7 @@ def encode_payload(output: bytearray, payload: Message) -> bytes:  # noqa: C901
         #      del header[-1]
         encode_value(output, describe_performative(payload.header))
 
-    if payload.message_annotations:  # message annotations
+    if payload.message_annotations:
         encode_value(
             output,
             {
@@ -976,13 +983,13 @@ def encode_payload(output: bytearray, payload: Message) -> bytes:  # noqa: C901
             },
         )
 
-    if payload.properties:  # properties
+    if payload.properties:
         # TODO: Header and Properties encoding can be optimized to
         #  1. not encoding trailing None fields
         #  2. encoding bool without constructor
         encode_value(output, describe_performative(payload.properties))
 
-    if payload.application_properties:  # application properties
+    if payload.application_properties:
         encode_value(
             output,
             {
@@ -994,20 +1001,19 @@ def encode_payload(output: bytearray, payload: Message) -> bytes:  # noqa: C901
             },
         )
 
-    if payload.body:  # data
+    if payload.body_type == MessageBodyType.DATA:
         encode_value(
             output,
             {
                 TYPE: AMQPTypes.described,
                 VALUE: (
                     {TYPE: AMQPTypes.ulong, VALUE: 0x00000075},
-                    {TYPE: AMQPTypes.binary, VALUE: payload.body},
+                    {TYPE: AMQPTypes.binary, VALUE: payload._data_body},
                 ),
             },
         )
-
-    if payload.sequence:  # sequence
-        for item_value in payload.sequence:
+    elif payload.body_type == MessageBodyType.SEQUENCE:
+        for item_value in payload._sequence_body or []:
             encode_value(
                 output,
                 {
@@ -1018,20 +1024,19 @@ def encode_payload(output: bytearray, payload: Message) -> bytes:  # noqa: C901
                     ),
                 },
             )
-
-    if payload.value:  # value
+    elif payload.body_type == MessageBodyType.VALUE:
         encode_value(
             output,
             {
                 TYPE: AMQPTypes.described,
                 VALUE: (
                     {TYPE: AMQPTypes.ulong, VALUE: 0x00000077},
-                    {TYPE: None, VALUE: payload.value},
+                    {TYPE: None, VALUE: payload._value_body},
                 ),
             },
         )
 
-    if payload.footer:  # footer
+    if payload.footer:
         encode_value(
             output,
             {
@@ -1048,7 +1053,7 @@ def encode_payload(output: bytearray, payload: Message) -> bytes:  # noqa: C901
     #  otherwise the event hubs service would ignore the delivery annotations
     #  -- received message doesn't have it populated
     #  check with service team?
-    if payload.delivery_annotations:  # delivery annotations
+    if payload.delivery_annotations:
         encode_value(
             output,
             {
@@ -1078,8 +1083,237 @@ def encode_frame(
     encode_value(frame_data, frame_description)
     if isinstance(frame, performatives.TransferFrame):
         # casting from Optional[Buffer] since payload will not be None at this point
-        frame_data += cast(Buffer, frame.payload)
+        frame_data += cast(Buffer, frame.payload)  # type: ignore[attr-defined]
 
     size = len(frame_data) + 8
     header = size.to_bytes(4, "big") + _FRAME_OFFSET + frame_type
     return header, frame_data
+
+
+def encode_performative_field(output: bytearray, value: Any) -> None:
+    output.extend(_encode_performative_body(value))
+
+
+def _encode_performative_body(performative: performatives.Performative) -> bytes:
+    output = bytearray()
+
+    # Body
+    # Described type: 0x00
+    output.extend(b"\x00")
+    # Descriptor: ulong (code)
+    encode_ulong(output, cast(int, performative.CODE))
+
+    # List of fields
+    field_values = []
+    type_hints = get_type_hints(performative.__class__, include_extras=True)
+
+    current_fields = fields(performative)
+    for f in current_fields:
+        if f.name == "payload":
+            continue
+
+        val = getattr(performative, f.name)
+
+        # Get annotation
+        hint = type_hints[f.name]
+        # Extract AMQPTAnnotation
+        amqp_type = None
+        if hasattr(hint, "__metadata__"):
+            for meta in hint.__metadata__:
+                if isinstance(meta, performatives.AMQPTAnnotation):
+                    amqp_type = meta.type
+                    break
+
+        field_values.append((val, amqp_type))
+
+    # Trim trailing Nones
+    while field_values and field_values[-1][0] is None:
+        field_values.pop()
+
+    list_body = bytearray()
+    for val, amqp_type in field_values:
+        if val is None:
+            encode_null(list_body)
+        else:
+            encoder = _ENCODE_MAP.get(amqp_type)
+            if not encoder:
+                # Try FieldDefinition mapping
+                if isinstance(amqp_type, FieldDefinition):
+                    amqp_type = _FIELD_DEFINITION_TO_AMQP_TYPE.get(amqp_type)
+                    encoder = _ENCODE_MAP.get(amqp_type)
+                elif isinstance(amqp_type, ObjDefinition):
+                    encoder = encode_performative_field
+
+            if encoder:
+                encoder(list_body, val)
+            else:
+                raise ValueError(f"No encoder for type {amqp_type} value {val}")
+
+    if len(list_body) + 1 < 255 and len(field_values) < 255:
+        output.extend(ConstructorBytes.list_small)
+        output.append(len(list_body) + 1)
+        output.append(len(field_values))
+    else:
+        output.extend(ConstructorBytes.list_large)
+        output.extend((len(list_body) + 4).to_bytes(4, "big"))
+        output.extend(len(field_values).to_bytes(4, "big"))
+
+    output.extend(list_body)
+    return output
+
+
+def performative_to_bytes(performative: performatives.Performative, channel: int = 0) -> bytes:
+    output = bytearray()
+    output.extend(_encode_performative_body(performative))
+
+    if hasattr(performative, "payload") and performative.payload:
+        output.extend(performative.payload)
+
+    # Header
+    # SIZE (4) DOFF (1) TYPE (1) CHANNEL (2)
+    # DOFF = 2 (8 bytes)
+    # TYPE = performative.FRAME_TYPE (0x00 or 0x01)
+    # CHANNEL = channel
+
+    frame_size = len(output) + 8
+    header = bytearray()
+    header.extend(frame_size.to_bytes(4, "big"))
+    header.append(2)  # DOFF
+    header.extend(performative.FRAME_TYPE)
+    header.extend(channel.to_bytes(2, "big"))
+
+    return header + output
+
+
+_FIELD_DEFINITION_TO_AMQP_TYPE = {
+    FieldDefinition.role: AMQPTypes.boolean,
+    FieldDefinition.sender_settle_mode: AMQPTypes.ubyte,
+    FieldDefinition.receiver_settle_mode: AMQPTypes.ubyte,
+    FieldDefinition.handle: AMQPTypes.uint,
+    FieldDefinition.seconds: AMQPTypes.uint,
+    FieldDefinition.milliseconds: AMQPTypes.uint,
+    FieldDefinition.delivery_tag: AMQPTypes.binary,
+    FieldDefinition.delivery_number: AMQPTypes.uint,
+    FieldDefinition.transfer_number: AMQPTypes.uint,
+    FieldDefinition.sequence_no: AMQPTypes.uint,
+    FieldDefinition.message_format: AMQPTypes.uint,
+    FieldDefinition.ietf_language_tag: AMQPTypes.symbol,
+    FieldDefinition.sasl_code: AMQPTypes.ubyte,
+    FieldDefinition.terminus_durability: AMQPTypes.uint,
+    FieldDefinition.expiry_policy: AMQPTypes.symbol,
+    FieldDefinition.distribution_mode: AMQPTypes.symbol,
+    FieldDefinition.fields: AMQPTypes.map,
+    FieldDefinition.annotations: AMQPTypes.map,
+    FieldDefinition.app_properties: AMQPTypes.map,
+    FieldDefinition.node_properties: AMQPTypes.map,
+    FieldDefinition.filter_set: AMQPTypes.map,
+}
+
+
+def message_to_transfer_frames(
+    message: Message | BareMessage,
+    max_frame_size: int,
+    handle: int,
+    delivery_tag: bytes | None = None,
+    delivery_id: int | None = None,
+    message_format: int = 0,
+    settled: bool | None = None,
+    more: bool = False,
+    rcv_settle_mode: Any | None = None,
+    state: Any | None = None,
+    resume: bool = False,
+    aborted: bool = False,
+    batchable: bool = False,
+) -> Generator[performatives.TransferFrame, None, None]:
+    payload = bytearray()
+
+    # Header
+    if isinstance(message, Message) and message.header:
+        payload.extend(_encode_performative_body(message.header))
+
+    # Delivery Annotations
+    if isinstance(message, Message) and message.delivery_annotations:
+        payload.extend(b"\x00")
+        encode_ulong(payload, 0x00000071)
+        encode_map(payload, message.delivery_annotations)
+
+    # Message Annotations
+    if isinstance(message, Message) and message.message_annotations:
+        payload.extend(b"\x00")
+        encode_ulong(payload, 0x00000072)
+        encode_map(payload, message.message_annotations)
+
+    # Properties
+    if message.properties:
+        payload.extend(_encode_performative_body(message.properties))
+
+    # Application Properties
+    if message.application_properties:
+        payload.extend(b"\x00")
+        encode_ulong(payload, 0x00000074)
+        encode_map(payload, message.application_properties)
+
+    # Body
+    if message.body_type == MessageBodyType.DATA:
+        payload.extend(b"\x00")
+        encode_ulong(payload, 0x00000075)
+        encode_binary(payload, message.data)  # type: ignore
+    elif message.body_type == MessageBodyType.SEQUENCE:
+        payload.extend(b"\x00")
+        encode_ulong(payload, 0x00000076)
+        encode_list(payload, message.sequence)  # type: ignore
+    elif message.body_type == MessageBodyType.VALUE:
+        payload.extend(b"\x00")
+        encode_ulong(payload, 0x00000077)
+        encode_unknown(payload, message.value)
+
+    # Footer
+    if isinstance(message, Message) and message.footer:
+        payload.extend(b"\x00")
+        encode_ulong(payload, 0x00000078)
+        encode_map(payload, message.footer)
+
+    # Split into frames
+    remaining_payload = payload
+    first = True
+
+    while remaining_payload or first:
+        # Construct Transfer
+        transfer = performatives.TransferFrame(
+            handle=handle,
+            delivery_id=delivery_id if first else None,
+            delivery_tag=delivery_tag if first else None,
+            message_format=message_format if first else None,
+            settled=settled,
+            more=True,  # Placeholder
+            rcv_settle_mode=rcv_settle_mode if first else None,
+            state=state if first else None,
+            resume=resume if first else False,
+            aborted=aborted,
+            batchable=batchable,
+        )
+
+        # Calculate overhead
+        # We use a temporary transfer with empty payload to calculate header size
+        transfer.more = True  # Assume more for overhead calculation
+        transfer_bytes = _encode_performative_body(transfer)
+        overhead = 8 + len(transfer_bytes)
+
+        available = max_frame_size - overhead
+        if available <= 0:
+            raise ValueError("Frame size too small for Transfer frame overhead")
+
+        chunk = remaining_payload[:available]
+        remaining_payload = remaining_payload[available:]
+
+        if not remaining_payload:
+            transfer.more = more
+        else:
+            transfer.more = True
+
+        transfer.payload = chunk
+        yield transfer
+
+        first = False
+        if not remaining_payload:
+            break

@@ -1,16 +1,37 @@
-from __future__ import annotations
+import struct
+from dataclasses import dataclass, fields
+from enum import IntEnum
+from typing import Annotated, Any, ClassVar
 
-from dataclasses import dataclass
-from typing import ClassVar
+from .amqptypes import AMQPTAnnotation, AMQPTypes, FieldDefinition, ObjDefinition
 
-from typing_extensions import Buffer
 
-from .constants import FIELD
-from .types import AMQPTypes, FieldDefinition, ObjDefinition
+class SenderSettleMode(IntEnum):
+    unsettled = 0
+    settled = 1
+    mixed = 2
+
+
+class ReceiverSettleMode(IntEnum):
+    first = 0
+    second = 1
+
+
+def _as_bytes(value: Any) -> bytes:
+    return struct.pack(">B", value)
 
 
 @dataclass(slots=True, kw_only=True)
-class OpenFrame:
+class Performative:
+    """AMQP Performative"""
+
+    CODE: ClassVar[int | bytes]
+    FRAME_TYPE: ClassVar[bytes] = b"\x00"
+    FRAME_OFFSET: ClassVar[bytes] = b"\x02"
+
+
+@dataclass(slots=True, kw_only=True)
+class OpenFrame(Performative):
     """OPEN performative. Negotiate Connection parameters.
 
     The first frame sent on a connection in either direction MUST contain an Open body.
@@ -37,7 +58,7 @@ class OpenFrame:
         is the maximum number of Sessions that can be simultaneously active on the Connection. A peer MUST not use
         channel numbers outside the range that its partner can handle. A peer that receives a channel number
         outside the supported range MUST close the Connection with the framing-error error-code.
-    :param int idle_timeout: Idle time-out in milliseconds.
+    :param timedelta idle_timeout: Idle time-out in milliseconds.
         The idle time-out required by the sender. A value of zero is the same as if it was not set (null). If the
         receiver is unable or unwilling to support the idle time-out then it should close the connection with
         an error explaining why (eg, because it is too small). If the value is not set, then the sender does not
@@ -71,35 +92,29 @@ class OpenFrame:
         here: http://www.amqp.org/specification/1.0/connection-properties.
     """
 
-    _code: ClassVar[int] = 0x00000010
-    _definition: ClassVar[tuple[FIELD, ...]] = (
-        FIELD("container_id", AMQPTypes.string, True, None, False),
-        FIELD("hostname", AMQPTypes.string, False, None, False),
-        FIELD("max_frame_size", AMQPTypes.uint, False, 4294967295, False),
-        FIELD("channel_max", AMQPTypes.ushort, False, 65535, False),
-        FIELD("idle_timeout", AMQPTypes.uint, False, None, False),
-        FIELD("outgoing_locales", AMQPTypes.symbol, False, None, True),
-        FIELD("incoming_locales", AMQPTypes.symbol, False, None, True),
-        FIELD("offered_capabilities", AMQPTypes.symbol, False, None, True),
-        FIELD("desired_capabilities", AMQPTypes.symbol, False, None, True),
-        FIELD("properties", FieldDefinition.fields, False, None, False),
-    )
+    CODE: ClassVar[int | bytes] = 0x00000010
 
-    container_id: str
-    hostname: str | None = None
-    max_frame_size: int | None = 4294967295
-    channel_max: int | None = 65535
-    idle_timeout: int | None = None
-    outgoing_locales: list[str] | None = None
-    incoming_locales: list[str] | None = None
-    offered_capabilities: list[str] | None = None
-    desired_capabilities: list[str] | None = None
-    properties: dict | None = None
+    container_id: Annotated[str, AMQPTAnnotation(AMQPTypes.string)]
+    hostname: Annotated[str | None, AMQPTAnnotation(AMQPTypes.string)] = None
+    max_frame_size: Annotated[int, AMQPTAnnotation(AMQPTypes.uint)] = 4294967295
+    channel_max: Annotated[int, AMQPTAnnotation(AMQPTypes.ushort)] = 65535
+    idle_timeout: Annotated[int | None, AMQPTAnnotation(AMQPTypes.uint)] = None
+    outgoing_locales: Annotated[
+        list[str] | None,
+        AMQPTAnnotation(FieldDefinition.ietf_language_tag),
+    ] = None
+    incoming_locales: Annotated[
+        list[str] | None,
+        AMQPTAnnotation(FieldDefinition.ietf_language_tag),
+    ] = None
+    offered_capabilities: Annotated[list[str] | None, AMQPTAnnotation(AMQPTypes.symbol)] = None
+    desired_capabilities: Annotated[list[str] | None, AMQPTAnnotation(AMQPTypes.symbol)] = None
+    properties: Annotated[dict | None, AMQPTAnnotation(FieldDefinition.fields)] = None
 
 
 @dataclass(slots=True, kw_only=True)
-class BeginFrame:
-    """BEGIN performative. Begin a Session on a channel.
+class BeginFrame(Performative):
+    """BEGING performative. Begin a Session on a channel.
 
     Indicate that a Session has begun on the channel.
 
@@ -134,30 +149,20 @@ class BeginFrame:
         here: http://www.amqp.org/specification/1.0/session-properties.
     """
 
-    _code: ClassVar[int] = 0x00000011
-    _definition: ClassVar[tuple[FIELD, ...]] = (
-        FIELD("remote_channel", AMQPTypes.ushort, False, None, False),
-        FIELD("next_outgoing_id", AMQPTypes.uint, True, None, False),
-        FIELD("incoming_window", AMQPTypes.uint, True, None, False),
-        FIELD("outgoing_window", AMQPTypes.uint, True, None, False),
-        FIELD("handle_max", AMQPTypes.uint, False, 4294967295, False),
-        FIELD("offered_capabilities", AMQPTypes.symbol, False, None, True),
-        FIELD("desired_capabilities", AMQPTypes.symbol, False, None, True),
-        FIELD("properties", FieldDefinition.fields, False, None, False),
-    )
+    CODE: ClassVar[int | bytes] = 0x00000011
 
-    remote_channel: int | None = None
-    next_outgoing_id: int
-    incoming_window: int
-    outgoing_window: int
-    handle_max: int | None = 4294967295
-    offered_capabilities: list[str] | None = None
-    desired_capabilities: list[str] | None = None
-    properties: dict | None = None
+    remote_channel: Annotated[int | None, AMQPTAnnotation(AMQPTypes.ushort)] = None
+    next_outgoing_id: Annotated[int, AMQPTAnnotation(FieldDefinition.transfer_number)]
+    incoming_window: Annotated[int, AMQPTAnnotation(AMQPTypes.uint)]
+    outgoing_window: Annotated[int, AMQPTAnnotation(AMQPTypes.uint)]
+    handle_max: Annotated[int, AMQPTAnnotation(FieldDefinition.handle)] = 4294967295
+    offered_capabilities: Annotated[list[str] | None, AMQPTAnnotation(AMQPTypes.symbol)] = None
+    desired_capabilities: Annotated[list[str] | None, AMQPTAnnotation(AMQPTypes.symbol)] = None
+    properties: Annotated[dict | None, AMQPTAnnotation(FieldDefinition.fields)] = None
 
 
 @dataclass(slots=True, kw_only=True)
-class AttachFrame:
+class AttachFrame(Performative):
     """ATTACH performative. Attach a Link to a Session.
 
     The attach frame indicates that a Link Endpoint has been attached to the Session. The opening flag
@@ -172,7 +177,7 @@ class AttachFrame:
         associated with a Link MUST be responded to with an immediate close carrying a Handle-in-usesession-error.
         To make it easier to monitor AMQP link attach frames, it is recommended that implementations always assign
         the lowest available handle to this field.
-    :param bool role: The role of the link endpoint. Either Role.Sender (False) or Role.Receiver (True).
+    :param str role: The role of the link endpoint. Either SENDER or RECEIVER.
     :param str send_settle_mode: The settlement mode for the Sender.
         Determines the settlement policy for deliveries sent at the Sender. When set at the Receiver this indicates
         the desired value for the settlement mode at the Sender. When set at the Sender this indicates the actual
@@ -220,42 +225,34 @@ class AttachFrame:
         here: http://www.amqp.org/specification/1.0/link-properties.
     """
 
-    _code: ClassVar[int] = 0x00000012
-    _definition: ClassVar[tuple[FIELD, ...]] = (
-        FIELD("name", AMQPTypes.string, True, None, False),
-        FIELD("handle", AMQPTypes.uint, True, None, False),
-        FIELD("role", AMQPTypes.boolean, True, None, False),
-        FIELD("send_settle_mode", AMQPTypes.ubyte, False, 2, False),
-        FIELD("rcv_settle_mode", AMQPTypes.ubyte, False, 0, False),
-        FIELD("source", ObjDefinition.source, False, None, False),
-        FIELD("target", ObjDefinition.target, False, None, False),
-        FIELD("unsettled", AMQPTypes.map, False, None, False),
-        FIELD("incomplete_unsettled", AMQPTypes.boolean, False, False, False),
-        FIELD("initial_delivery_count", AMQPTypes.uint, False, None, False),
-        FIELD("max_message_size", AMQPTypes.ulong, False, None, False),
-        FIELD("offered_capabilities", AMQPTypes.symbol, False, None, True),
-        FIELD("desired_capabilities", AMQPTypes.symbol, False, None, True),
-        FIELD("properties", FieldDefinition.fields, False, None, False),
-    )
+    CODE: ClassVar[int | bytes] = 0x00000012
 
-    name: str
-    handle: int
-    role: bool  # False=Sender, True=Receiver
-    send_settle_mode: int | None = 2
-    rcv_settle_mode: int | None = 0
-    source: str | None = None
-    target: str | None = None
-    unsettled: dict | None = None
-    incomplete_unsettled: bool | None = False
-    initial_delivery_count: int | None = None
-    max_message_size: int | None = None
-    offered_capabilities: list[str] | None = None
-    desired_capabilities: list[str] | None = None
-    properties: dict | None = None
+    name: Annotated[str, AMQPTAnnotation(AMQPTypes.string)]
+    handle: Annotated[int, AMQPTAnnotation(FieldDefinition.handle)]
+    role: Annotated[bool, AMQPTAnnotation(FieldDefinition.role)]
+    send_settle_mode: Annotated[
+        SenderSettleMode,
+        AMQPTAnnotation(FieldDefinition.sender_settle_mode),
+    ] = SenderSettleMode.mixed
+    rcv_settle_mode: Annotated[
+        ReceiverSettleMode,
+        AMQPTAnnotation(FieldDefinition.receiver_settle_mode),
+    ] = ReceiverSettleMode.first
+    source: Annotated[Any | None, AMQPTAnnotation(ObjDefinition.source)] = None
+    target: Annotated[Any | None, AMQPTAnnotation(ObjDefinition.target)] = None
+    unsettled: Annotated[dict | None, AMQPTAnnotation(AMQPTypes.map)] = None
+    incomplete_unsettled: Annotated[bool, AMQPTAnnotation(AMQPTypes.boolean)] = False
+    initial_delivery_count: Annotated[int | None, AMQPTAnnotation(FieldDefinition.sequence_no)] = (
+        None
+    )
+    max_message_size: Annotated[int | None, AMQPTAnnotation(AMQPTypes.ulong)] = None
+    offered_capabilities: Annotated[list[str] | None, AMQPTAnnotation(AMQPTypes.symbol)] = None
+    desired_capabilities: Annotated[list[str] | None, AMQPTAnnotation(AMQPTypes.symbol)] = None
+    properties: Annotated[dict | None, AMQPTAnnotation(FieldDefinition.fields)] = None
 
 
 @dataclass(slots=True, kw_only=True)
-class FlowFrame:
+class FlowFrame(Performative):
     """FLOW performative. Update link state.
 
     Updates the flow state for the specified Link.
@@ -296,36 +293,23 @@ class FlowFrame:
         here: http://www.amqp.org/specification/1.0/link-state-properties.
     """
 
-    _code: ClassVar[int] = 0x00000013
-    _definition: ClassVar[tuple[FIELD, ...]] = (
-        FIELD("next_incoming_id", AMQPTypes.uint, False, None, False),
-        FIELD("incoming_window", AMQPTypes.uint, True, None, False),
-        FIELD("next_outgoing_id", AMQPTypes.uint, True, None, False),
-        FIELD("outgoing_window", AMQPTypes.uint, True, None, False),
-        FIELD("handle", AMQPTypes.uint, False, None, False),
-        FIELD("delivery_count", AMQPTypes.uint, False, None, False),
-        FIELD("link_credit", AMQPTypes.uint, False, None, False),
-        FIELD("available", AMQPTypes.uint, False, None, False),
-        FIELD("drain", AMQPTypes.boolean, False, False, False),
-        FIELD("echo", AMQPTypes.boolean, False, False, False),
-        FIELD("properties", FieldDefinition.fields, False, None, False),
-    )
+    CODE: ClassVar[int | bytes] = 0x00000013
 
-    next_incoming_id: int | None = None
-    incoming_window: int | None = None
-    next_outgoing_id: int | None = None
-    outgoing_window: int | None = None
-    handle: int | None = None
-    delivery_count: int | None = None
-    link_credit: int | None = None
-    available: int | None = None
-    drain: bool | None = False
-    echo: bool | None = False
-    properties: dict | None = None
+    next_incoming_id: Annotated[int | None, AMQPTAnnotation(FieldDefinition.transfer_number)] = None
+    incoming_window: Annotated[int, AMQPTAnnotation(AMQPTypes.uint)]
+    next_outgoing_id: Annotated[int, AMQPTAnnotation(FieldDefinition.transfer_number)]
+    outgoing_window: Annotated[int, AMQPTAnnotation(AMQPTypes.uint)]
+    handle: Annotated[int | None, AMQPTAnnotation(FieldDefinition.handle)] = None
+    delivery_count: Annotated[int | None, AMQPTAnnotation(FieldDefinition.sequence_no)] = None
+    link_credit: Annotated[int | None, AMQPTAnnotation(AMQPTypes.uint)] = None
+    available: Annotated[int | None, AMQPTAnnotation(AMQPTypes.uint)] = None
+    drain: Annotated[bool, AMQPTAnnotation(AMQPTypes.boolean)] = False
+    echo: Annotated[bool, AMQPTAnnotation(AMQPTypes.boolean)] = False
+    properties: Annotated[dict | None, AMQPTAnnotation(FieldDefinition.fields)] = None
 
 
 @dataclass(slots=True, kw_only=True)
-class TransferFrame:
+class TransferFrame(Performative):
     """TRANSFER performative. Transfer a Message.
 
     The transfer frame is used to send Messages across a Link. Messages may be carried by a single transfer up
@@ -379,7 +363,7 @@ class TransferFrame:
         on the first transfer of the resumed delivery. For subsequent transfers for the same delivery the resume
         flag may be set to true, or may be omitted. In the case where the exchange of unsettled maps makes clear
         that all message data has been successfully transferred to the receiver, and that only the final state
-        (and potentially settlement) at the sender needs to be conveyed, then a resumed delivery may carry no
+        (andpotentially settlement) at the sender needs to be conveyed, then a resumed delivery may carry no
         payload and instead act solely as a vehicle for carrying the terminal state of the delivery at the sender.
     :param bool aborted: Indicates that the Message is aborted.
         Aborted Messages should be discarded by the recipient (any payload within the frame carrying the performative
@@ -394,38 +378,27 @@ class TransferFrame:
         link is suspended and subsequently resumed.
     """
 
-    _code: ClassVar[int] = 0x00000014
-    _definition: ClassVar[tuple[FIELD | None, ...]] = (
-        FIELD("handle", AMQPTypes.uint, True, None, False),
-        FIELD("delivery_id", AMQPTypes.uint, False, None, False),
-        FIELD("delivery_tag", AMQPTypes.binary, False, None, False),
-        FIELD("message_format", AMQPTypes.uint, False, 0, False),
-        FIELD("settled", AMQPTypes.boolean, False, None, False),
-        FIELD("more", AMQPTypes.boolean, False, False, False),
-        FIELD("rcv_settle_mode", AMQPTypes.ubyte, False, None, False),
-        FIELD("state", ObjDefinition.delivery_state, False, None, False),
-        FIELD("resume", AMQPTypes.boolean, False, False, False),
-        FIELD("aborted", AMQPTypes.boolean, False, False, False),
-        FIELD("batchable", AMQPTypes.boolean, False, False, False),
-        None,
-    )
+    CODE: ClassVar[int | bytes] = 0x00000014
 
-    handle: int | None = None
-    delivery_id: int | None = None
-    delivery_tag: bytes | None = None
-    message_format: int | None = None
-    settled: bool | None = None
-    more: bool | None = None
-    rcv_settle_mode: str | None = None
-    state: bytes | None = None
-    resume: bool | None = None
-    aborted: bool | None = None
-    batchable: bool | None = None
-    payload: Buffer | None = None
+    handle: Annotated[int, AMQPTAnnotation(FieldDefinition.handle)]
+    delivery_id: Annotated[int | None, AMQPTAnnotation(FieldDefinition.delivery_number)] = None
+    delivery_tag: Annotated[bytes | None, AMQPTAnnotation(FieldDefinition.delivery_tag)] = None
+    message_format: Annotated[int | None, AMQPTAnnotation(FieldDefinition.message_format)] = None
+    settled: Annotated[bool | None, AMQPTAnnotation(AMQPTypes.boolean)] = None
+    more: Annotated[bool, AMQPTAnnotation(AMQPTypes.boolean)] = False
+    rcv_settle_mode: Annotated[
+        Any | None,
+        AMQPTAnnotation(FieldDefinition.receiver_settle_mode),
+    ] = None
+    state: Annotated[Any | None, AMQPTAnnotation(ObjDefinition.delivery_state)] = None
+    resume: Annotated[bool, AMQPTAnnotation(AMQPTypes.boolean)] = False
+    aborted: Annotated[bool, AMQPTAnnotation(AMQPTypes.boolean)] = False
+    batchable: Annotated[bool, AMQPTAnnotation(AMQPTypes.boolean)] = False
+    payload: bytes | None = None
 
 
 @dataclass(slots=True, kw_only=True)
-class DispositionFrame:
+class DispositionFrame(Performative):
     """DISPOSITION performative. Inform remote peer of delivery state changes.
 
     The disposition frame is used to inform the remote peer of local changes in the state of deliveries.
@@ -456,26 +429,18 @@ class DispositionFrame:
         implementation uses when communicating delivery states, and thereby save bandwidth.
     """
 
-    _code: ClassVar[int] = 0x00000015
-    _definition: ClassVar[tuple[FIELD, ...]] = (
-        FIELD("role", AMQPTypes.boolean, True, None, False),
-        FIELD("first", AMQPTypes.uint, True, None, False),
-        FIELD("last", AMQPTypes.uint, False, None, False),
-        FIELD("settled", AMQPTypes.boolean, False, False, False),
-        FIELD("state", ObjDefinition.delivery_state, False, None, False),
-        FIELD("batchable", AMQPTypes.boolean, False, False, False),
-    )
+    CODE: ClassVar[int | bytes] = 0x00000015
 
-    role: bool
-    first: int
-    last: int | None = None
-    settled: bool | None = False
-    state: bytes | None = None
-    batchable: bool | None = False
+    role: Annotated[bool, AMQPTAnnotation(FieldDefinition.role)]
+    first: Annotated[int, AMQPTAnnotation(FieldDefinition.delivery_number)]
+    last: Annotated[int | None, AMQPTAnnotation(FieldDefinition.delivery_number)] = None
+    settled: Annotated[bool, AMQPTAnnotation(AMQPTypes.boolean)] = False
+    state: Annotated[Any | None, AMQPTAnnotation(ObjDefinition.delivery_state)] = None
+    batchable: Annotated[bool, AMQPTAnnotation(AMQPTypes.boolean)] = False
 
 
 @dataclass(slots=True, kw_only=True)
-class DetachFrame:
+class DetachFrame(Performative):
     """DETACH performative. Detach the Link Endpoint from the Session.
 
     Detach the Link Endpoint from the Session. This un-maps the handle and makes it available for
@@ -488,20 +453,15 @@ class DetachFrame:
         The value of the field should contain details on the cause of the error.
     """
 
-    _code: ClassVar[int] = 0x00000016
-    _definition: ClassVar[tuple[FIELD, ...]] = (
-        FIELD("handle", AMQPTypes.uint, True, None, False),
-        FIELD("closed", AMQPTypes.boolean, False, False, False),
-        FIELD("error", ObjDefinition.error, False, None, False),
-    )
+    CODE: ClassVar[int | bytes] = 0x00000016
 
-    handle: int
-    closed: bool | None = False
-    error: dict | None = None
+    handle: Annotated[int, AMQPTAnnotation(FieldDefinition.handle)]
+    closed: Annotated[bool, AMQPTAnnotation(AMQPTypes.boolean)] = False
+    error: Annotated[Any | None, AMQPTAnnotation(ObjDefinition.error)] = None
 
 
 @dataclass(slots=True, kw_only=True)
-class EndFrame:
+class EndFrame(Performative):
     """END performative. End the Session.
 
     Indicates that the Session has ended.
@@ -511,16 +471,13 @@ class EndFrame:
         The value of the field should contain details on the cause of the error.
     """
 
-    _code: ClassVar[int] = 0x00000017
-    _definition: ClassVar[tuple[FIELD, ...]] = (
-        FIELD("error", ObjDefinition.error, False, None, False),
-    )
+    CODE: ClassVar[int | bytes] = 0x00000017
 
-    error: dict | None = None
+    error: Annotated[Any | None, AMQPTAnnotation(ObjDefinition.error)] = None
 
 
 @dataclass(slots=True, kw_only=True)
-class CloseFrame:
+class CloseFrame(Performative):
     """CLOSE performative. Signal a Connection close.
 
     Sending a close signals that the sender will not be sending any more frames (or bytes of any other kind) on
@@ -532,19 +489,16 @@ class CloseFrame:
         The value of the field should contain details on the cause of the error.
     """
 
-    _code: ClassVar[int] = 0x00000018
-    _definition: ClassVar[tuple[FIELD, ...]] = (
-        FIELD("error", ObjDefinition.error, False, None, False),
-    )
+    CODE: ClassVar[int | bytes] = 0x00000018
 
-    error: dict | None = None
+    error: Annotated[Any | None, AMQPTAnnotation(ObjDefinition.error)] = None
 
 
 @dataclass(slots=True, kw_only=True)
-class SASLMechanism:
+class SASLMechanism(Performative):
     """Advertise available sasl mechanisms.
 
-    Advertises the available SASL mechanisms that may be used for authentication.
+    dvertises the available SASL mechanisms that may be used for authentication.
 
     :param list(bytes) sasl_server_mechanisms: Supported sasl mechanisms.
         A list of the sasl security mechanisms supported by the sending peer.
@@ -553,16 +507,14 @@ class SASLMechanism:
         ANONYMOUS. The server mechanisms are ordered in decreasing level of preference.
     """
 
-    _code: ClassVar[int] = 0x00000040
-    _definition: ClassVar[tuple[FIELD, ...]] = (
-        FIELD("sasl_server_mechanisms", AMQPTypes.symbol, True, None, True),
-    )
+    CODE: ClassVar[int | bytes] = 0x00000040
+    FRAME_TYPE: ClassVar[bytes] = b"\x01"
 
-    sasl_server_mechanisms: list[bytes]
+    sasl_server_mechanisms: Annotated[list[str], AMQPTAnnotation(AMQPTypes.symbol)]
 
 
 @dataclass(slots=True, kw_only=True)
-class SASLInit:
+class SASLInit(Performative):
     """Initiate sasl exchange.
 
     Selects the sasl mechanism and provides the initial response if needed.
@@ -585,20 +537,16 @@ class SASLInit:
         It is undefined what a different value to those already specific means.
     """
 
-    _code: ClassVar[int] = 0x00000041
-    _definition: ClassVar[tuple[FIELD, ...]] = (
-        FIELD("mechanism", AMQPTypes.symbol, True, None, False),
-        FIELD("initial_response", AMQPTypes.binary, False, None, False),
-        FIELD("hostname", AMQPTypes.string, False, None, False),
-    )
+    CODE: ClassVar[int | bytes] = 0x00000041
+    FRAME_TYPE: ClassVar[bytes] = b"\x01"
 
-    mechanism: bytes
-    initial_response: bytes | None = None
-    hostname: str | None = None
+    mechanism: Annotated[str, AMQPTAnnotation(AMQPTypes.symbol)]
+    initial_response: Annotated[bytes | None, AMQPTAnnotation(AMQPTypes.binary)] = None
+    hostname: Annotated[str | None, AMQPTAnnotation(AMQPTypes.string)] = None
 
 
 @dataclass(slots=True, kw_only=True)
-class SASLChallenge:
+class SASLChallenge(Performative):
     """Security mechanism challenge.
 
     Send the SASL challenge data as defined by the SASL specification.
@@ -607,16 +555,14 @@ class SASLChallenge:
         Challenge information, a block of opaque binary data passed to the security mechanism.
     """
 
-    _code: ClassVar[int] = 0x00000042
-    _definition: ClassVar[tuple[FIELD, ...]] = (
-        FIELD("challenge", AMQPTypes.binary, True, None, False),
-    )
+    CODE: ClassVar[int | bytes] = 0x00000042
+    FRAME_TYPE: ClassVar[bytes] = b"\x01"
 
-    challenge: bytes
+    challenge: Annotated[bytes, AMQPTAnnotation(AMQPTypes.binary)]
 
 
 @dataclass(slots=True, kw_only=True)
-class SASLResponse:
+class SASLResponse(Performative):
     """Security mechanism response.
 
     Send the SASL response data as defined by the SASL specification.
@@ -624,34 +570,74 @@ class SASLResponse:
     :param bytes response: Security response data.
     """
 
-    _code: ClassVar[int] = 0x00000043
-    _definition: ClassVar[tuple[FIELD, ...]] = (
-        FIELD("response", AMQPTypes.binary, True, None, False),
-    )
+    CODE: ClassVar[int | bytes] = 0x00000043
+    FRAME_TYPE: ClassVar[bytes] = b"\x01"
 
-    response: bytes
+    response: Annotated[bytes, AMQPTAnnotation(AMQPTypes.binary)]
 
 
 @dataclass(slots=True, kw_only=True)
-class SASLOutcome:
+class SASLOutcome(Performative):
     """Indicates the outcome of the sasl dialog.
 
     This frame indicates the outcome of the SASL dialog. Upon successful completion of the SASL dialog the
     Security Layer has been established, and the peers must exchange protocol headers to either starta nested
     Security Layer, or to establish the AMQP Connection.
 
-    :param int code: Indicates the outcome of the sasl dialog.
+    :param SASLCode code: Indicates the outcome of the sasl dialog.
         A reply-code indicating the outcome of the SASL dialog.
     :param bytes additional_data: Additional data as specified in RFC-4422.
         The additional-data field carries additional data on successful authentication outcomeas specified by
         the SASL specification (RFC-4422). If the authentication is unsuccessful, this field is not set.
     """
 
-    _code: ClassVar[int] = 0x00000044
-    _definition: ClassVar[tuple[FIELD, ...]] = (
-        FIELD("code", AMQPTypes.ubyte, True, None, False),
-        FIELD("additional_data", AMQPTypes.binary, False, None, False),
-    )
+    CODE: ClassVar[int | bytes] = 0x00000044
+    FRAME_TYPE: ClassVar[bytes] = b"\x01"
 
-    code: int
-    additional_data: bytes | None = None
+    code: Annotated[int, AMQPTAnnotation(FieldDefinition.sasl_code)]
+    additional_data: Annotated[bytes | None, AMQPTAnnotation(AMQPTypes.binary)] = None
+
+
+PERFORMATIVES_MAP: dict[int | bytes, type[Performative]] = {
+    OpenFrame.CODE: OpenFrame,
+    BeginFrame.CODE: BeginFrame,
+    AttachFrame.CODE: AttachFrame,
+    FlowFrame.CODE: FlowFrame,
+    TransferFrame.CODE: TransferFrame,
+    DispositionFrame.CODE: DispositionFrame,
+    DetachFrame.CODE: DetachFrame,
+    EndFrame.CODE: EndFrame,
+    CloseFrame.CODE: CloseFrame,
+    SASLMechanism.CODE: SASLMechanism,
+    SASLInit.CODE: SASLInit,
+    SASLChallenge.CODE: SASLChallenge,
+    SASLResponse.CODE: SASLResponse,
+    SASLOutcome.CODE: SASLOutcome,
+}
+
+
+def get_performative_from_fields(frame_type: int, fields_list: list[Any]) -> Performative:
+    cls = PERFORMATIVES_MAP.get(frame_type)
+    if not cls:
+        raise ValueError(f"Unknown frame type: {frame_type}")
+
+    cls_fields = fields(cls)
+    target_fields = [f for f in cls_fields if f.name != "payload"]
+
+    payload = None
+    if frame_type == TransferFrame.CODE:  # TransferFrame
+        # The last element in fields is the payload (bytes)
+        if fields_list:
+            payload = fields_list.pop()
+
+    # Map fields to kwargs
+    kwargs = {}
+
+    for f, value in zip(target_fields, fields_list):
+        if value is not None:
+            kwargs[f.name] = value
+
+    if payload is not None:
+        kwargs["payload"] = payload
+
+    return cls(**kwargs)

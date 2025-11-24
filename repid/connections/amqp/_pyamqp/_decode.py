@@ -1,18 +1,15 @@
 from __future__ import annotations
 
-import logging
 import struct
 import uuid
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Literal, cast
+from dataclasses import fields
+from typing import Any, Literal, cast
 
-from .message import Header, Message, Properties
+from . import performatives
+from .message import AnnotatedMessage as Message
+from .message import Header, Properties
 
-if TYPE_CHECKING:
-    from .message import MessageDict
-
-_LOGGER = logging.getLogger(__name__)
-_HEADER_PREFIX = memoryview(b"AMQP")
 _COMPOSITES = {
     35: "received",
     36: "accepted",
@@ -209,25 +206,49 @@ def _decode_described(buffer: memoryview) -> tuple[memoryview, object]:
         return buffer, value
 
 
-def decode_payload(buffer: memoryview) -> Message:  # noqa: C901
-    message: dict[str, Properties | Header | dict | bytes | list] = {}
+def _instantiate(cls: Any, args: list[Any]) -> Any:
+    kwargs = {}
+    for i, field_def in enumerate(cls.DEFINITION):
+        if i < len(args):
+            kwargs[field_def.name] = args[i]
+    return cls(**kwargs)
+
+
+def decode_payload(buffer: memoryview) -> Message:  # noqa: C901, PLR0912
+    message: dict[str, Any] = {}
     while buffer:
-        # Ignore the first two bytes, they will always be the constructors for
-        # described type then ulong.
-        descriptor = buffer[2]
-        buffer, value = _DECODE_BY_CONSTRUCTOR[buffer[3]](buffer[4:])
+        # Expect described type constructor
+        if buffer[0] != 0x00:
+            break
+
+        buffer = buffer[1:]
+
+        # Decode descriptor
+        if not buffer:
+            break
+        constructor = buffer[0]
+        decoder = _DECODE_BY_CONSTRUCTOR[constructor]
+        buffer, descriptor = decoder(buffer[1:])
+
+        # Decode value
+        if not buffer:
+            break
+        constructor = buffer[0]
+        decoder = _DECODE_BY_CONSTRUCTOR[constructor]
+        buffer, value = decoder(buffer[1:])
+
         if descriptor == 112:  # noqa: PLR2004
-            message["header"] = Header(*value)
+            message["header"] = _instantiate(Header, value)
         elif descriptor == 113:  # noqa: PLR2004
             message["delivery_annotations"] = value
         elif descriptor == 114:  # noqa: PLR2004
             message["message_annotations"] = value
         elif descriptor == 115:  # noqa: PLR2004
-            message["properties"] = Properties(*value)
+            message["properties"] = _instantiate(Properties, value)
         elif descriptor == 116:  # noqa: PLR2004
             message["application_properties"] = value
         elif descriptor == 117:  # noqa: PLR2004
-            message["body"] = value
+            message["data"] = value
         elif descriptor == 118:  # noqa: PLR2004
             try:
                 cast(list, message["sequence"]).append(value)
@@ -237,40 +258,161 @@ def decode_payload(buffer: memoryview) -> Message:  # noqa: C901
             message["value"] = value
         elif descriptor == 120:  # noqa: PLR2004
             message["footer"] = value
-    # TODO: we can possibly swap out the Message construct with a TypedDict
-    #  for both input and output so we get the best of both.
-    # casting to TypedDict with named fields to allow for unpacking with **
-    message_properties = cast("MessageDict", message)
-    return Message(**message_properties)
+    return Message(**message)
 
 
-def decode_frame(data: memoryview) -> tuple[int, list[Any]]:
-    # Ignore the first two bytes, they will always be the constructors for
-    # described type then ulong.
-    frame_type = data[2]
-    compound_list_type = data[3]
-    if compound_list_type == 0xD0:  # noqa: PLR2004
-        # list32 0xd0: data[4:8] is size, data[8:12] is count
-        count = c_signed_int.unpack(data[8:12])[0]
-        buffer = data[12:]
-    else:
-        # list8 0xc0: data[4] is size, data[5] is count
-        count = data[5]
-        buffer = data[6:]
-    fields: list[memoryview | None] = [None] * count
-    for i in range(count):
-        buffer, fields[i] = _DECODE_BY_CONSTRUCTOR[buffer[0]](buffer[1:])
-    if frame_type == 20:  # noqa: PLR2004
-        fields.append(buffer)
-    return frame_type, fields
+def _list_to_dataclass(cls: type[Any], fields_list: list[Any]) -> Any:
+    kwargs = {}
+    cls_fields = fields(cls)
+    target_fields = [f for f in cls_fields if f.name != "payload"]
+
+    for i, f in enumerate(target_fields):
+        if i < len(fields_list):
+            kwargs[f.name] = fields_list[i]
+
+    return cls(**kwargs)
 
 
-def decode_empty_frame(header: memoryview) -> tuple[int, bytes]:
-    if header[0:4] == _HEADER_PREFIX:
-        return 0, header.tobytes()
-    if header[5] == 0:
-        return 1, b"EMPTY"
-    raise ValueError("Received unrecognized empty frame")
+def bytes_to_performative(data: bytes) -> performatives.Performative:
+    buffer = memoryview(data)
+    # Header
+    size = struct.unpack(">I", buffer[:4])[0]
+    doff = buffer[4]
+    # type_ = buffer[5]
+    # channel = struct.unpack(">H", buffer[6:8])[0]
+
+    # Body
+    body_start = doff * 4
+    body_buffer = buffer[body_start:size]
+
+    # Decode Described Type
+    # Expect 0x00
+    if body_buffer[0] != 0x00:
+        raise ValueError("Invalid frame body")
+
+    body_buffer = body_buffer[1:]
+
+    # Descriptor
+    # We need to decode the descriptor. It's usually a ulong.
+    # _decode_by_constructor uses the first byte to dispatch.
+    constructor = body_buffer[0]
+    decoder = _DECODE_BY_CONSTRUCTOR[constructor]
+    if decoder is None:
+        raise ValueError(f"Unknown constructor: {constructor}")
+    body_buffer, descriptor = decoder(body_buffer[1:])
+
+    # Find class
+    cls = performatives.PERFORMATIVES_MAP.get(descriptor)
+    if not cls:
+        raise ValueError(f"Unknown performative: {descriptor}")
+
+    # List
+    # The value of the described type is a list.
+    # We decode it as a python list using existing decoders.
+    constructor = body_buffer[0]
+    decoder = _DECODE_BY_CONSTRUCTOR[constructor]
+    if decoder is None:
+        raise ValueError(f"Unknown constructor: {constructor}")
+    body_buffer, fields_list = decoder(body_buffer[1:])
+
+    performative = _list_to_dataclass(cls, fields_list)
+
+    # Payload
+    # If TransferFrame, remaining body_buffer is payload.
+    if (hasattr(cls, "payload") or "payload" in [f.name for f in fields(cls)]) and len(
+        body_buffer,
+    ) > 0:
+        performative.payload = body_buffer.tobytes()  # type: ignore
+
+    return performative
+
+
+def decode_message(payload: bytes) -> Message:
+    buffer = memoryview(payload)
+    message = Message()
+
+    while len(buffer) > 0:
+        # Decode Described Type
+        # Expect 0x00
+        if buffer[0] != 0x00:
+            raise ValueError("Invalid message section")
+
+        buffer = buffer[1:]
+
+        # Descriptor
+        constructor = buffer[0]
+        decoder = _DECODE_BY_CONSTRUCTOR[constructor]
+        if decoder is None:
+            raise ValueError(f"Unknown constructor: {constructor}")
+        buffer, descriptor = decoder(buffer[1:])
+
+        # Value
+        constructor = buffer[0]
+        decoder = _DECODE_BY_CONSTRUCTOR[constructor]
+        if decoder is None:
+            raise ValueError(f"Unknown constructor: {constructor}")
+        buffer, value = decoder(buffer[1:])
+
+        # Map descriptor to section
+        if descriptor == 0x00000070:  # Header
+            message.header = _list_to_dataclass(Header, value)
+        elif descriptor == 0x00000071:  # Delivery Annotations
+            message.delivery_annotations = value
+        elif descriptor == 0x00000072:  # Message Annotations
+            message.message_annotations = value
+        elif descriptor == 0x00000073:  # Properties
+            message.properties = _list_to_dataclass(Properties, value)
+        elif descriptor == 0x00000074:  # Application Properties
+            message.application_properties = value
+        elif descriptor == 0x00000075:  # Data
+            message.data = value
+        elif descriptor == 0x00000076:  # Sequence
+            message.sequence = value
+        elif descriptor == 0x00000077:  # Value
+            message.value = value
+        elif descriptor == 0x00000078:  # Footer
+            message.footer = value
+
+    return message
+
+
+def transfer_frames_to_message(frames: list[performatives.TransferFrame]) -> Message:
+    payload = bytearray()
+    for frame in frames:
+        if frame.payload:
+            payload.extend(frame.payload)
+    return decode_message(payload)
+
+
+def decode_frame(data: bytes) -> tuple[int, performatives.Performative]:
+    buffer = memoryview(data)
+    channel = struct.unpack(">H", buffer[6:8])[0]
+    performative = bytes_to_performative(data)
+    return channel, performative
+
+
+def _decode_string_small(buffer: memoryview) -> tuple[memoryview, str]:
+    length = buffer[0]
+    value = buffer[1 : 1 + length].tobytes().decode("utf-8")
+    return buffer[1 + length :], value
+
+
+def _decode_string_large(buffer: memoryview) -> tuple[memoryview, str]:
+    length = c_unsigned_int.unpack(buffer[:4])[0]
+    value = buffer[4 : 4 + length].tobytes().decode("utf-8")
+    return buffer[4 + length :], value
+
+
+def _decode_symbol_small(buffer: memoryview) -> tuple[memoryview, str]:
+    length = buffer[0]
+    value = buffer[1 : 1 + length].tobytes().decode("ascii")
+    return buffer[1 + length :], value
+
+
+def _decode_symbol_large(buffer: memoryview) -> tuple[memoryview, str]:
+    length = c_unsigned_int.unpack(buffer[:4])[0]
+    value = buffer[4 : 4 + length].tobytes().decode("ascii")
+    return buffer[4 + length :], value
 
 
 _DECODE_BY_CONSTRUCTOR: list[Callable] = cast(list[Callable], [None] * 256)
@@ -299,23 +441,14 @@ _DECODE_BY_CONSTRUCTOR[130] = _decode_double
 _DECODE_BY_CONSTRUCTOR[131] = _decode_timestamp
 _DECODE_BY_CONSTRUCTOR[152] = _decode_uuid
 _DECODE_BY_CONSTRUCTOR[160] = _decode_binary_small
-_DECODE_BY_CONSTRUCTOR[161] = _decode_binary_small
-_DECODE_BY_CONSTRUCTOR[163] = _decode_binary_small
+_DECODE_BY_CONSTRUCTOR[161] = _decode_string_small
+_DECODE_BY_CONSTRUCTOR[163] = _decode_symbol_small
 _DECODE_BY_CONSTRUCTOR[176] = _decode_binary_large
-_DECODE_BY_CONSTRUCTOR[177] = _decode_binary_large
-_DECODE_BY_CONSTRUCTOR[179] = _decode_binary_large
+_DECODE_BY_CONSTRUCTOR[177] = _decode_string_large
+_DECODE_BY_CONSTRUCTOR[179] = _decode_symbol_large
 _DECODE_BY_CONSTRUCTOR[192] = _decode_list_small
 _DECODE_BY_CONSTRUCTOR[193] = _decode_map_small
 _DECODE_BY_CONSTRUCTOR[208] = _decode_list_large
 _DECODE_BY_CONSTRUCTOR[209] = _decode_map_large
 _DECODE_BY_CONSTRUCTOR[224] = _decode_array_small
 _DECODE_BY_CONSTRUCTOR[240] = _decode_array_large
-
-
-def decode_value(buffer: memoryview) -> tuple[memoryview, Any]:
-    if not buffer:
-        return buffer, None
-    decoder = _DECODE_BY_CONSTRUCTOR[buffer[0]]
-    if decoder:
-        return decoder(buffer[1:])
-    raise ValueError(f"Unknown constructor: {buffer[0]}")

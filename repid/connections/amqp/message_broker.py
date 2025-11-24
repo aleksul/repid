@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from repid.connections.abc import CapabilitiesT, SentMessageT, SubscriberT
-from repid.connections.amqp.helpers import AmqpSubscriber
-from repid.connections.amqp.protocol import AmqpConnection, SenderLink, Session
+from repid.connections.amqp.protocol.protocol import AmqpConnection, SenderLink, Session
+from repid.connections.amqp.subscriber import AmqpSubscriber
 from repid.logger import logger
 
 if TYPE_CHECKING:
@@ -36,7 +36,7 @@ class AmqpServer:
     ) -> None:
         self.dsn = dsn
         self._connection: AmqpConnection | None = None
-        # We can keep a single session for publishing and consuming
+
         self._session: Session | None = None
         self._publisher_links: dict[str, SenderLink] = {}
 
@@ -44,7 +44,7 @@ class AmqpServer:
         self._title = title
         self._summary = summary
         self._description = description
-        self._protocol_version = "1.0.0"  # Updated
+        self._protocol_version = "1.0.0"
         self._variables = variables
         self._security = security
         self._tags = tags
@@ -56,7 +56,6 @@ class AmqpServer:
         self._host = f"{parsed.hostname}:{parsed.port}" if parsed.port else str(parsed.hostname)
         self._pathname = parsed.path if parsed.path != "/" else None
 
-        # We need to extract host/port from DSN for AmqpConnection
         self._conn_host = parsed.hostname or "localhost"
         self._conn_port = parsed.port or 5672
         self._conn_username = parsed.username
@@ -66,7 +65,6 @@ class AmqpServer:
         self._active_subscribers: list[AmqpSubscriber] = []
 
     # ServerT properties
-
     @property
     def host(self) -> str:
         return self._host
@@ -131,10 +129,10 @@ class AmqpServer:
     # Connection lifecycle management
     @property
     def is_connected(self) -> bool:
-        return self._connection is not None and self._connection._connected
+        return self._connection is not None and self._connection.is_connected
 
     async def connect(self) -> None:
-        if self._connection is None or not self._connection._connected:
+        if self._connection is None or not self._connection.is_connected:
             self._connection = AmqpConnection(
                 self._conn_host,
                 self._conn_port,

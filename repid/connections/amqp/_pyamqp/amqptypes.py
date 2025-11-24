@@ -1,11 +1,10 @@
 from enum import Enum
-from typing import Any
 
 TYPE = "TYPE"
 VALUE = "VALUE"
 
 
-class AMQPTypes:
+class AMQPTypes(Enum):
     null = "NULL"
     boolean = "BOOL"
     ubyte = "UBYTE"
@@ -115,5 +114,7 @@ class SASLCode(Enum):
 
 
 class AMQPTAnnotation:
-    def __init__(self, type_: Any) -> None:
-        self.type = type_
+    __slots__ = ("type_",)
+
+    def __init__(self, type_: AMQPTypes | FieldDefinition | ObjDefinition) -> None:
+        self.type_ = type_

@@ -1,5 +1,4 @@
-import struct
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from enum import IntEnum
 from typing import Annotated, Any, ClassVar
 
@@ -17,15 +16,11 @@ class ReceiverSettleMode(IntEnum):
     second = 1
 
 
-def _as_bytes(value: Any) -> bytes:
-    return struct.pack(">B", value)
-
-
 @dataclass(slots=True, kw_only=True)
 class Performative:
     """AMQP Performative"""
 
-    CODE: ClassVar[int | bytes]
+    CODE: ClassVar[int]
     FRAME_TYPE: ClassVar[bytes] = b"\x00"
     FRAME_OFFSET: ClassVar[bytes] = b"\x02"
 
@@ -92,7 +87,7 @@ class OpenFrame(Performative):
         here: http://www.amqp.org/specification/1.0/connection-properties.
     """
 
-    CODE: ClassVar[int | bytes] = 0x00000010
+    CODE: ClassVar[int] = 0x00000010
 
     container_id: Annotated[str, AMQPTAnnotation(AMQPTypes.string)]
     hostname: Annotated[str | None, AMQPTAnnotation(AMQPTypes.string)] = None
@@ -149,7 +144,7 @@ class BeginFrame(Performative):
         here: http://www.amqp.org/specification/1.0/session-properties.
     """
 
-    CODE: ClassVar[int | bytes] = 0x00000011
+    CODE: ClassVar[int] = 0x00000011
 
     remote_channel: Annotated[int | None, AMQPTAnnotation(AMQPTypes.ushort)] = None
     next_outgoing_id: Annotated[int, AMQPTAnnotation(FieldDefinition.transfer_number)]
@@ -225,7 +220,7 @@ class AttachFrame(Performative):
         here: http://www.amqp.org/specification/1.0/link-properties.
     """
 
-    CODE: ClassVar[int | bytes] = 0x00000012
+    CODE: ClassVar[int] = 0x00000012
 
     name: Annotated[str, AMQPTAnnotation(AMQPTypes.string)]
     handle: Annotated[int, AMQPTAnnotation(FieldDefinition.handle)]
@@ -293,7 +288,7 @@ class FlowFrame(Performative):
         here: http://www.amqp.org/specification/1.0/link-state-properties.
     """
 
-    CODE: ClassVar[int | bytes] = 0x00000013
+    CODE: ClassVar[int] = 0x00000013
 
     next_incoming_id: Annotated[int | None, AMQPTAnnotation(FieldDefinition.transfer_number)] = None
     incoming_window: Annotated[int, AMQPTAnnotation(AMQPTypes.uint)]
@@ -378,7 +373,7 @@ class TransferFrame(Performative):
         link is suspended and subsequently resumed.
     """
 
-    CODE: ClassVar[int | bytes] = 0x00000014
+    CODE: ClassVar[int] = 0x00000014
 
     handle: Annotated[int, AMQPTAnnotation(FieldDefinition.handle)]
     delivery_id: Annotated[int | None, AMQPTAnnotation(FieldDefinition.delivery_number)] = None
@@ -429,7 +424,7 @@ class DispositionFrame(Performative):
         implementation uses when communicating delivery states, and thereby save bandwidth.
     """
 
-    CODE: ClassVar[int | bytes] = 0x00000015
+    CODE: ClassVar[int] = 0x00000015
 
     role: Annotated[bool, AMQPTAnnotation(FieldDefinition.role)]
     first: Annotated[int, AMQPTAnnotation(FieldDefinition.delivery_number)]
@@ -453,7 +448,7 @@ class DetachFrame(Performative):
         The value of the field should contain details on the cause of the error.
     """
 
-    CODE: ClassVar[int | bytes] = 0x00000016
+    CODE: ClassVar[int] = 0x00000016
 
     handle: Annotated[int, AMQPTAnnotation(FieldDefinition.handle)]
     closed: Annotated[bool, AMQPTAnnotation(AMQPTypes.boolean)] = False
@@ -471,7 +466,7 @@ class EndFrame(Performative):
         The value of the field should contain details on the cause of the error.
     """
 
-    CODE: ClassVar[int | bytes] = 0x00000017
+    CODE: ClassVar[int] = 0x00000017
 
     error: Annotated[Any | None, AMQPTAnnotation(ObjDefinition.error)] = None
 
@@ -489,7 +484,7 @@ class CloseFrame(Performative):
         The value of the field should contain details on the cause of the error.
     """
 
-    CODE: ClassVar[int | bytes] = 0x00000018
+    CODE: ClassVar[int] = 0x00000018
 
     error: Annotated[Any | None, AMQPTAnnotation(ObjDefinition.error)] = None
 
@@ -507,7 +502,7 @@ class SASLMechanism(Performative):
         ANONYMOUS. The server mechanisms are ordered in decreasing level of preference.
     """
 
-    CODE: ClassVar[int | bytes] = 0x00000040
+    CODE: ClassVar[int] = 0x00000040
     FRAME_TYPE: ClassVar[bytes] = b"\x01"
 
     sasl_server_mechanisms: Annotated[list[str], AMQPTAnnotation(AMQPTypes.symbol)]
@@ -537,7 +532,7 @@ class SASLInit(Performative):
         It is undefined what a different value to those already specific means.
     """
 
-    CODE: ClassVar[int | bytes] = 0x00000041
+    CODE: ClassVar[int] = 0x00000041
     FRAME_TYPE: ClassVar[bytes] = b"\x01"
 
     mechanism: Annotated[str, AMQPTAnnotation(AMQPTypes.symbol)]
@@ -555,7 +550,7 @@ class SASLChallenge(Performative):
         Challenge information, a block of opaque binary data passed to the security mechanism.
     """
 
-    CODE: ClassVar[int | bytes] = 0x00000042
+    CODE: ClassVar[int] = 0x00000042
     FRAME_TYPE: ClassVar[bytes] = b"\x01"
 
     challenge: Annotated[bytes, AMQPTAnnotation(AMQPTypes.binary)]
@@ -570,7 +565,7 @@ class SASLResponse(Performative):
     :param bytes response: Security response data.
     """
 
-    CODE: ClassVar[int | bytes] = 0x00000043
+    CODE: ClassVar[int] = 0x00000043
     FRAME_TYPE: ClassVar[bytes] = b"\x01"
 
     response: Annotated[bytes, AMQPTAnnotation(AMQPTypes.binary)]
@@ -591,14 +586,14 @@ class SASLOutcome(Performative):
         the SASL specification (RFC-4422). If the authentication is unsuccessful, this field is not set.
     """
 
-    CODE: ClassVar[int | bytes] = 0x00000044
+    CODE: ClassVar[int] = 0x00000044
     FRAME_TYPE: ClassVar[bytes] = b"\x01"
 
     code: Annotated[int, AMQPTAnnotation(FieldDefinition.sasl_code)]
     additional_data: Annotated[bytes | None, AMQPTAnnotation(AMQPTypes.binary)] = None
 
 
-PERFORMATIVES_MAP: dict[int | bytes, type[Performative]] = {
+PERFORMATIVES_MAP: dict[int, type[Performative]] = {
     OpenFrame.CODE: OpenFrame,
     BeginFrame.CODE: BeginFrame,
     AttachFrame.CODE: AttachFrame,
@@ -614,30 +609,3 @@ PERFORMATIVES_MAP: dict[int | bytes, type[Performative]] = {
     SASLResponse.CODE: SASLResponse,
     SASLOutcome.CODE: SASLOutcome,
 }
-
-
-def get_performative_from_fields(frame_type: int, fields_list: list[Any]) -> Performative:
-    cls = PERFORMATIVES_MAP.get(frame_type)
-    if not cls:
-        raise ValueError(f"Unknown frame type: {frame_type}")
-
-    cls_fields = fields(cls)
-    target_fields = [f for f in cls_fields if f.name != "payload"]
-
-    payload = None
-    if frame_type == TransferFrame.CODE:  # TransferFrame
-        # The last element in fields is the payload (bytes)
-        if fields_list:
-            payload = fields_list.pop()
-
-    # Map fields to kwargs
-    kwargs = {}
-
-    for f, value in zip(target_fields, fields_list):
-        if value is not None:
-            kwargs[f.name] = value
-
-    if payload is not None:
-        kwargs["payload"] = payload
-
-    return cls(**kwargs)

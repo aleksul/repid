@@ -1,5 +1,3 @@
-from collections import namedtuple
-
 #: The IANA assigned port number for AMQP.The standard AMQP port number that has been assigned by IANA
 #: for TCP, UDP, and SCTP.There are currently no UDP or SCTP mappings defined for AMQP.
 #: The port number is reserved for future transport mappings to these protocols.
@@ -23,4 +21,4 @@ MAX_CHANNELS = 65535
 INT32_MIN = -2_147_483_648
 INT32_MAX = 2_147_483_647
 
-FIELD = namedtuple("FIELD", "name, type, mandatory, default, multiple")  # noqa: PYI024
+MIN_MAX_LIST_SIZE = 255

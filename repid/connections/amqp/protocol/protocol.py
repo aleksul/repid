@@ -18,7 +18,7 @@ from repid.connections.amqp._pyamqp._encode import (
     performative_to_bytes,
 )
 from repid.connections.amqp._pyamqp.endpoints import Source, Target
-from repid.connections.amqp._pyamqp.message import AnnotatedMessage as Message
+from repid.connections.amqp._pyamqp.message import Message
 from repid.connections.amqp._pyamqp.performatives import (
     AttachFrame,
     BeginFrame,

@@ -53,10 +53,10 @@ readme = "README.md"
 requires-python = ">=3.10"
 
 [project.optional-dependencies]
-amqp = ["aiormq<7.0.0,>=6.9.0"]
+amqp = []
+pubsub = ["gcloud-aio-pubsub<7.0.0,>=6.3.0"]
 pydantic = ["pydantic>=2.0.0,<3.0.0"]
 redis = ["redis<7.0.0,>=6.0.0"]
-pubsub = ["gcloud-aio-pubsub<7.0.0,>=6.3.0"]
 
 [project.urls]
 documentation = "https://repid.aleksul.space"
@@ -85,18 +85,18 @@ packages = ["repid"]
 source = "vcs"
 
 [tool.markdownlint]
-MD046 = false # Code block style
+MD046 = false  # Code block style
 
 [tool.markdownlint.MD013]
-code_block_line_length = 100 # Number of characters for code blocks
-code_blocks = true           # Include code blocks
-headers = true               # Include headers
-heading_line_length = 100    # Number of characters for headings
-headings = true              # Include headings
-line_length = 100            # Number of characters
-stern = false                # Stern length checking
-strict = false               # Strict length checking
-tables = true                # Include tables
+code_block_line_length = 100  # Number of characters for code blocks
+code_blocks = true  # Include code blocks
+headers = true  # Include headers
+heading_line_length = 100  # Number of characters for headings
+headings = true  # Include headings
+line_length = 100  # Number of characters
+stern = false  # Stern length checking
+strict = false  # Strict length checking
+tables = true  # Include tables
 
 [tool.mypy]
 check_untyped_defs = true

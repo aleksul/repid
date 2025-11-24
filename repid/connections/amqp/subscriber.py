@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
-from repid.connections.amqp._pyamqp.performatives import DetachFrame
+from repid.connections.amqp._uamqp.performatives import DetachFrame
 from repid.connections.amqp.helpers import AmqpReceivedMessage
 from repid.connections.amqp.protocol.protocol import ReceiverLink
 

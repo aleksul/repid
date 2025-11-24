@@ -9,17 +9,17 @@ import uuid
 from collections.abc import Callable
 from typing import Any, Literal, cast
 
-from repid.connections.amqp._pyamqp._decode import (
+from repid.connections.amqp._uamqp._decode import (
     bytes_to_performative,
     transfer_frames_to_message,
 )
-from repid.connections.amqp._pyamqp._encode import (
+from repid.connections.amqp._uamqp._encode import (
     message_to_transfer_frames,
     performative_to_bytes,
 )
-from repid.connections.amqp._pyamqp.endpoints import Source, Target
-from repid.connections.amqp._pyamqp.message import Message
-from repid.connections.amqp._pyamqp.performatives import (
+from repid.connections.amqp._uamqp.endpoints import Source, Target
+from repid.connections.amqp._uamqp.message import Message
+from repid.connections.amqp._uamqp.performatives import (
     AttachFrame,
     BeginFrame,
     CloseFrame,

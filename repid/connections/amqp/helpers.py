@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from repid.connections.amqp._pyamqp.outcomes import Accepted, Rejected, Released
-from repid.connections.amqp._pyamqp.performatives import DispositionFrame
+from repid.connections.amqp._uamqp.outcomes import Accepted, Rejected, Released
+from repid.connections.amqp._uamqp.performatives import DispositionFrame
 from repid.connections.amqp.protocol.protocol import ReceiverLink
 from repid.data import MessageData
 

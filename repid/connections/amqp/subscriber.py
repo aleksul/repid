@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
@@ -47,11 +48,10 @@ class AmqpSubscriber:
         self._is_active = True
 
     async def _run_forever(self) -> None:
-        try:
-            while self._is_active:
-                await asyncio.sleep(0.1)
-        except asyncio.CancelledError:
-            pass
+        if self._server._connection is None or self._server._connection._incoming_task is None:
+            return
+        with contextlib.suppress(asyncio.CancelledError):
+            await self._server._connection._incoming_task
 
     @classmethod
     async def create(

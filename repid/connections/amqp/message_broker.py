@@ -176,7 +176,6 @@ class AmqpServer:
         message: SentMessageT,
         server_specific_parameters: dict[str, Any] | None = None,
     ) -> None:
-        del server_specific_parameters
         logger.debug("Publishing message to channel '{channel}'.", extra={"channel": channel})
 
         if not self.is_connected or self._session is None:
@@ -192,7 +191,11 @@ class AmqpServer:
         # Send message
         # We need to encode message payload if it's not bytes?
         # SentMessageT.payload is bytes.
-        await link.send(message.payload, message.headers)
+        await link.send(
+            message.payload,
+            message.headers,
+            **(server_specific_parameters or {}),
+        )
 
     # Message receiving
     async def subscribe(

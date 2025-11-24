@@ -1,5 +1,6 @@
 import abc
 import asyncio
+import contextlib
 import json
 import logging
 import socket
@@ -17,6 +18,7 @@ from repid.connections.amqp._uamqp._encode import (
     message_to_transfer_frames,
     performative_to_bytes,
 )
+from repid.connections.amqp._uamqp.constants import MAX_FRAME_SIZE_BYTES, MIN_MAX_FRAME_SIZE
 from repid.connections.amqp._uamqp.endpoints import Source, Target
 from repid.connections.amqp._uamqp.message import Message
 from repid.connections.amqp._uamqp.performatives import (
@@ -46,6 +48,8 @@ FRAME_TYPE_AMQP = 0x00
 FRAME_TYPE_SASL = 0x01
 FRAME_TYPE_TLS = 0x02
 
+FRAME_HEADER_SIZE = 8
+
 
 class AmqpError(Exception):
     pass
@@ -58,6 +62,7 @@ class ConnectionClosedError(AmqpError):
 class AmqpTransport:
     def __init__(
         self,
+        *,
         host: str,
         port: int,
         ssl_context: ssl.SSLContext | None = None,
@@ -79,9 +84,9 @@ class AmqpTransport:
                 timeout=self.connect_timeout,
             )
         except asyncio.TimeoutError:
-            raise AmqpError(f"Connection timed out after {self.connect_timeout}s")
-        except OSError as e:
-            raise AmqpError(f"Could not connect to {self.host}:{self.port}: {e}")
+            raise AmqpError(f"Connection timed out after {self.connect_timeout}s") from None
+        except OSError as exc:
+            raise AmqpError(f"Could not connect to {self.host}:{self.port}: {exc}") from exc
 
         if self.tcp_keepalive and self.writer:
             sock = self.writer.get_extra_info("socket")
@@ -106,17 +111,17 @@ class AmqpTransport:
         except asyncio.IncompleteReadError:
             raise ConnectionClosedError("Connection closed by server") from None
 
-        size, doff, frame_type, channel = struct.unpack(">IBBH", header_data)
+        size, doff, _, channel = struct.unpack(">IBBH", header_data)
 
-        if size < 8:
+        if size < FRAME_HEADER_SIZE:
             raise AmqpError(f"Invalid frame size: {size}")
 
-        body_size = size - 8
+        body_size = size - FRAME_HEADER_SIZE
         payload = await self.reader.readexactly(body_size)
 
         data_offset = doff * 4
-        if data_offset > 8:
-            extended_header_size = data_offset - 8
+        if data_offset > FRAME_HEADER_SIZE:
+            extended_header_size = data_offset - FRAME_HEADER_SIZE
             if extended_header_size > len(payload):
                 raise AmqpError("Invalid data offset")
             # We don't strip extended header here because bytes_to_performative expects full frame
@@ -136,10 +141,8 @@ class AmqpTransport:
     async def close(self) -> None:
         if self.writer:
             self.writer.close()
-            try:
+            with contextlib.suppress(Exception):
                 await self.writer.wait_closed()
-            except Exception:
-                pass
         self.reader = None
         self.writer = None
 
@@ -165,13 +168,16 @@ class AmqpConnection:
         password: str | None = None,
         ssl_context: ssl.SSLContext | None = None,
     ):
-        self.transport = AmqpTransport(host, port, ssl_context)
+        self.transport = AmqpTransport(host=host, port=port, ssl_context=ssl_context)
         self.username = username
         self.password = password
         self._connected = False
         self.sessions: dict[int, Session] = {}
         self._incoming_task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
+        self.max_frame_size = MAX_FRAME_SIZE_BYTES
+        self.remote_max_frame_size = MIN_MAX_FRAME_SIZE
+        self._waiters: list[tuple[Callable[[int, Any], bool], asyncio.Future]] = []
 
     @property
     def is_connected(self) -> bool:
@@ -198,13 +204,21 @@ class AmqpConnection:
                 self._incoming_task = asyncio.create_task(self._read_loop())
 
                 # Send Open frame
-                open_frame = OpenFrame(container_id="repid-client", hostname=self.transport.host)
-                await self.send_performative(0, open_frame)
+                open_frame = OpenFrame(
+                    container_id="repid-client",
+                    hostname=self.transport.host,
+                    max_frame_size=self.max_frame_size,
+                )
+                await self.send_performative(
+                    0,
+                    open_frame,
+                    wait_for_response=lambda _, p: isinstance(p, OpenFrame),
+                )
 
                 return
 
-            except Exception as e:
-                logger.error("Connection failed: %s. Retrying in %.1fs...", e, backoff)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Connection failed: %s. Retrying in %.1fs...", exc, backoff)
                 await self.transport.close()
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, max_backoff)
@@ -268,14 +282,12 @@ class AmqpConnection:
             _, performative = await self.transport.read_frame()
 
             if isinstance(performative, SASLChallenge):
-                # TODO: Handle challenge
-                pass
-            elif isinstance(performative, SASLOutcome):
+                raise AmqpError("SASL Challenge received but not supported.")
+            if isinstance(performative, SASLOutcome):
                 if performative.code != 0:  # OK
                     raise AmqpError(f"SASL Authentication failed with code {performative.code}")
                 break
-            else:
-                raise AmqpError(f"Unexpected SASL frame: {performative}")
+            raise AmqpError(f"Unexpected SASL frame: {performative}")
 
     async def _read_loop(self) -> None:
         while self._connected:
@@ -288,7 +300,7 @@ class AmqpConnection:
                 self._connected = False
                 break
             except Exception:
-                logger.error("Error in read loop", exc_info=True)
+                logger.exception("Error in read loop")
                 self._connected = False
                 break
 
@@ -337,7 +349,9 @@ class AmqpConnection:
         channel: int,
         performative: Any,
         payload: bytes | None = None,
-        frame_type: int = FRAME_TYPE_AMQP,
+        frame_type: int = FRAME_TYPE_AMQP,  # noqa: ARG002
+        wait_for_response: Callable[[int, Any], bool] | None = None,
+        timeout: float = 10.0,
     ) -> None:
         if self.transport.writer is None:
             raise AmqpError("Not connected")
@@ -348,6 +362,16 @@ class AmqpConnection:
         full_frame = performative_to_bytes(performative, channel)
         await self.transport.write(full_frame)
 
+        if wait_for_response:
+            future = asyncio.get_running_loop().create_future()
+            self._waiters.append((wait_for_response, future))
+            try:
+                await asyncio.wait_for(future, timeout)
+                return
+            finally:
+                if (wait_for_response, future) in self._waiters:
+                    self._waiters.remove((wait_for_response, future))
+
     async def handle_performative(
         self,
         channel: int,
@@ -355,14 +379,18 @@ class AmqpConnection:
         payload: bytes | None = None,
     ) -> None:
         logger.debug("Received performative: %s", performative)
+
+        # Check waiters
+        for predicate, future in self._waiters[:]:
+            if predicate(channel, performative):
+                if not future.done():
+                    future.set_result(performative)
+                self._waiters.remove((predicate, future))
+
         if isinstance(performative, OpenFrame):
             # Handle Open response
-            pass
-        elif isinstance(performative, BeginFrame):
-            # Handle Begin response
-            if channel in self.sessions:
-                # TODO: Handle session begin response
-                pass
+            if performative.max_frame_size:
+                self.remote_max_frame_size = performative.max_frame_size
         elif isinstance(performative, CloseFrame):
             await self.close()
         # Dispatch to session
@@ -373,10 +401,8 @@ class AmqpConnection:
         if not self._connected:
             return
 
-        try:
+        with contextlib.suppress(Exception):
             await self.send_performative(0, CloseFrame())
-        except Exception:
-            pass
 
         self._connected = False
         self._stop_event.set()
@@ -414,10 +440,10 @@ class Session:
         )
         await self.connection.send_performative(self.channel, begin)
 
-    async def handle_performative(
+    async def handle_performative(  # noqa: C901, PLR0912
         self,
         performative: Any,
-        payload: bytes | None,
+        payload: bytes | None,  # noqa: ARG002
     ) -> None:
         logger.debug("Session %d handling performative: %s", self.channel, performative)
         if isinstance(performative, BeginFrame):
@@ -527,11 +553,22 @@ class SenderLink(Link):
         )
         await self.session.connection.send_performative(self.session.channel, attach)
 
-    async def send(self, message_payload: bytes, headers: dict[str, Any] | None = None) -> None:
+    async def send(
+        self,
+        message_payload: bytes,
+        headers: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
         # Wrap payload in Message and encode
         msg = Message(
             data=message_payload,
-            application_properties=cast(dict[str | bytes, Any] | None, headers),
+            application_properties=headers,
+            **kwargs,
+        )
+
+        max_frame_size = min(
+            self.session.connection.max_frame_size,
+            self.session.connection.remote_max_frame_size,
         )
 
         frames = message_to_transfer_frames(
@@ -540,7 +577,7 @@ class SenderLink(Link):
             delivery_id=self.delivery_count,
             delivery_tag=str(self.delivery_count).encode(),
             settled=True,
-            max_frame_size=4096,
+            max_frame_size=max_frame_size,
         )
 
         for frame in frames:

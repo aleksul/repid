@@ -481,13 +481,27 @@ class PydanticConverter:
         default_serializer: SerializerT,
     ) -> FnParams:
         validated_payload = self._parse_payload(message)
-        loaded = validated_payload.model_dump() if validated_payload is not None else {}
+        loaded = (
+            {
+                name: getattr(validated_payload, name)
+                for name in self.payload_pydantic_model.model_fields
+            }
+            if validated_payload is not None and self.payload_pydantic_model is not None
+            else {}
+        )
         if self.args:  # if there are positional args - pop them from loaded
             args: list[Any] = [loaded.pop(arg, None) for arg in self.args]
         else:
             args = []
         validated_headers = self._parse_headers(message)
-        parsed_headers = validated_headers.model_dump() if validated_headers is not None else {}
+        parsed_headers = (
+            {
+                name: getattr(validated_headers, name)
+                for name in self.headers_pydantic_model.model_fields
+            }
+            if validated_headers is not None and self.headers_pydantic_model is not None
+            else {}
+        )
         resolved = await _resolve_dependencies(
             message=message,
             actor=actor,

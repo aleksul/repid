@@ -64,6 +64,8 @@ class TestMessage:
     Implements the ReceivedMessageT protocol.
     """
 
+    __test__ = False  # prevent pytest from collecting this class
+
     __slots__ = (
         "_channel",
         "_content_type",
@@ -212,6 +214,8 @@ class TestClient:
     Mimics the Repid app interface (send_message, send_message_json, messages property)
     making it a drop-in replacement for testing.
     """
+
+    __test__ = False  # prevent pytest from collecting this class
 
     def __init__(
         self,

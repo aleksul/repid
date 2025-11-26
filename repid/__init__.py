@@ -14,7 +14,6 @@ from .health_check_server import HealthCheckStatus as HealthCheckStatus
 from .logger import logger as logger
 from .main import Repid as Repid
 from .router import Router as Router
-from .router import RouterDefaults as RouterDefaults
 from .serializer import SerializerT as SerializerT
 from .serializer import default_serializer as default_serializer
 from .test_client import TestClient as TestClient

@@ -242,6 +242,7 @@ class TestClient:
         self._processed_messages: list[TestMessage] = []
         self._message_queue: asyncio.Queue[tuple[str, TestMessage]] = asyncio.Queue()
         self._mock_server: ServerT = _MockServer(self)  # type: ignore[assignment]
+        self._producer_middleware_pipeline = app._producer_middleware_pipeline
 
     @property
     def messages(self) -> MessageRegistry:
@@ -257,7 +258,7 @@ class TestClient:
         headers: dict[str, str] | None = None,
         content_type: str | None = None,
         server_name: str | None = None,  # noqa: ARG002
-        server_specific_parameters: dict[str, Any] | None = None,  # noqa: ARG002
+        server_specific_parameters: dict[str, Any] | None = None,
     ) -> None:
         """Internal method to send a message."""
         if channel is None and operation_id is None:
@@ -282,20 +283,35 @@ class TestClient:
         else:
             payload_bytes = payload
 
-        # Create and track message
-        test_message = TestMessage(
-            operation_id=operation_id or "",  # Use empty string if sending by channel
-            payload=payload_bytes,
-            headers=headers,
-            content_type=content_type,
-            channel=channel,  # type: ignore[arg-type]
-        )
-        self._sent_messages.append(test_message)
+        async def _publish(
+            channel: str,
+            message: MessageData,
+            server_specific_parameters: dict[str, Any] | None,  # noqa: ARG001
+        ) -> None:
+            # Create and track message
+            test_message = TestMessage(
+                operation_id=operation_id or "",  # Use empty string if sending by channel
+                payload=message.payload,
+                headers=message.headers,
+                content_type=message.content_type,
+                channel=channel,
+            )
+            self._sent_messages.append(test_message)
 
-        if self.auto_process:
-            await self._process_message(test_message)
-        else:
-            await self._message_queue.put((operation_id or "", test_message))
+            if self.auto_process:
+                await self._process_message(test_message)
+            else:
+                await self._message_queue.put((operation_id or "", test_message))
+
+        await self._producer_middleware_pipeline(_publish)(
+            channel,  # type: ignore[arg-type]
+            MessageData(
+                payload=payload_bytes,
+                headers=headers,
+                content_type=content_type,
+            ),
+            server_specific_parameters,
+        )
 
     @overload
     async def send_message(

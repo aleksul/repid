@@ -8,6 +8,11 @@ from repid._worker import _Worker
 from repid.asyncapi import AsyncAPI3Schema, AsyncAPIGenerator
 from repid.data import MessageData, RunnerInfo
 from repid.message_registry import MessageRegistry
+from repid.middlewares import (
+    ActorMiddlewareT,
+    ProducerMiddlewareT,
+    _compile_producer_middleware_pipeline,
+)
 from repid.router import Router
 from repid.serializer import default_serializer as repid_default_serializer
 from repid.server_registry import ServerRegistry
@@ -31,6 +36,8 @@ class Repid:
         tags: Sequence[Tag] | None = None,
         external_docs: ExternalDocs | None = None,
         default_serializer: SerializerT | None = None,
+        actor_middlewares: Sequence[ActorMiddlewareT] | None = None,
+        producer_middlewares: Sequence[ProducerMiddlewareT] | None = None,
     ) -> None:
         self.title = title
         self.version = version
@@ -45,7 +52,13 @@ class Repid:
         )
         self._messages = MessageRegistry()
         self._servers = ServerRegistry()
-        self._centralized_router = Router()
+        self._centralized_router = Router(
+            middlewares=actor_middlewares,
+        )
+        self._producer_middlewares = producer_middlewares
+        self._producer_middleware_pipeline = _compile_producer_middleware_pipeline(
+            producer_middlewares,
+        )
 
     @property
     def servers(self) -> ServerRegistry:
@@ -134,14 +147,14 @@ class Repid:
                 else "No default server configured.",
             )
 
-        await server.publish(
-            channel=channel if channel is not None else operation_channel,
-            message=MessageData(
+        await self._producer_middleware_pipeline(server.publish)(  # type: ignore[arg-type]
+            channel if channel is not None else operation_channel,
+            MessageData(
                 payload=payload,
                 headers=headers,
                 content_type=content_type,
             ),
-            server_specific_parameters=server_specific_parameters,
+            server_specific_parameters,
         )
 
     @overload

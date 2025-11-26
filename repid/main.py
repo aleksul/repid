@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, overload
 
 from repid._worker import _Worker
 from repid.asyncapi import AsyncAPI3Schema, AsyncAPIGenerator
+from repid.asyncapi_server import AsyncAPIServer, get_asyncapi_html
 from repid.data import MessageData, RunnerInfo
 from repid.message_registry import MessageRegistry
 from repid.middlewares import (
@@ -18,6 +19,7 @@ from repid.serializer import default_serializer as repid_default_serializer
 from repid.server_registry import ServerRegistry
 
 if TYPE_CHECKING:
+    from repid.asyncapi_server import AsyncAPIServerSettings
     from repid.data import Contact, ExternalDocs, License, Tag
     from repid.health_check_server import HealthCheckServerSettings
     from repid.serializer import SerializerT
@@ -79,6 +81,7 @@ class Repid:
         tasks_limit: int = 1000,
         register_signals: Iterable[signal.Signals] | None = None,
         health_check_server: HealthCheckServerSettings | None = None,
+        asyncapi_server: AsyncAPIServerSettings | None = None,
         server_name: str | None = None,
     ) -> RunnerInfo:
         server = self._servers.get_server(server_name)
@@ -97,6 +100,8 @@ class Repid:
             tasks_limit=tasks_limit,
             register_signals=register_signals,
             health_check_server=health_check_server,
+            asyncapi_server=asyncapi_server,
+            asyncapi_schema=self.generate_asyncapi_schema() if asyncapi_server else None,
             default_serializer=self.default_serializer,
         )
         runner = await worker.run()
@@ -116,6 +121,36 @@ class Repid:
             tags=list(self.tags) if self.tags is not None else None,
             external_docs=self.external_docs,
         ).generate_schema()
+
+    def asyncapi_html(
+        self,
+        *,
+        sidebar: bool = True,
+        info: bool = True,
+        servers: bool = True,
+        operations: bool = True,
+        messages: bool = True,
+        schemas: bool = True,
+        errors: bool = True,
+        expand_message_examples: bool = True,
+    ) -> str:
+        return get_asyncapi_html(
+            self.generate_asyncapi_schema(),
+            sidebar=sidebar,
+            info=info,
+            servers=servers,
+            operations=operations,
+            messages=messages,
+            schemas=schemas,
+            errors=errors,
+            expand_message_examples=expand_message_examples,
+        )
+
+    def asyncapi_server(
+        self,
+        server_settings: AsyncAPIServerSettings | None = None,
+    ) -> AsyncAPIServer:
+        return AsyncAPIServer(self.generate_asyncapi_schema(), server_settings)
 
     async def _send_message(
         self,

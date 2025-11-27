@@ -538,16 +538,26 @@ class AsyncAPIGenerator:
         if examples_list:
             msg["examples"] = examples_list
 
-    @staticmethod
-    def _apply_input_schema(msg: MessageObject, input_schema: ConverterInputSchema | None) -> None:
+    def _extract_definitions(self, schema: dict) -> None:
+        if "$defs" in schema:
+            for name, definition in schema.pop("$defs").items():
+                self._component_schemas[name] = definition
+
+    def _apply_input_schema(
+        self,
+        msg: MessageObject,
+        input_schema: ConverterInputSchema | None,
+    ) -> None:
         if input_schema is None:
             return
         if input_schema.payload_schema is not None:
             msg["payload"] = input_schema.payload_schema
+            self._extract_definitions(msg["payload"])
         if input_schema.content_type is not None:
             msg["contentType"] = input_schema.content_type
         if input_schema.headers_schema is not None:
             msg["headers"] = input_schema.headers_schema
+            self._extract_definitions(msg["headers"])
         if input_schema.correlation_id is not None:
             corr_obj = input_schema.correlation_id
             corr: CorrelationId = {"location": corr_obj.location}

@@ -519,13 +519,17 @@ class PydanticConverter:
     def get_input_schema(self) -> ConverterInputSchema:
         return ConverterInputSchema(
             payload_schema=(
-                self.payload_pydantic_model.model_json_schema()
+                self.payload_pydantic_model.model_json_schema(
+                    ref_template="#/components/schemas/{model}",
+                )
                 if self.payload_pydantic_model
                 else None
             ),
             content_type="application/json" if self.payload_pydantic_model else "",
             headers_schema=(
-                self.headers_pydantic_model.model_json_schema()
+                self.headers_pydantic_model.model_json_schema(
+                    ref_template="#/components/schemas/{model}",
+                )
                 if self.headers_pydantic_model
                 else None
             ),

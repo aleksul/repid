@@ -68,3 +68,21 @@ class ServerRegistry:
         if name not in self._servers:
             raise ValueError(f"Server '{name}' not found.")
         self._default_server = name
+
+    @property
+    def default(self) -> ServerT:
+        """Get the default server.
+
+        Returns:
+            ServerT: The default server
+
+        Raises:
+            ValueError: If no default server is set
+        """
+        default_server = self.get_default_server()
+        if default_server is None:
+            raise ValueError("No default server is set.")
+        return default_server
+
+    def __getitem__(self, name: str) -> ServerT:
+        return self._servers[name]

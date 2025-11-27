@@ -1,115 +1,109 @@
 from __future__ import annotations
 
-from collections import defaultdict
-
-import pytest
-
-from repid.actor import ActorData
-from repid.converter import BasicConverter
-from repid.retry_policy import RetryPolicyT, default_retry_policy_factory
-from repid.router import Router, RouterDefaults
+from repid import Router
+from repid.data.channel import Channel
 
 
 def test_empty_router() -> None:
     router = Router()
-    assert router.actors == {}
-    assert router.topics == frozenset()
-    assert router.queues == frozenset()
-
-
-def test_router_with_default_queue() -> None:
-    defaults = RouterDefaults(queue="default_queue")
-    router = Router(defaults=defaults)
-    assert router.defaults.queue == "default_queue"
+    assert len(router.actors) == 0
 
 
 def test_router_includes_other_router() -> None:
     router = Router()
     other_router = Router()
 
-    fn = lambda x: x  # noqa: E731
-    actor1 = ActorData(
-        fn=fn,
-        name="actor1",
-        queue="queue1",
-        retry_policy=default_retry_policy_factory(),
-        converter=BasicConverter(fn),
-    )
-    other_router.actors = {"actor1": actor1}
-    temp = defaultdict(set)
-    temp["queue1"].add("actor1")
-    other_router.topics_by_queue = temp
+    @other_router.actor
+    async def actor1() -> None:
+        pass
 
     router.include_router(other_router)
 
-    assert router.actors == {"actor1": actor1}
-    assert router.topics == frozenset({"actor1"})
-    assert router.queues == frozenset({"queue1"})
+    # Check that the actor was included
+    assert len(router.actors) == 1
+    assert router.actors[0].name == "actor1"
 
 
 def test_router_decorator_registers_actor() -> None:
     router = Router()
 
     @router.actor
-    def actor1() -> None:
+    async def actor1() -> None:
         pass
 
-    assert router.actors["actor1"]
-    assert router.topics == frozenset({"actor1"})
+    # Check that the actor was registered
+    assert len(router.actors) == 1
+    assert router.actors[0].name == "actor1"
 
 
 def test_router_decorator_overrides_actor_name() -> None:
     router = Router()
 
     @router.actor(name="actor1_renamed")
-    def actor1() -> None:
+    async def actor1() -> None:
         pass
 
-    assert router.actors["actor1_renamed"]
-    assert router.topics == frozenset({"actor1_renamed"})
+    # Check that the renamed actor exists
+    assert len(router.actors) == 1
+    assert router.actors[0].name == "actor1_renamed"
 
 
-@pytest.mark.parametrize(
-    ("queue", "retry_policy", "converter"),
-    [
-        (None, None, None),
-        ("actor1_queue", default_retry_policy_factory(), BasicConverter),
-        (None, default_retry_policy_factory(), BasicConverter),
-        (None, None, BasicConverter),
-    ],
-)
-def test_router_decorator_registers_actor_with_defaults(
-    queue: str | None,
-    retry_policy: RetryPolicyT | None,
-    converter: type[BasicConverter] | None,
-) -> None:
-    router = Router()
-    defaults = RouterDefaults(queue="default_queue")
-    router.defaults = defaults
-
-    @router.actor(queue=queue, retry_policy=retry_policy, converter=converter)
-    def actor1() -> None:
-        pass
-
-    if queue is None:
-        assert router.actors["actor1"].queue == "default_queue"
-    else:
-        assert router.actors["actor1"].queue == queue
-
-    if retry_policy is not None:
-        assert router.actors["actor1"].retry_policy is retry_policy
-
-    assert isinstance(router.actors["actor1"].converter, BasicConverter)
-
-
-def test_router_decorator_uses_default_retry_policy() -> None:
-    expected_retry_policy = default_retry_policy_factory(min_backoff=1)
-    defaults = RouterDefaults(retry_policy=expected_retry_policy)
-
-    router = Router(defaults=defaults)
+def test_router_with_defaults() -> None:
+    router = Router(channel=Channel(address="custom_channel"))
 
     @router.actor
-    def actor1() -> None:
+    async def actor1() -> None:
         pass
 
-    assert router.actors["actor1"].retry_policy is expected_retry_policy
+    # Check that the actor is registered on the custom channel
+    assert len(router.actors) == 1
+    assert router.actors[0].channel_address == "custom_channel"
+
+
+def test_nested_router_include() -> None:
+    router1 = Router()
+    router2 = Router()
+    router3 = Router()
+
+    @router3.actor
+    async def deep_actor() -> None:
+        pass
+
+    router2.include_router(router3)
+    router1.include_router(router2)
+
+    # Check that the deeply nested actor was included
+    assert len(router1.actors) == 1
+    assert router1.actors[0].name == "deep_actor"
+
+
+def test_router_defaults_propagation() -> None:
+    router1 = Router(channel=Channel(address="channel1"))
+    router2 = Router()
+
+    @router2.actor
+    async def actor_in_router2() -> None:
+        pass
+
+    router1.include_router(router2)
+
+    # Check that the actor in router2 has the default channel from router1
+    assert len(router1.actors) == 1
+    assert router1.actors[0].channel_address == "channel1"
+    assert router1.actors[0].name == "actor_in_router2"
+
+
+def test_router_defaults_propagation_override() -> None:
+    router1 = Router(channel=Channel(address="channel1"))
+    router2 = Router(channel=Channel(address="channel2"))
+
+    @router2.actor
+    async def actor_in_router2() -> None:
+        pass
+
+    router1.include_router(router2)
+
+    # Check that the actor in router2 has the default channel from router2
+    assert len(router2.actors) == 1
+    assert router2.actors[0].channel_address == "channel2"
+    assert router2.actors[0].name == "actor_in_router2"

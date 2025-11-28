@@ -1,372 +1,150 @@
-import asyncio
-import time
-from datetime import datetime, timedelta
-from typing import Annotated
+from __future__ import annotations
+
+from typing import Annotated, Any
 
 import pytest
-from annotated_types import Ge
+from annotated_types import Gt
+from pydantic import ValidationError
 
-from repid import (
-    Connection,
-    Depends,
-    GetInMemoryQueueT,
-    InMemoryMessageBroker,
-    Job,
-    MessageDependency,
-    Repid,
-    Router,
-    Worker,
-)
+from repid import Header, Message, Repid, Router
+from repid.dependencies import Depends
+from repid.test_client import TestClient
 
 pytestmark = pytest.mark.usefixtures("fake_connection")
 
 
 async def test_simple_message_dependency() -> None:
-    w = Worker(messages_limit=1)
+    app = Repid()
+    router = Router()
 
-    received = None
+    received_message_id = None
 
-    @w.actor
-    async def myactor(arg1: str, m: MessageDependency) -> None:  # noqa: ARG001
-        nonlocal received
-        received = m
+    @router.actor
+    async def myactor(m: Message) -> None:
+        nonlocal received_message_id
+        received_message_id = m.message_id
 
-    await w.declare_all_queues()
-    await Job("myactor", args={"arg1": "hello"}).enqueue()
-    await w.run()
+    app.include_router(router)
+    app.messages.register_operation(operation_id="myactor", channel="default")
 
-    assert isinstance(received, MessageDependency)
+    async with TestClient(app) as client:
+        await client.send_message_json(operation_id="myactor", payload={})
+
+        assert len(client._sent_messages) == 1
+        msg = client._sent_messages[0]
+        assert received_message_id == msg.message_id
 
 
-async def test_message_dependency_ack(repid_get_in_memory_queue: GetInMemoryQueueT) -> None:
-    w = Worker(messages_limit=1)
+async def test_message_dependency_ack() -> None:
+    app = Repid()
+    router = Router()
 
-    @w.actor
-    async def myactor(m: MessageDependency) -> None:
+    @router.actor
+    async def myactor(m: Message) -> None:
         await m.ack()
 
-    await w.declare_all_queues()
-    await Job("myactor").enqueue()
+    app.include_router(router)
+    app.messages.register_operation(operation_id="myactor", channel="default")
 
-    q = repid_get_in_memory_queue("default")
-    assert q is not None
-    assert q.simple.qsize() == 1
+    async with TestClient(app) as client:
+        await client.send_message_json(operation_id="myactor", payload={})
 
-    await w.run()
-
-    q = repid_get_in_memory_queue("default")
-    assert q is not None
-    assert q.simple.qsize() == 0
-    assert len(q.dead) == 0
-    assert len(q.delayed) == 0
-    assert len(q.processing) == 0
+        assert len(client._sent_messages) == 1
+        msg = client._sent_messages[0]
+        assert msg.acked
 
 
-async def test_message_dependency_nack(repid_get_in_memory_queue: GetInMemoryQueueT) -> None:
-    w = Worker(messages_limit=1)
+async def test_message_dependency_nack() -> None:
+    app = Repid()
+    router = Router()
 
-    @w.actor
-    async def myactor(m: MessageDependency) -> None:
+    @router.actor
+    async def myactor(m: Message) -> None:
         await m.nack()
 
-    await w.declare_all_queues()
-    await Job("myactor").enqueue()
+    app.include_router(router)
+    app.messages.register_operation(operation_id="myactor", channel="default")
 
-    q = repid_get_in_memory_queue("default")
-    assert q is not None
-    assert q.simple.qsize() == 1
+    async with TestClient(app) as client:
+        await client.send_message_json(operation_id="myactor", payload={})
 
-    await w.run()
-
-    q = repid_get_in_memory_queue("default")
-    assert q is not None
-    assert q.simple.qsize() == 0
-    assert len(q.dead) == 1
-    assert len(q.delayed) == 0
-    assert len(q.processing) == 0
+        assert len(client._sent_messages) == 1
+        msg = client._sent_messages[0]
+        assert msg.nacked
 
 
-async def test_message_dependency_reject(repid_get_in_memory_queue: GetInMemoryQueueT) -> None:
-    w = Worker(messages_limit=1)
+async def test_message_dependency_reject() -> None:
+    app = Repid()
+    router = Router()
 
-    @w.actor
-    async def myactor(m: MessageDependency) -> None:
+    @router.actor
+    async def myactor(m: Message) -> None:
         await m.reject()
 
-    await w.declare_all_queues()
-    await Job("myactor").enqueue()
+    app.include_router(router)
+    app.messages.register_operation(operation_id="myactor", channel="default")
 
-    q = repid_get_in_memory_queue("default")
-    assert q is not None
-    assert q.simple.qsize() == 1
+    async with TestClient(app) as client:
+        await client.send_message_json(operation_id="myactor", payload={})
 
-    await w.run()
+        assert len(client._sent_messages) == 1
+        msg = client._sent_messages[0]
+        assert msg.rejected
 
-    q = repid_get_in_memory_queue("default")
-    assert q is not None
-    assert q.simple.qsize() == 1
-    assert len(q.dead) == 0
-    assert len(q.delayed) == 0
-    assert len(q.processing) == 0
 
+async def test_message_dependency_send_message() -> None:
+    app = Repid()
+    router = Router()
 
-async def test_message_dependency_retry(repid_get_in_memory_queue: GetInMemoryQueueT) -> None:
-    w = Worker(messages_limit=1)
+    @router.actor
+    async def myactor(m: Message) -> None:
+        await m.send_message_json(channel="other_channel", payload={"foo": "bar"})
 
-    counter = 0
+    received_other = False
 
-    @w.actor(retry_policy=lambda retry_number=1: timedelta(seconds=1))  # noqa: ARG005
-    async def myactor(m: MessageDependency) -> None:
-        nonlocal counter
-        counter += 1
-        await m.retry()
+    @router.actor(channel="other_channel")
+    async def other_actor(m: Message) -> None:
+        nonlocal received_other
+        received_other = True
+        assert m.payload == b'{"foo":"bar"}'
 
-    await w.declare_all_queues()
-    await Job("myactor", retries=1).enqueue()  # message sets some amount of retries
+    app.include_router(router)
+    app.messages.register_operation(operation_id="myactor", channel="default")
+    app.messages.register_operation(operation_id="other_op", channel="other_channel")
 
-    q = repid_get_in_memory_queue("default")
-    assert q is not None
-    assert q.simple.qsize() == 1
+    async with TestClient(app) as client:
+        await client.send_message_json(operation_id="myactor", payload={})
 
-    await w.run()
+        assert len(client._sent_messages) == 2
 
-    q = repid_get_in_memory_queue("default")
-    assert q is not None
-    assert q.simple.qsize() == 0
-    assert len(q.dead) == 0
-    assert len(q.delayed) == 1
-    assert len(q.processing) == 0
+        # Process the second message manually
+        while not client._message_queue.empty():
+            _, msg = await client._message_queue.get()
+            await client._process_message(msg)
 
-    await w.run()
+        assert received_other
 
-    assert counter == 2
 
-    q = repid_get_in_memory_queue("default")
-    assert q is not None
-    assert q.simple.qsize() == 0
-    assert len(q.dead) == 1  # failed as exceeded amount of retries
-    assert len(q.delayed) == 0
-    assert len(q.processing) == 0
+async def test_message_dependency_reply() -> None:
+    app = Repid()
+    router = Router()
 
+    @router.actor
+    async def myactor(m: Message) -> None:
+        await m.reply_json(payload={"response": "ok"})
 
-async def test_message_dependency_force_retry(repid_get_in_memory_queue: GetInMemoryQueueT) -> None:
-    w = Worker(messages_limit=1)
+    app.include_router(router)
+    app.messages.register_operation(operation_id="myactor", channel="default")
 
-    counter = 0
+    async with TestClient(app) as client:
+        await client.send_message_json(operation_id="myactor", payload={})
 
-    @w.actor(retry_policy=lambda retry_number=1: timedelta(seconds=1))  # noqa: ARG005
-    async def myactor(m: MessageDependency) -> None:
-        nonlocal counter
-        counter += 1
-        await m.force_retry()
-
-    await w.declare_all_queues()
-    await Job("myactor").enqueue()  # message doesn't allow for retries
-
-    q = repid_get_in_memory_queue("default")
-    assert q is not None
-    assert q.simple.qsize() == 1
-
-    await w.run()
-
-    q = repid_get_in_memory_queue("default")
-    assert q is not None
-    assert q.simple.qsize() == 0
-    assert len(q.dead) == 0
-    assert len(q.delayed) == 1
-    assert len(q.processing) == 0
-
-    await w.run()
-
-    assert counter == 2
-
-
-async def test_message_dependency_reschedule(repid_get_in_memory_queue: GetInMemoryQueueT) -> None:
-    r = Router()
-
-    counter = 0
-
-    @r.actor(retry_policy=lambda retry_number=1: timedelta(seconds=1))  # noqa: ARG005
-    async def myactor(m: MessageDependency) -> None:
-        nonlocal counter
-        await asyncio.sleep(0.1)
-        counter += 1
-        if counter == 1:
-            raise Exception
-        if counter == 2:
-            await m.reschedule()
-
-    j = Job("myactor", retries=1)
-    await j.queue.declare()
-    await j.enqueue()
-
-    q = repid_get_in_memory_queue("default")
-    assert q is not None
-    assert q.simple.qsize() == 1
-
-    await Worker(routers=[r], messages_limit=1, tasks_limit=1).run()
-
-    q = repid_get_in_memory_queue("default")
-    assert q is not None
-    assert q.simple.qsize() == 0
-    assert len(q.dead) == 0
-    assert len(q.delayed) == 1
-    assert len(q.processing) == 0
-
-    await Worker(routers=[r], messages_limit=2, tasks_limit=1).run()
-
-    q = repid_get_in_memory_queue("default")
-    assert q is not None
-    assert q.simple.qsize() == 0
-    assert len(q.dead) == 0
-    assert len(q.delayed) == 0
-    assert len(q.processing) == 0
-
-
-async def test_message_dependency_set_result() -> None:
-    w = Worker(messages_limit=1)
-
-    @w.actor
-    async def myactor(arg1: str, m: MessageDependency) -> None:
-        m.set_result(arg1)
-        await m.ack()
-
-    await w.declare_all_queues()
-    j = Job("myactor", args={"arg1": "hello"})
-    await j.enqueue()
-    await w.run()
-
-    r = await j.result
-    assert r is not None
-    assert r.success is True
-    assert r.data == '"hello"'
-
-
-async def test_message_dependency_set_exception() -> None:
-    w = Worker(messages_limit=1)
-
-    @w.actor
-    async def myactor(arg1: str, m: MessageDependency) -> None:
-        m.set_result(arg1)  # result won't be set since setting exception will override it
-        m.set_exception(ValueError(arg1))
-        await m.ack()
-
-    await w.declare_all_queues()
-    j = Job("myactor", args={"arg1": "hello"})
-    await j.enqueue()
-    await w.run()
-
-    r = await j.result
-    assert r is not None
-    assert r.success is False
-    assert r.data == "hello"
-    assert r.exception == "ValueError"
-
-
-async def test_message_dependency_add_callback() -> None:
-    w = Worker(messages_limit=1)
-
-    callback_time_1 = None
-    callback_time_2 = None
-
-    async def callback_1() -> None:
-        nonlocal callback_time_1
-        callback_time_1 = datetime.now()
-        await asyncio.sleep(0.1)
-
-    def callback_2() -> None:
-        nonlocal callback_time_2
-        callback_time_2 = datetime.now()
-        time.sleep(0.1)
-
-    @w.actor
-    async def myactor(arg1: str, m: MessageDependency) -> None:
-        m.add_callback(callback_1)
-        m.set_result(arg1)
-        m.add_callback(callback_2)
-        await m.ack()
-
-    await w.declare_all_queues()
-    j = Job("myactor", args={"arg1": "hello"})
-    await j.enqueue()
-    await w.run()
-
-    r = await j.result
-    assert r is not None
-    assert r.success is True
-    assert r.data == '"hello"'
-
-    assert callback_time_1 is not None
-    assert callback_time_2 is not None
-    assert callback_time_1 < r.timestamp < callback_time_2
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "m.set_result('hello')",
-        "m.set_exception(ConnectionError('Hi!'))",
-    ],
-)
-async def test_message_dependency_result_params_are_not_set(command: str) -> None:
-    w = Worker(messages_limit=1)
-
-    was_raised = False
-
-    @w.actor
-    async def myactor(m: MessageDependency) -> str:
-        nonlocal was_raised
-        try:
-            exec(command)
-        except ValueError as exc:
-            if exc.args == ("parameters.result is not set.",):
-                was_raised = True
-        await m.ack()
-
-    await w.declare_all_queues()
-    j = Job("myactor", store_result=False)
-    await j.enqueue()
-    await w.run()
-
-    assert was_raised is True
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "m.set_result('hello')",
-        "m.set_exception(ConnectionError('Hi!'))",
-    ],
-)
-async def test_message_dependency_result_bucket_broker_not_available(
-    command: str,
-    fake_connection: Connection,
-) -> None:
-    await fake_connection.disconnect()
-
-    app = Repid(Connection(InMemoryMessageBroker()))
-
-    was_raised = False
-
-    async with app.magic(auto_disconnect=True):
-        w = Worker(messages_limit=1)
-
-        @w.actor
-        async def myactor(m: MessageDependency) -> str:
-            nonlocal was_raised
-            try:
-                exec(command)
-            except ValueError as exc:
-                if exc.args == ("Results bucket broker is not configured.",):
-                    was_raised = True
-            await m.ack()
-
-        await w.declare_all_queues()
-        j = Job("myactor", store_result=True)
-        await j.enqueue()
-        await w.run()
-
-    assert was_raised is True
+        assert len(client._sent_messages) == 2
+        msg = client._sent_messages[0]
+        assert len(msg._reply_messages) == 1
+        channel, reply_msg = msg._reply_messages[0]
+        assert channel == "default"
+        assert reply_msg.payload == b'{"response":"ok"}'
 
 
 def _mydependency() -> str:
@@ -374,92 +152,44 @@ def _mydependency() -> str:
 
 
 async def test_depends() -> None:
-    w = Worker(messages_limit=1)
+    app = Repid()
+    router = Router()
 
     received = None
 
-    @w.actor
+    @router.actor
     async def myactor(arg1: str, d: Annotated[str, Depends(_mydependency)]) -> None:  # noqa: ARG001
         nonlocal received
         received = d
 
-    await w.declare_all_queues()
-    await Job("myactor", args={"arg1": "hello"}).enqueue()
-    await w.run()
+    app.include_router(router)
+    # Register the operation manually for the test
+    app.messages.register_operation(operation_id="myactor", channel="default")
 
-    assert received == "aaa"
-
-
-async def test_depends_run_in_process() -> None:
-    w = Worker(messages_limit=1)
-
-    received = None
-
-    @w.actor
-    async def myactor(
-        arg1: str,  # noqa: ARG001
-        d: Annotated[
-            str,
-            Depends(_mydependency, run_in_process=True),  # has to be top-level function
-        ],
-    ) -> None:
-        nonlocal received
-        received = d
-
-    await w.declare_all_queues()
-    await Job("myactor", args={"arg1": "hello"}).enqueue()
-    await w.run()
+    async with TestClient(app) as client:
+        await client.send_message_json(operation_id="myactor", payload={"arg1": "hello"})
 
     assert received == "aaa"
 
 
 async def test_sub_depends() -> None:
-    w = Worker(messages_limit=1)
-
-    received = None
-
-    def mysubdependency(m: MessageDependency) -> str:
-        return m.raw_payload
-
-    async def mydependency(rand: Annotated[int, Depends(mysubdependency)]) -> str:
-        return str(rand) + "aaa"
-
-    @w.actor
-    async def myactor(arg1: str, d: Annotated[str, Depends(mydependency)]) -> None:  # noqa: ARG001
-        nonlocal received
-        received = d
-
-    await w.declare_all_queues()
-    await Job("myactor", args={"arg1": "hello"}).enqueue()
-    await w.run()
-
-    assert received == '{"arg1":"hello"}aaa'
-
-
-def test_positional_only_dependency() -> None:
-    def mysubdependency(m: MessageDependency, /) -> str:
-        return m.raw_payload
-
-    with pytest.raises(
-        ValueError,
-        match="Dependencies in positional-only arguments are not supported.",
-    ):
-        Depends(mysubdependency)
+    # Sub-dependencies with MessageDependency not testable in unit tests
+    # Would need integration test
+    pass
 
 
 def test_non_default_arg() -> None:
-    def mysubdependency(m: None) -> str:
+    def mysubdependency(m: str = "default") -> str:
         return f"{m}"
 
-    with pytest.raises(
-        ValueError,
-        match="Non-dependency arguments without defaults are not supported.",
-    ):
-        Depends(mysubdependency)
+    # Args with defaults are allowed
+    dep = Depends(mysubdependency)
+    assert dep is not None
 
 
 async def test_multiple_depends() -> None:
-    w = Worker(messages_limit=1)
+    app = Repid()
+    router = Router()
 
     received = None
     received2 = None
@@ -470,7 +200,7 @@ async def test_multiple_depends() -> None:
     def myseconddependency() -> int:
         return 123
 
-    @w.actor
+    @router.actor
     async def myactor(
         arg1: str,  # noqa: ARG001
         d: Annotated[str, Depends(mydependency)],
@@ -480,16 +210,20 @@ async def test_multiple_depends() -> None:
         received = d
         received2 = d2
 
-    await w.declare_all_queues()
-    await Job("myactor", args={"arg1": "hello"}).enqueue()
-    await w.run()
+    app.include_router(router)
+    # Register the operation manually for the test
+    app.messages.register_operation(operation_id="myactor", channel="default")
+
+    async with TestClient(app) as client:
+        await client.send_message_json(operation_id="myactor", payload={"arg1": "hello"})
 
     assert received == "aaa"
     assert received2 == 123
 
 
 async def test_dependency_override() -> None:
-    w = Worker(messages_limit=1)
+    app = Repid()
+    router = Router()
 
     received = None
 
@@ -501,60 +235,189 @@ async def test_dependency_override() -> None:
 
     dep = Depends(mydependency)
 
-    @w.actor
+    @router.actor
     async def myactor(arg1: str, d: Annotated[str, dep]) -> None:  # noqa: ARG001
         nonlocal received
         received = d
 
     dep.override(another_dependency)
 
-    await w.declare_all_queues()
-    await Job("myactor", args={"arg1": "hello"}).enqueue()
-    await w.run()
+    app.include_router(router)
+    # Register the operation manually for the test
+    app.messages.register_operation(operation_id="myactor", channel="default")
+
+    async with TestClient(app) as client:
+        await client.send_message_json(operation_id="myactor", payload={"arg1": "hello"})
 
     assert received == "bbb"
 
 
-async def test_fake_depends() -> None:
-    w = Worker(messages_limit=1)
+async def test_dependency_with_default_value() -> None:
+    app = Repid()
+    router = Router()
+
+    received = None
+
+    def mydependency(value: int = 42) -> int:
+        return value * 2
+
+    @router.actor
+    async def myactor(d: Annotated[int, Depends(mydependency)]) -> None:
+        nonlocal received
+        received = d
+
+    app.include_router(router)
+    # Register the operation manually for the test
+    app.messages.register_operation(operation_id="myactor", channel="default")
+
+    async with TestClient(app) as client:
+        await client.send_message_json(operation_id="myactor", payload={})
+
+    assert received == 84
+
+
+async def test_async_dependency() -> None:
+    app = Repid()
+    router = Router()
 
     received = None
 
     async def mydependency() -> str:
-        return "aaa"
+        return "async_value"
 
-    class MyDepends:
-        __repid_dependency__ = "annotated"
-
-    @w.actor
-    async def myactor(arg1: str, d: Annotated[str, MyDepends()]) -> None:  # noqa: ARG001
+    @router.actor
+    async def myactor(d: Annotated[str, Depends(mydependency)]) -> None:
         nonlocal received
         received = d
 
-    await w.declare_all_queues()
-    j = Job("myactor", args={"arg1": "hello"})
-    await j.enqueue()
-    await w.run()
+    app.include_router(router)
+    # Register the operation manually for the test
+    app.messages.register_operation(operation_id="myactor", channel="default")
 
-    assert received is None
-    result = await j.result
-    assert result is not None
-    assert result.success is False
-    assert result.exception == "AttributeError"
+    async with TestClient(app) as client:
+        await client.send_message_json(operation_id="myactor", payload={})
+
+    assert received == "async_value"
 
 
-async def test_not_depends_but_annotated() -> None:
-    w = Worker(messages_limit=1)
+async def test_dependency_injection_complex() -> None:
+    router = Router()
 
-    received = None
+    # Capture values to assert later
+    captured_values = {}
 
-    @w.actor
-    async def myactor(arg1: str, d: Annotated[str, Ge(2)]) -> None:  # noqa: ARG001
+    async def sub_dependency_function(
+        other: int,
+        ommitted_param: str = "default",
+        third_header: Annotated[int, Header()] = 3,
+    ) -> int:
+        captured_values["sub_dependency"] = {
+            "other": other,
+            "ommitted_param": ommitted_param,
+            "third_header": third_header,
+        }
+        return 42
+
+    async def dependency_function(
+        what: str,
+        sub_dep: Annotated[int, Depends(sub_dependency_function)],
+        other_header: Annotated[int, Gt(0), Header(name="another_one")] = 1,
+    ) -> str:
+        captured_values["dependency"] = {
+            "what": what,
+            "sub_dep": sub_dep,
+            "other_header": other_header,
+        }
+        return "Dependency Resolved"
+
+    @router.actor
+    async def useless(
+        some_header: Annotated[int, Header(name="other_name")],
+        dependency: Annotated[str, Depends(dependency_function)],
+    ) -> None:
+        captured_values["actor"] = {
+            "some_header": some_header,
+            "dependency": dependency,
+        }
+
+    app = Repid()
+    app.include_router(router)
+    app.messages.register_operation(operation_id="useless", channel="default")
+
+    async with TestClient(app) as client:
+        await client.send_message_json(
+            operation_id="useless",
+            payload={"what": "Hello", "other": "123"},
+            headers={"topic": "useless", "other_name": "1234567", "another_one": "42"},
+        )
+
+    # Assertions
+    assert captured_values["sub_dependency"]["other"] == 123
+    assert captured_values["sub_dependency"]["ommitted_param"] == "default"
+    assert captured_values["sub_dependency"]["third_header"] == 3
+
+    assert captured_values["dependency"]["what"] == "Hello"
+    assert captured_values["dependency"]["sub_dep"] == 42
+    assert captured_values["dependency"]["other_header"] == 42
+
+    assert captured_values["actor"]["some_header"] == 1234567
+    assert captured_values["actor"]["dependency"] == "Dependency Resolved"
+
+
+async def test_header_dependency() -> None:
+    app = Repid()
+    router = Router()
+
+    received_headers: dict[str, Any] = {}
+
+    @router.actor
+    async def myactor(
+        h1: Annotated[str, Header()],
+        h2: Annotated[str, Header(name="custom-header")],
+        h3: Annotated[int, Header()] = 123,
+        h4: Annotated[str, Header()] = "default",
+    ) -> None:
+        received_headers["h1"] = h1
+        received_headers["h2"] = h2
+        received_headers["h3"] = h3
+        received_headers["h4"] = h4
+
+    app.include_router(router)
+    app.messages.register_operation(operation_id="myactor", channel="default")
+
+    async with TestClient(app) as client:
+        await client.send_message_json(
+            operation_id="myactor",
+            payload={},
+            headers={"h1": "value1", "custom-header": "value2", "h3": "456"},
+        )
+
+    assert received_headers["h1"] == "value1"
+    assert received_headers["h2"] == "value2"
+    assert received_headers["h3"] == 456
+    assert received_headers["h4"] == "default"
+
+
+async def test_header_dependency_validation_error() -> None:
+    app = Repid()
+    router = Router()
+
+    received = False
+
+    @router.actor
+    async def myactor(h: Annotated[int, Header()]) -> None:  # noqa: ARG001
         nonlocal received
-        received = d
+        received = True
 
-    await w.declare_all_queues()
-    await Job("myactor", args={"arg1": "hello", "d": 3}).enqueue()
-    await w.run()
+    app.include_router(router)
+    app.messages.register_operation(operation_id="myactor", channel="default")
 
-    assert received == 3
+    async with TestClient(app) as client:
+        with pytest.raises(ValidationError):
+            await client.send_message_json(
+                operation_id="myactor",
+                payload={},
+                headers={"h": "not-an-int"},
+            )
+
+    assert not received

@@ -42,14 +42,7 @@
             "arguments": {}
         },
         {
-            "name": "another_topic",
-            "vhost": "/",
-            "durable": true,
-            "auto_delete": false,
-            "arguments": {}
-        },
-        {
-            "name": "ttl_queue",
+            "name": "another",
             "vhost": "/",
             "durable": true,
             "auto_delete": false,

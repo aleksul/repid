@@ -1,55 +1,57 @@
+from __future__ import annotations
+
 import asyncio
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any
 
-import pytest
-
-from repid import Job, Repid
-from repid.connections.rabbitmq import RabbitMessageBroker
+from repid import Repid
+from repid.connections.amqp import AmqpServer
 
 if TYPE_CHECKING:
     from pytest_docker_tools import wrappers
 
-    from repid.connections.rabbitmq.consumer import _RabbitConsumer as RabbitConsumer
-
 
 async def test_server_side_cancel(
-    rabbitmq_connection: Repid,
-    rabbitmq_container: "wrappers.Container",
-    caplog: pytest.LogCaptureFixture,
+    rabbitmq_connection: AmqpServer,
+    rabbitmq_container: wrappers.Container,
 ) -> None:
-    async with rabbitmq_connection.magic(auto_disconnect=True) as conn:
-        message_broker = cast(RabbitMessageBroker, conn.message_broker)
-        await message_broker.queue_declare("default")
+    callback_event = asyncio.Event()
 
-        consumer = cast("RabbitConsumer", message_broker.get_consumer("default"))
+    repid_app = Repid()
+    repid_app.servers.register_server("default", rabbitmq_connection, is_default=True)
 
-        await consumer.start()
+    async with repid_app.servers.default.connection() as conn:
 
-        await asyncio.sleep(0.5)
+        async def dummy_callback(_: Any) -> None:
+            callback_event.set()
 
-        consumers = rabbitmq_container.exec_run("rabbitmqctl list_consumers")
-        ctag = consumers.output.decode().split("\n")[2].split("\t")[2]
+        subscriber = await conn.subscribe(channels_to_callbacks={"default": dummy_callback})
 
-        channel = consumer._get_channel_if_opened()
-        assert channel is not None
-
-        await channel.basic_cancel(ctag)
-
-        await Job("do_nothing").enqueue()
-
-        r, _, _ = await asyncio.wait_for(consumer.consume(), timeout=5)
-        assert r.topic == "do_nothing"
-
-        assert any(
-            (
-                all(
-                    (
-                        "ERROR" in x,
-                        "RabbitMQ has terminated consumer" in x,
-                    ),
-                )
-                for x in caplog.text.splitlines()
-            ),
+        rabbit_list_result = rabbitmq_container.exec_run("rabbitmqctl list_consumers")
+        assert rabbit_list_result.exit_code == 0, (
+            f"Failed to list consumers: {rabbit_list_result.output.decode()}"
+        )
+        pid: str = (
+            rabbit_list_result.output.decode()
+            .removeprefix("Listing consumers ...\n")
+            .removeprefix("Listing consumers in vhost / ...\n")
+            .splitlines()[1]
+            .split("\t")[1]
         )
 
-        await consumer.finish()
+        rabbit_close_result = rabbitmq_container.exec_run(
+            f'rabbitmqctl close_connection "{pid}" "Server side cancel test"',
+        )
+        assert rabbit_close_result.exit_code == 0, (
+            f"Failed to close connection: {rabbit_close_result.output.decode()}"
+        )
+
+        assert not callback_event.is_set()
+
+        # test that even after server closed the connection,
+        # we still should be able to send and receive messages
+        # because the client should reconnect automatically
+        await repid_app.send_message(channel="default", payload=b"")
+
+        await asyncio.wait_for(callback_event.wait(), timeout=30.0)
+
+        await subscriber.close()

@@ -17,10 +17,13 @@ async def test_simple_job(autoconn: Repid) -> None:
         hit = True
 
     autoconn.include_router(router)
-    autoconn.messages.register_operation(operation_id="awesome_job", channel="default")
 
     async with autoconn.servers.default.connection():
-        await autoconn.send_message_json(operation_id="awesome_job", payload={})
+        await autoconn.send_message(
+            channel="default",
+            payload=b"",
+            headers={"topic": "awesome_job"},
+        )
         await asyncio.wait_for(autoconn.run_worker(messages_limit=1, tasks_limit=1), timeout=5.0)
 
     assert hit
@@ -42,12 +45,12 @@ async def test_args_job(autoconn: Repid) -> None:
         hit = True
 
     autoconn.include_router(router)
-    autoconn.messages.register_operation(operation_id="awesome_job", channel="default")
 
     async with autoconn.servers.default.connection():
         await autoconn.send_message_json(
-            operation_id="awesome_job",
+            channel="default",
             payload={"my_arg1": assertion1, "my_arg2": assertion2},
+            headers={"topic": "awesome_job"},
         )
         await asyncio.wait_for(autoconn.run_worker(messages_limit=1, tasks_limit=1), timeout=5.0)
 

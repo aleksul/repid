@@ -25,12 +25,14 @@ class AmqpSubscriber:
         links: list[ReceiverLink],
         queues_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
         concurrency_limit: int | None = None,
+        paused_event: asyncio.Event,
     ) -> None:
         self._server = server
         self._links = links
         self._queues_to_callbacks = queues_to_callbacks
         self._concurrency_limit = concurrency_limit
         self._is_active = True
+        self._paused_event = paused_event
         self._task = asyncio.create_task(self._run_forever())
 
     @property
@@ -43,9 +45,11 @@ class AmqpSubscriber:
 
     async def pause(self) -> None:
         self._is_active = False
+        self._paused_event.clear()
 
     async def resume(self) -> None:
         self._is_active = True
+        self._paused_event.set()
 
     async def _run_forever(self) -> None:
         if self._server._connection is None or self._server._connection._incoming_task is None:
@@ -60,11 +64,15 @@ class AmqpSubscriber:
         server: AmqpServer,
         queues_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
         concurrency_limit: int | None = None,
+        naming_strategy: Callable[[str], str],
     ) -> AmqpSubscriber:
         links = []
         if server._connection is None or server.session is None:
             raise ConnectionError("Server not connected")
         session = server.session
+
+        paused_event = asyncio.Event()
+        paused_event.set()
 
         for queue, callback in queues_to_callbacks.items():
 
@@ -77,6 +85,7 @@ class AmqpSubscriber:
                 queue: str = queue,
                 callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]] = callback,
             ) -> None:
+                await paused_event.wait()
                 msg = AmqpReceivedMessage(
                     payload=payload,
                     headers=headers,
@@ -89,7 +98,7 @@ class AmqpSubscriber:
                 await callback(msg)
 
             link = await session.create_receiver_link(
-                f"/queues/{queue}",  # rabbitmq's source address v2 format
+                naming_strategy(queue),
                 f"receiver-{queue}",
                 wrapped_callback,
             )
@@ -100,6 +109,7 @@ class AmqpSubscriber:
             links=links,
             queues_to_callbacks=queues_to_callbacks,
             concurrency_limit=concurrency_limit,
+            paused_event=paused_event,
         )
 
     async def close(self) -> None:

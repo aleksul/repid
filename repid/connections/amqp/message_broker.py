@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from repid.connections.abc import CapabilitiesT, SentMessageT, SubscriberT
 from repid.connections.amqp.protocol.protocol import AmqpConnection, SenderLink, Session
@@ -33,6 +33,8 @@ class AmqpServer:
         tags: Sequence[Tag] | None = None,
         external_docs: ExternalDocs | None = None,
         bindings: ServerBindingsObject | None = None,
+        publish_naming_strategy: Callable[[str, str | None], str] | None = None,
+        subscribe_naming_strategy: Callable[[str], str] | None = None,
     ) -> None:
         self.dsn = dsn
         self._connection: AmqpConnection | None = None
@@ -51,6 +53,13 @@ class AmqpServer:
         self._external_docs = external_docs
         self._bindings = bindings
 
+        self._publish_naming_strategy = (
+            publish_naming_strategy or self._default_publish_naming_strategy
+        )
+        self._subscribe_naming_strategy = (
+            subscribe_naming_strategy or self._default_subscribe_naming_strategy
+        )
+
         # Parse DSN for server info
         parsed = urlparse(dsn)
         self._host = f"{parsed.hostname}:{parsed.port}" if parsed.port else str(parsed.hostname)
@@ -63,6 +72,19 @@ class AmqpServer:
 
         # Active subscribers
         self._active_subscribers: list[AmqpSubscriber] = []
+
+    @staticmethod
+    def _default_publish_naming_strategy(
+        channel: str,
+        routing_key: str | None = None,  # noqa: ARG004
+    ) -> str:
+        # uses RabbitMQ Address v2 style - routes directly to a queue via amq.default exchange
+        return f"/queues/{quote(channel, safe='')}"
+
+    @staticmethod
+    def _default_subscribe_naming_strategy(channel: str) -> str:
+        # uses RabbitMQ Address v2 style - consumes from a queue
+        return f"/queues/{quote(channel, safe='')}"
 
     # ServerT properties
     @property
@@ -176,25 +198,52 @@ class AmqpServer:
         message: SentMessageT,
         server_specific_parameters: dict[str, Any] | None = None,
     ) -> None:
+        # server specific parameters
+        # - header: AmqpHeader
+        # - properties: AmqpProperties
+        # - delivery_annotations: dict[str, Any]
+        # - message_annotations: dict[str, Any]
+        # - footers: dict[str, Any]
+        # - to: str - override address
+        # - routing_key: str - specify routing key for naming strategy
+
         logger.debug("Publishing message to channel '{channel}'.", extra={"channel": channel})
 
         if not self.is_connected or self._session is None:
             raise ConnectionError("Not connected to AMQP server")
 
-        # Get/Create Sender Link
-        if channel not in self._publisher_links:
-            link = await self._session.create_sender_link(channel, f"sender-{channel}")
-            self._publisher_links[channel] = link
+        params = server_specific_parameters or {}
 
-        link = self._publisher_links[channel]
+        # Get/Create Sender Link
+        if "to" in params:
+            address = params["to"]
+        else:
+            address = self._publish_naming_strategy(channel, params.get("routing_key"))
+
+        if address not in self._publisher_links:
+            link = await self._session.create_sender_link(address, f"sender-{channel}")
+            self._publisher_links[address] = link
+
+        link = self._publisher_links[address]
+
+        # Prepare server-specific parameters for uAMQP
+        header = params.get("header")
+        properties = params.get("properties")
+        delivery_annotations = params.get("delivery_annotations")
+        message_annotations = params.get("message_annotations")
+        footers = params.get("footers")
 
         # Send message
         # We need to encode message payload if it's not bytes?
         # SentMessageT.payload is bytes.
         await link.send(
             message.payload,
-            message.headers,
-            **(server_specific_parameters or {}),
+            headers=message.headers,
+            message_header=header,
+            message_properties=properties,
+            delivery_annotations=delivery_annotations,
+            message_annotations=message_annotations,
+            footer=footers,
         )
 
     # Message receiving
@@ -217,6 +266,7 @@ class AmqpServer:
             queues_to_callbacks=channels_to_callbacks,
             concurrency_limit=concurrency_limit,
             server=self,
+            naming_strategy=self._subscribe_naming_strategy,
         )
         self._active_subscribers.append(subscriber)
 

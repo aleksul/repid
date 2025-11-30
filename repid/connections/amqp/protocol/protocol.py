@@ -20,7 +20,7 @@ from repid.connections.amqp._uamqp._encode import (
 )
 from repid.connections.amqp._uamqp.constants import MAX_FRAME_SIZE_BYTES, MIN_MAX_FRAME_SIZE
 from repid.connections.amqp._uamqp.endpoints import Source, Target
-from repid.connections.amqp._uamqp.message import Message
+from repid.connections.amqp._uamqp.message import Header, Message, Properties
 from repid.connections.amqp._uamqp.performatives import (
     AttachFrame,
     BeginFrame,
@@ -557,13 +557,21 @@ class SenderLink(Link):
         self,
         message_payload: bytes,
         headers: dict[str, Any] | None = None,
-        **kwargs: Any,
+        message_header: Header | None = None,
+        message_properties: Properties | None = None,
+        delivery_annotations: dict[str, Any] | None = None,
+        message_annotations: dict[str, Any] | None = None,
+        footer: dict[str, Any] | None = None,
     ) -> None:
         # Wrap payload in Message and encode
         msg = Message(
             data=message_payload,
             application_properties=headers,
-            **kwargs,
+            header=message_header,
+            properties=message_properties,
+            delivery_annotations=delivery_annotations,
+            message_annotations=message_annotations,
+            footer=footer,
         )
 
         max_frame_size = min(

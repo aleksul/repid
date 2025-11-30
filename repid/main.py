@@ -182,7 +182,7 @@ class Repid:
                 else "No default server configured.",
             )
 
-        await self._producer_middleware_pipeline(server.publish)(  # type: ignore[arg-type]
+        await self._producer_middleware_pipeline(server.publish)(
             channel if channel is not None else operation_channel,
             MessageData(
                 payload=payload,

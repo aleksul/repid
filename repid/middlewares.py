@@ -8,27 +8,46 @@ if TYPE_CHECKING:
     from repid.connections.abc import ReceivedMessageT
     from repid.data import ActorData, MessageData
 
+ActorMiddlewareReturnsT = TypeVar("ActorMiddlewareReturnsT")
+ProducerMiddlewareReturnsT = TypeVar("ProducerMiddlewareReturnsT")
+
 
 class ActorMiddlewareT(Protocol):
     async def __call__(
         self,
-        call_next: Callable[..., Any],
+        call_next: Callable[
+            [ReceivedMessageT, ActorData],
+            Coroutine[Any, Any, ActorMiddlewareReturnsT],
+        ],
         message: ReceivedMessageT,
         actor: ActorData,
-    ) -> Any: ...
+    ) -> ActorMiddlewareReturnsT: ...
 
 
 class ProducerMiddlewareT(Protocol):
     async def __call__(
         self,
-        call_next: Callable[[str, MessageData, dict[str, Any] | None], Any],
+        call_next: Callable[
+            [str, MessageData, dict[str, Any] | None],
+            Coroutine[Any, Any, ProducerMiddlewareReturnsT],
+        ],
+        channel: str,
+        message: MessageData,
+        server_specific_parameters: dict[str, Any] | None,
+    ) -> ProducerMiddlewareReturnsT: ...
+
+
+YourFunc = TypeVar("YourFunc", bound=Callable)
+
+
+class _ProducerMiddlewareLastLeaf(Protocol):
+    async def __call__(
+        self,
+        *,
         channel: str,
         message: MessageData,
         server_specific_parameters: dict[str, Any] | None,
     ) -> Any: ...
-
-
-YourFunc = TypeVar("YourFunc", bound=Callable)
 
 
 def _compile_actor_middleware_pipeline(
@@ -74,8 +93,8 @@ def _compile_actor_middleware_pipeline(
 def _compile_producer_middleware_pipeline(
     middlewares: Sequence[ProducerMiddlewareT] | None,
 ) -> Callable[
-    [Callable[[str, MessageData, dict[str, Any] | None], Coroutine[Any, Any, Any]]],
-    Callable[[str, MessageData, dict[str, Any] | None], Coroutine[Any, Any, Any]],
+    [_ProducerMiddlewareLastLeaf],
+    Callable[[str, MessageData, dict[str, Any] | None], Coroutine],
 ]:
     """Compile middlewares into a call-next chain factory.
 
@@ -85,14 +104,18 @@ def _compile_producer_middleware_pipeline(
     mws: list[ProducerMiddlewareT] = list(middlewares or [])
 
     def assemble(
-        leaf: Callable[[str, MessageData, dict[str, Any] | None], Coroutine[Any, Any, Any]],
-    ) -> Callable[[str, MessageData, dict[str, Any] | None], Coroutine[Any, Any, Any]]:
+        leaf: _ProducerMiddlewareLastLeaf,
+    ) -> Callable[[str, MessageData, dict[str, Any] | None], Coroutine]:
         async def last(
             channel: str,
             message: MessageData,
             server_specific_parameters: dict[str, Any] | None,
         ) -> Any:
-            return await leaf(channel, message, server_specific_parameters)
+            return await leaf(
+                channel=channel,
+                message=message,
+                server_specific_parameters=server_specific_parameters,
+            )
 
         next_fn: Callable[[str, MessageData, dict[str, Any] | None], Coroutine[Any, Any, Any]] = (
             last

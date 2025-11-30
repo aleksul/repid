@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from contextlib import suppress
 from datetime import datetime
 from types import TracebackType
@@ -41,17 +40,16 @@ class _MockServer:
                 operation_id = op_id
                 break
 
-        if operation_id:
-            # Create and track the message
-            test_message = TestMessage(
-                operation_id=operation_id,
-                payload=message.payload,
-                headers=message.headers,
-                content_type=message.content_type,
-                channel=channel,
-            )
-            self._test_client._sent_messages.append(test_message)
-            await self._test_client._message_queue.put((operation_id, test_message))
+        # Create and track the message
+        test_message = TestMessage(
+            operation_id=operation_id,
+            payload=message.payload,
+            headers=message.headers,
+            content_type=message.content_type,
+            channel=channel,
+        )
+        self._test_client._sent_messages.append(test_message)
+        await self._test_client._message_queue.put((channel, test_message))
 
 
 class TestMessage:
@@ -85,7 +83,7 @@ class TestMessage:
 
     def __init__(
         self,
-        operation_id: str,
+        operation_id: str | None,
         payload: bytes,
         headers: dict[str, str] | None,
         content_type: str | None,
@@ -107,7 +105,7 @@ class TestMessage:
         self._processed = False
 
     @property
-    def operation_id(self) -> str:
+    def operation_id(self) -> str | None:
         """Operation ID for this message."""
         return self._operation_id
 
@@ -198,6 +196,7 @@ class TestMessage:
         server_specific_parameters: dict[str, Any] | None = None,  # noqa: ARG002
     ) -> None:
         """Reply to the message with a new message."""
+        await self.ack()
         reply_channel = channel if channel is not None else self._channel
         message = MessageData(
             payload=payload,
@@ -254,7 +253,7 @@ class TestClient:
         *,
         channel: str | None = None,
         operation_id: str | None = None,
-        payload: bytes | dict | list,
+        payload: bytes,
         headers: dict[str, str] | None = None,
         content_type: str | None = None,
         server_name: str | None = None,  # noqa: ARG002
@@ -275,14 +274,6 @@ class TestClient:
                 return
             channel = operation.channel.address
 
-        # Convert dict/list to JSON bytes if needed
-        if isinstance(payload, (dict, list)):
-            payload_bytes = json.dumps(payload).encode()
-            if content_type is None:
-                content_type = "application/json"
-        else:
-            payload_bytes = payload
-
         async def _publish(
             channel: str,
             message: MessageData,
@@ -290,7 +281,7 @@ class TestClient:
         ) -> None:
             # Create and track message
             test_message = TestMessage(
-                operation_id=operation_id or "",  # Use empty string if sending by channel
+                operation_id=operation_id,
                 payload=message.payload,
                 headers=message.headers,
                 content_type=message.content_type,
@@ -301,12 +292,12 @@ class TestClient:
             if self.auto_process:
                 await self._process_message(test_message)
             else:
-                await self._message_queue.put((operation_id or "", test_message))
+                await self._message_queue.put((channel, test_message))
 
         await self._producer_middleware_pipeline(_publish)(
             channel,  # type: ignore[arg-type]
             MessageData(
-                payload=payload_bytes,
+                payload=payload,
                 headers=headers,
                 content_type=content_type,
             ),
@@ -442,7 +433,8 @@ class TestClient:
             test_message.channel,
             [],
         )
-        if not actors:
+        actor = next(filter(lambda actor: actor.routing_strategy(test_message), actors), None)
+        if actor is None:
             if self.raise_on_actor_not_found:
                 raise ValueError(f"No actor found for channel '{test_message.channel}'")
             # Mark as processed with error
@@ -452,9 +444,6 @@ class TestClient:
             test_message._processed = True
             self._processed_messages.append(test_message)
             return test_message
-
-        # Process with first actor (topic-based routing)
-        actor = actors[0]
 
         # _actor_run returns either the result or the exception
         actor_result = await _actor_run(
@@ -480,17 +469,16 @@ class TestClient:
                     reply_operation_id = op_id
                     break
 
-            if reply_operation_id:
-                # Create and track reply message
-                reply_test_message = TestMessage(
-                    operation_id=reply_operation_id,
-                    payload=reply_message.payload,
-                    headers=reply_message.headers,
-                    content_type=reply_message.content_type,
-                    channel=reply_channel,
-                )
-                self._sent_messages.append(reply_test_message)
-                await self._message_queue.put((reply_operation_id, reply_test_message))
+            # Create and track reply message
+            reply_test_message = TestMessage(
+                operation_id=reply_operation_id,
+                payload=reply_message.payload,
+                headers=reply_message.headers,
+                content_type=reply_message.content_type,
+                channel=reply_channel,
+            )
+            self._sent_messages.append(reply_test_message)
+            await self._message_queue.put((reply_channel, reply_test_message))
 
         # Add to processed messages
         self._processed_messages.append(test_message)

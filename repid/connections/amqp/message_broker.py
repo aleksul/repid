@@ -13,6 +13,7 @@ from repid.connections.amqp.protocol import (
     SenderLink,
     Session,
 )
+from repid.connections.amqp.protocol.links import LinkError
 from repid.connections.amqp.subscriber import AmqpSubscriber
 from repid.logger import logger
 
@@ -160,6 +161,28 @@ class AmqpServer:
     def is_connected(self) -> bool:
         return self._connection is not None and self._connection.is_connected
 
+    async def _ensure_session(self) -> Session:
+        """
+        Ensure we have a valid session, creating one if needed.
+
+        This handles reconnection scenarios where the connection was restored
+        but the session was invalidated.
+
+        Returns:
+            A valid, usable session
+        """
+        if self._connection is None or not self._connection.is_connected:
+            raise ConnectionError("Not connected to AMQP server")
+
+        # Check if session needs to be recreated
+        if self._session is None or not self._session.is_usable:
+            # Clear stale publisher links (they depend on the session)
+            self._publisher_links.clear()
+            # Create new session
+            self._session = await self._connection.create_session()
+
+        return self._session
+
     async def connect(self) -> None:
         if self._connection is None or not self._connection.is_connected:
             self._connection = AmqpConnection(
@@ -217,24 +240,13 @@ class AmqpServer:
 
         logger.debug("Publishing message to channel '{channel}'.", extra={"channel": channel})
 
-        if not self.is_connected or self._session is None:
-            raise ConnectionError("Not connected to AMQP server")
-
         params = server_specific_parameters or {}
 
-        # Get/Create Sender Link
+        # Get address
         if "to" in params:
             address = params["to"]
         else:
             address = self._publish_naming_strategy(channel, params.get("routing_key"))
-
-        # Use lock to prevent concurrent link creation for the same address
-        async with self._publisher_links_lock:
-            if address not in self._publisher_links:
-                link = await self._session.create_sender_link(address, f"sender-{channel}")
-                self._publisher_links[address] = link
-
-        link = self._publisher_links[address]
 
         # Prepare server-specific parameters for uAMQP
         header = params.get("header")
@@ -243,18 +255,67 @@ class AmqpServer:
         message_annotations = params.get("message_annotations")
         footers = params.get("footers")
 
-        # Send message
-        # We need to encode message payload if it's not bytes?
-        # SentMessageT.payload is bytes.
-        await link.send(
-            message.payload,
-            headers=message.headers,
-            message_header=header,
-            message_properties=properties,
-            delivery_annotations=delivery_annotations,
-            message_annotations=message_annotations,
-            footer=footers,
-        )
+        # Retry loop for handling connection loss during publish
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Ensure we have a valid session (handles reconnection scenarios)
+                session = await self._ensure_session()
+
+                # Use lock to prevent concurrent link creation for the same address
+                async with self._publisher_links_lock:
+                    # Check if we need to recreate the link
+                    if address in self._publisher_links:
+                        existing_link = self._publisher_links[address]
+                        if not existing_link.is_usable:
+                            del self._publisher_links[address]
+
+                    if address not in self._publisher_links:
+                        link = await session.create_sender_link(address, f"sender-{channel}")
+                        self._publisher_links[address] = link
+
+                link = self._publisher_links[address]
+
+                # Send message
+                await link.send(
+                    message.payload,
+                    headers=message.headers,
+                    message_header=header,
+                    message_properties=properties,
+                    delivery_annotations=delivery_annotations,
+                    message_annotations=message_annotations,
+                    footer=footers,
+                )
+                return  # Success!
+
+            except LinkError as e:
+                logger.warning(
+                    "Link error during publish (attempt %d/%d): %s",
+                    attempt + 1,
+                    max_retries,
+                    e,
+                )
+                # Clear the stale link from cache
+                if address in self._publisher_links:
+                    del self._publisher_links[address]
+                # Clear stale session
+                self._session = None
+
+                if attempt < max_retries - 1:
+                    # Wait for connection to be ready before retrying
+                    # Give reconnection time to complete
+                    await self._wait_for_connection(timeout=5.0)
+                else:
+                    raise
+
+    async def _wait_for_connection(self, timeout: float = 5.0) -> None:
+        """Wait for the connection to be available."""
+        start = asyncio.get_event_loop().time()
+        while asyncio.get_event_loop().time() - start < timeout:
+            if self._connection is not None and self._connection.is_connected:
+                return
+            await asyncio.sleep(0.1)
+        raise ConnectionError("Connection not available after wait")
 
     # Message receiving
     async def subscribe(

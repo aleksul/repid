@@ -86,6 +86,9 @@ class Link(ABC):
         # Ready event (set when ATTACH response received)
         self._ready = asyncio.Event()
 
+        # Invalidation flag
+        self._invalidated = False
+
     # -------------------------------------------------------------------------
     # Properties
     # -------------------------------------------------------------------------
@@ -148,8 +151,11 @@ class Link(ABC):
 
         Raises:
             asyncio.TimeoutError: If timeout expires
+            LinkError: If link was invalidated (connection lost)
         """
         await asyncio.wait_for(self._ready.wait(), timeout)
+        if self._invalidated:
+            raise LinkError(f"Link {self._name} was invalidated due to connection loss")
 
     async def detach(self, _error: Exception | None = None) -> None:
         """
@@ -178,6 +184,24 @@ class Link(ABC):
 
         logger.debug(
             "Link %s on session %d: detached",
+            self._name,
+            self._session.channel,
+        )
+
+    def invalidate(self) -> None:
+        """
+        Invalidate the link due to session/connection loss.
+
+        This resets the link state to DETACHED. The link cannot be reused
+        after this - a new link must be created.
+        """
+        self._state_machine.reset(LinkState.DETACHED)
+        self._invalidated = True
+        # Set the ready event to unblock any waiters (they'll check _invalidated)
+        self._ready.set()
+
+        logger.debug(
+            "Link %s on session %d: invalidated due to connection loss",
             self._name,
             self._session.channel,
         )

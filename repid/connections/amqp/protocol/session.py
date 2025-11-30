@@ -146,6 +146,23 @@ class Session:
         """
         await asyncio.wait_for(self._ready.wait(), timeout)
 
+    def invalidate(self) -> None:
+        """
+        Invalidate the session due to connection loss.
+
+        This resets the session state to UNMAPPED and invalidates all links.
+        The session cannot be reused after this - a new session must be created.
+        """
+        # Reset session state to UNMAPPED (not usable)
+        self._state_machine.reset(SessionState.UNMAPPED)
+        self._ready.clear()
+
+        # Invalidate all links
+        for link in self._links.values():
+            link.invalidate()
+
+        logger.debug("Session %d: invalidated due to connection loss", self._channel)
+
     async def end(self, _error: Exception | None = None) -> None:
         """
         End the session gracefully.

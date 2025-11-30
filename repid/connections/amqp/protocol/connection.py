@@ -538,14 +538,23 @@ class AmqpConnection:
         except asyncio.CancelledError:
             pass
         finally:
-            if not self._stop_event.is_set():
-                # Connection lost unexpectedly
+            if not self._stop_event.is_set() and not self._state_machine.is_open():
+                # Connection lost unexpectedly - only handle if not already reconnected
                 task = asyncio.create_task(self._handle_unexpected_close())
                 task.add_done_callback(lambda _t: None)  # Prevent GC
 
     async def _handle_unexpected_close(self) -> None:
         """Handle unexpected connection loss."""
+        # Skip if already connected (might have been called twice)
+        if self._state_machine.is_open():
+            return
+
         await self._emit(ConnectionEvent.DISCONNECTED, {"unexpected": True})
+
+        # Invalidate all sessions (they can't be reused after reconnection)
+        for session in list(self._sessions.values()):
+            session.invalidate()
+        self._sessions.clear()
 
         # Try to reconnect if enabled
         if self._reconnect.config.enabled and not self._stop_event.is_set():
@@ -553,8 +562,10 @@ class AmqpConnection:
             try:
                 await self.connect()
                 await self._emit(ConnectionEvent.RECONNECTED)
-            except ConnectionError:
-                logger.error("Reconnection failed")
+            except ConnectionError as e:
+                logger.error("Reconnection failed: %s", e)
+            except Exception:
+                logger.exception("Unexpected error during reconnection")
 
     async def _handle_performative(self, channel: int, performative: Any) -> None:
         """Handle an incoming performative."""
@@ -587,9 +598,10 @@ class AmqpConnection:
 
     async def _handle_close(self, close_frame: CloseFrame) -> None:
         """Handle CLOSE from server."""
+        error = getattr(close_frame, "error", None)
         logger.info(
             "Received CLOSE: %s",
-            close_frame.error if hasattr(close_frame, "error") else "no error",
+            error if error else "no error",
         )
 
         with contextlib.suppress(ValueError):
@@ -601,7 +613,13 @@ class AmqpConnection:
                 await self._transport.send_performative(0, CloseFrame())
                 await self._state_machine.transition("send_close")
 
-        await self.close()
+        # If server closed with an error, treat as unexpected and reconnect
+        if error and self._reconnect.config.enabled:
+            # Call _handle_unexpected_close directly to reconnect before returning
+            # This ensures the connection is restored before any waiters can proceed
+            await self._handle_unexpected_close()
+        else:
+            await self.close()
 
     # -------------------------------------------------------------------------
     # Session Management

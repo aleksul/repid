@@ -7,29 +7,31 @@ from typing import TYPE_CHECKING, Any
 
 from repid.connections.amqp._uamqp.performatives import DetachFrame
 from repid.connections.amqp.helpers import AmqpReceivedMessage
-from repid.connections.amqp.protocol import ReceiverLink
-from repid.connections.amqp.protocol.events import ConnectionEvent
+from repid.connections.amqp.protocol import ManagedSession, ReceiverLink
 
 if TYPE_CHECKING:
     from repid.connections.abc import ReceivedMessageT
 
-    from .message_broker import AmqpServer
-
 
 class AmqpSubscriber:
-    """Implementation of SubscriberT for AmqpServer."""
+    """
+    Implementation of SubscriberT for AmqpServer.
+
+    This subscriber uses ManagedSession's ReceiverPool, which automatically
+    handles reconnection and link recreation.
+    """
 
     def __init__(
         self,
         *,
-        server: AmqpServer,
+        managed_session: ManagedSession,
         links: list[ReceiverLink],
         queues_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
         concurrency_limit: int | None = None,
         paused_event: asyncio.Event,
         naming_strategy: Callable[[str], str],
     ) -> None:
-        self._server = server
+        self._managed_session = managed_session
         self._links = links
         self._queues_to_callbacks = queues_to_callbacks
         self._concurrency_limit = concurrency_limit
@@ -37,6 +39,9 @@ class AmqpSubscriber:
         self._paused_event = paused_event
         self._naming_strategy = naming_strategy
         self._stop_event = asyncio.Event()
+
+        # Start the background task that monitors the connection
+        # Note: With ManagedSession, reconnection is handled automatically by ReceiverPool
         self._task = asyncio.create_task(self._run_forever())
 
     @property
@@ -56,112 +61,45 @@ class AmqpSubscriber:
         self._paused_event.set()
 
     async def _run_forever(self) -> None:
-        """Run forever, handling reconnections."""
-        while not self._stop_event.is_set():
-            if self._server._connection is None:
-                # Wait a bit and check again
-                await asyncio.sleep(0.1)
-                continue
+        """
+        Run forever, waiting for stop signal.
 
-            # Register reconnect handler
-            reconnected_event = asyncio.Event()
-
-            async def on_reconnect(_: Any = None, evt: asyncio.Event = reconnected_event) -> None:
-                evt.set()
-
-            self._server._connection.events.on(ConnectionEvent.RECONNECTED, on_reconnect)
-
-            try:
-                # Wait for either incoming task to complete or reconnection
-                incoming_task = self._server._connection._incoming_task
-                if incoming_task is None:
-                    await asyncio.sleep(0.1)
-                    continue
-
-                _, pending = await asyncio.wait(
-                    [
-                        asyncio.ensure_future(incoming_task),
-                        asyncio.create_task(reconnected_event.wait()),
-                        asyncio.create_task(self._stop_event.wait()),
-                    ],
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-
-                # Cancel pending tasks
-                for task in pending:
-                    task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await task
-
-                # If stopped, exit
-                if self._stop_event.is_set():
-                    break
-
-                # If reconnected, recreate links
-                if reconnected_event.is_set():
-                    await self._recreate_links()
-
-            except asyncio.CancelledError:
-                break
-            finally:
-                self._server._connection.events.off(ConnectionEvent.RECONNECTED, on_reconnect)
-
-    async def _recreate_links(self) -> None:
-        """Recreate receiver links after reconnection."""
-        # Ensure we have a valid session
-        session = await self._server._ensure_session()
-
-        self._links.clear()
-
-        for queue, callback in self._queues_to_callbacks.items():
-
-            async def wrapped_callback(
-                payload: bytes,
-                headers: dict[str, Any] | None,
-                delivery_id: int,
-                delivery_tag: bytes,
-                link_ref: ReceiverLink,
-                queue: str = queue,
-                callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]] = callback,
-            ) -> None:
-                await self._paused_event.wait()
-                msg = AmqpReceivedMessage(
-                    payload=payload,
-                    headers=headers,
-                    link=link_ref,
-                    delivery_id=delivery_id,
-                    delivery_tag=delivery_tag,
-                    channel_name=queue,
-                    server=self._server,
-                )
-                await callback(msg)
-
-            link = await session.create_receiver_link(
-                self._naming_strategy(queue),
-                f"receiver-{queue}",
-                wrapped_callback,
-            )
-            self._links.append(link)
+        Unlike the previous implementation, reconnection handling is now done
+        by the ManagedSession's ReceiverPool. This task just waits for the stop signal.
+        """
+        with contextlib.suppress(asyncio.CancelledError):
+            await self._stop_event.wait()
 
     @classmethod
     async def create(
         cls,
         *,
-        server: AmqpServer,
+        managed_session: ManagedSession,
         queues_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
         concurrency_limit: int | None = None,
         naming_strategy: Callable[[str], str],
+        publish_fn: Callable[..., Coroutine[Any, Any, None]],
     ) -> AmqpSubscriber:
-        links = []
-        if server._connection is None or server.session is None:
-            raise ConnectionError("Server not connected")
-        session = server.session
+        """
+        Create a new subscriber.
+
+        Args:
+            managed_session: The managed session to use
+            queues_to_callbacks: Mapping of queue names to callback functions
+            concurrency_limit: Optional concurrency limit (reserved for future use)
+            naming_strategy: Function to convert queue names to AMQP addresses
+
+        Returns:
+            A new AmqpSubscriber instance
+        """
+        links: list[ReceiverLink] = []
+        receiver_pool = managed_session.receiver_pool
 
         paused_event = asyncio.Event()
         paused_event.set()
 
         for queue, callback in queues_to_callbacks.items():
-
+            # Create wrapper callback that handles the message
             async def wrapped_callback(
                 payload: bytes,
                 headers: dict[str, Any] | None,
@@ -170,6 +108,8 @@ class AmqpSubscriber:
                 link_ref: ReceiverLink,
                 queue: str = queue,
                 callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]] = callback,
+                paused_event: asyncio.Event = paused_event,
+                managed_session: ManagedSession = managed_session,
             ) -> None:
                 await paused_event.wait()
                 msg = AmqpReceivedMessage(
@@ -179,19 +119,22 @@ class AmqpSubscriber:
                     delivery_id=delivery_id,
                     delivery_tag=delivery_tag,
                     channel_name=queue,
-                    server=server,
+                    managed_session=managed_session,
+                    publish_fn=publish_fn,
                 )
                 await callback(msg)
 
-            link = await session.create_receiver_link(
-                naming_strategy(queue),
-                f"receiver-{queue}",
+            # Subscribe using the receiver pool (handles reconnection automatically)
+            address = naming_strategy(queue)
+            link = await receiver_pool.subscribe(
+                address,
                 wrapped_callback,
+                f"receiver-{queue}",
             )
             links.append(link)
 
         return cls(
-            server=server,
+            managed_session=managed_session,
             links=links,
             queues_to_callbacks=queues_to_callbacks,
             concurrency_limit=concurrency_limit,
@@ -200,11 +143,21 @@ class AmqpSubscriber:
         )
 
     async def close(self) -> None:
+        """Close the subscriber and release resources."""
         self._stop_event.set()
         self._task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await self._task
+
+        # Unsubscribe from all queues
+        receiver_pool = self._managed_session.receiver_pool
+        for queue in self._queues_to_callbacks:
+            address = self._naming_strategy(queue)
+            await receiver_pool.unsubscribe(address)
+
+        # Also try to detach links directly (graceful shutdown)
         for link in self._links:
             detach = DetachFrame(handle=link.handle, closed=True)
             with contextlib.suppress(Exception):
-                await link.session.connection.send_performative(link.session.channel, detach)
+                session = await self._managed_session.get_session()
+                await session.connection.send_performative(session.channel, detach)

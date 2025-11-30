@@ -90,6 +90,10 @@ from .links import LinkError as LinkError
 from .links import ReceiverLink as ReceiverLink
 from .links import SenderLink as SenderLink
 from .links import Subscription as Subscription
+from .managed import ManagedSession as ManagedSession
+from .managed import ManagedSessionError as ManagedSessionError
+from .managed import ReceiverPool as ReceiverPool
+from .managed import SenderPool as SenderPool
 from .reconnect import ReconnectConfig as ReconnectConfig
 from .reconnect import ReconnectStrategy as ReconnectStrategy
 from .session import Session as Session

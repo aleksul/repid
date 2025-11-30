@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 from repid.connections.amqp._uamqp.outcomes import Accepted, Rejected, Released
 from repid.connections.amqp._uamqp.performatives import DispositionFrame
-from repid.connections.amqp.protocol import ReceiverLink
+from repid.connections.amqp.protocol import ManagedSession, ReceiverLink
 from repid.data import MessageData
-
-if TYPE_CHECKING:
-    from .message_broker import AmqpServer
 
 ACCEPTED_STATE = Accepted()
 REJECTED_STATE = Rejected()
@@ -27,7 +25,8 @@ class AmqpReceivedMessage:
         delivery_id: int,
         delivery_tag: bytes,
         channel_name: str,
-        server: AmqpServer,
+        managed_session: ManagedSession,
+        publish_fn: Callable[..., Coroutine[Any, Any, None]],
     ) -> None:
         self._payload = payload
         self._headers = headers
@@ -35,7 +34,8 @@ class AmqpReceivedMessage:
         self._delivery_id = delivery_id
         self._delivery_tag = delivery_tag
         self._channel_name = channel_name
-        self._server = server
+        self._managed_session = managed_session
+        self._publish_fn = publish_fn
         self._is_acted_on = False
 
     @property
@@ -118,8 +118,10 @@ class AmqpReceivedMessage:
         server_specific_parameters: dict[str, Any] | None = None,
     ) -> None:
         await self.ack()
+
         reply_channel = channel or self._channel_name
-        await self._server.publish(
+
+        await self._publish_fn(
             channel=reply_channel,
             message=MessageData(
                 payload=payload,

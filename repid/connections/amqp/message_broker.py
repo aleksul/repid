@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
@@ -10,10 +9,8 @@ from repid.connections.abc import CapabilitiesT, SentMessageT, SubscriberT
 from repid.connections.amqp.protocol import (
     AmqpConnection,
     ConnectionConfig,
-    SenderLink,
-    Session,
+    ManagedSession,
 )
-from repid.connections.amqp.protocol.links import LinkError
 from repid.connections.amqp.subscriber import AmqpSubscriber
 from repid.logger import logger
 
@@ -45,10 +42,7 @@ class AmqpServer:
     ) -> None:
         self.dsn = dsn
         self._connection: AmqpConnection | None = None
-
-        self._session: Session | None = None
-        self._publisher_links: dict[str, SenderLink] = {}
-        self._publisher_links_lock = asyncio.Lock()  # Prevent concurrent link creation
+        self._managed_session: ManagedSession | None = None
 
         # AsyncAPI metadata
         self._title = title
@@ -153,35 +147,14 @@ class AmqpServer:
         }
 
     @property
-    def session(self) -> Session | None:
-        return self._session
+    def managed_session(self) -> ManagedSession | None:
+        """Get the managed session (for advanced use cases)."""
+        return self._managed_session
 
     # Connection lifecycle management
     @property
     def is_connected(self) -> bool:
         return self._connection is not None and self._connection.is_connected
-
-    async def _ensure_session(self) -> Session:
-        """
-        Ensure we have a valid session, creating one if needed.
-
-        This handles reconnection scenarios where the connection was restored
-        but the session was invalidated.
-
-        Returns:
-            A valid, usable session
-        """
-        if self._connection is None or not self._connection.is_connected:
-            raise ConnectionError("Not connected to AMQP server")
-
-        # Check if session needs to be recreated
-        if self._session is None or not self._session.is_usable:
-            # Clear stale publisher links (they depend on the session)
-            self._publisher_links.clear()
-            # Create new session
-            self._session = await self._connection.create_session()
-
-        return self._session
 
     async def connect(self) -> None:
         if self._connection is None or not self._connection.is_connected:
@@ -194,8 +167,8 @@ class AmqpServer:
                 ),
             )
             await self._connection.connect()
-            # Create session
-            self._session = await self._connection.create_session()
+            # Create managed session that handles reconnection automatically
+            self._managed_session = ManagedSession(self._connection)
 
     async def disconnect(self) -> None:
         # Close all active subscribers
@@ -206,12 +179,15 @@ class AmqpServer:
                 logger.exception("Error closing subscriber", exc_info=exc)
 
         self._active_subscribers.clear()
-        self._publisher_links.clear()
+
+        # Close managed session
+        if self._managed_session is not None:
+            await self._managed_session.close()
+            self._managed_session = None
 
         if self._connection is not None:
             await self._connection.close()
             self._connection = None
-            self._session = None
 
     @asynccontextmanager
     async def connection(self) -> AsyncGenerator[AmqpServer, None]:
@@ -229,16 +205,28 @@ class AmqpServer:
         message: SentMessageT,
         server_specific_parameters: dict[str, Any] | None = None,
     ) -> None:
-        # server specific parameters
-        # - header: AmqpHeader
-        # - properties: AmqpProperties
-        # - delivery_annotations: dict[str, Any]
-        # - message_annotations: dict[str, Any]
-        # - footers: dict[str, Any]
-        # - to: str - override address
-        # - routing_key: str - specify routing key for naming strategy
+        """
+        Publish a message to a channel.
 
+        This method uses the SenderPool from the managed session, which automatically
+        handles link creation, reconnection, and retry logic.
+
+        Args:
+            channel: Target channel name
+            message: Message to send
+            server_specific_parameters: Optional AMQP-specific parameters including:
+                - header: AmqpHeader
+                - properties: AmqpProperties
+                - delivery_annotations: dict[str, Any]
+                - message_annotations: dict[str, Any]
+                - footers: dict[str, Any]
+                - to: str - override address
+                - routing_key: str - specify routing key for naming strategy
+        """
         logger.debug("Publishing message to channel '{channel}'.", extra={"channel": channel})
+
+        if self._managed_session is None:
+            raise ConnectionError("Not connected to AMQP server")
 
         params = server_specific_parameters or {}
 
@@ -255,67 +243,18 @@ class AmqpServer:
         message_annotations = params.get("message_annotations")
         footers = params.get("footers")
 
-        # Retry loop for handling connection loss during publish
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                # Ensure we have a valid session (handles reconnection scenarios)
-                session = await self._ensure_session()
-
-                # Use lock to prevent concurrent link creation for the same address
-                async with self._publisher_links_lock:
-                    # Check if we need to recreate the link
-                    if address in self._publisher_links:
-                        existing_link = self._publisher_links[address]
-                        if not existing_link.is_usable:
-                            del self._publisher_links[address]
-
-                    if address not in self._publisher_links:
-                        link = await session.create_sender_link(address, f"sender-{channel}")
-                        self._publisher_links[address] = link
-
-                link = self._publisher_links[address]
-
-                # Send message
-                await link.send(
-                    message.payload,
-                    headers=message.headers,
-                    message_header=header,
-                    message_properties=properties,
-                    delivery_annotations=delivery_annotations,
-                    message_annotations=message_annotations,
-                    footer=footers,
-                )
-                return  # Success!
-
-            except LinkError as e:
-                logger.warning(
-                    "Link error during publish (attempt %d/%d): %s",
-                    attempt + 1,
-                    max_retries,
-                    e,
-                )
-                # Clear the stale link from cache
-                if address in self._publisher_links:
-                    del self._publisher_links[address]
-                # Clear stale session
-                self._session = None
-
-                if attempt < max_retries - 1:
-                    # Wait for connection to be ready before retrying
-                    # Give reconnection time to complete
-                    await self._wait_for_connection(timeout=5.0)
-                else:
-                    raise
-
-    async def _wait_for_connection(self, timeout: float = 5.0) -> None:
-        """Wait for the connection to be available."""
-        start = asyncio.get_event_loop().time()
-        while asyncio.get_event_loop().time() - start < timeout:
-            if self._connection is not None and self._connection.is_connected:
-                return
-            await asyncio.sleep(0.1)
-        raise ConnectionError("Connection not available after wait")
+        # Use SenderPool's send method with automatic retry
+        await self._managed_session.sender_pool.send(
+            address,
+            message.payload,
+            headers=message.headers,
+            name=f"sender-{channel}",
+            message_header=header,
+            message_properties=properties,
+            delivery_annotations=delivery_annotations,
+            message_annotations=message_annotations,
+            footer=footers,
+        )
 
     # Message receiving
     async def subscribe(
@@ -329,15 +268,16 @@ class AmqpServer:
             extra={"channels": list(channels_to_callbacks.keys())},
         )
 
-        if not self.is_connected:
+        if not self.is_connected or self._managed_session is None:
             raise ConnectionError("Not connected to AMQP server")
 
         # Create and store subscriber
         subscriber = await AmqpSubscriber.create(
             queues_to_callbacks=channels_to_callbacks,
             concurrency_limit=concurrency_limit,
-            server=self,
+            managed_session=self._managed_session,
             naming_strategy=self._subscribe_naming_strategy,
+            publish_fn=self.publish,
         )
         self._active_subscribers.append(subscriber)
 

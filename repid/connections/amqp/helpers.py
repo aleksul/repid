@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 from repid.connections.amqp._uamqp.outcomes import Accepted, Rejected, Released
 from repid.connections.amqp._uamqp.performatives import DispositionFrame
-from repid.connections.amqp.protocol.protocol import ReceiverLink
+from repid.connections.amqp.protocol import ReceiverLink
 from repid.data import MessageData
 
 if TYPE_CHECKING:

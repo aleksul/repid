@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlparse
 
 from repid.connections.abc import CapabilitiesT, SentMessageT, SubscriberT
-from repid.connections.amqp.protocol.protocol import AmqpConnection, SenderLink, Session
+from repid.connections.amqp.protocol import (
+    AmqpConnection,
+    ConnectionConfig,
+    SenderLink,
+    Session,
+)
 from repid.connections.amqp.subscriber import AmqpSubscriber
 from repid.logger import logger
 
@@ -41,6 +47,7 @@ class AmqpServer:
 
         self._session: Session | None = None
         self._publisher_links: dict[str, SenderLink] = {}
+        self._publisher_links_lock = asyncio.Lock()  # Prevent concurrent link creation
 
         # AsyncAPI metadata
         self._title = title
@@ -156,15 +163,16 @@ class AmqpServer:
     async def connect(self) -> None:
         if self._connection is None or not self._connection.is_connected:
             self._connection = AmqpConnection(
-                self._conn_host,
-                self._conn_port,
-                username=self._conn_username,
-                password=self._conn_password,
+                ConnectionConfig(
+                    host=self._conn_host,
+                    port=self._conn_port,
+                    username=self._conn_username,
+                    password=self._conn_password,
+                ),
             )
             await self._connection.connect()
             # Create session
-            self._session = self._connection.create_session()
-            await self._session.begin()
+            self._session = await self._connection.create_session()
 
     async def disconnect(self) -> None:
         # Close all active subscribers
@@ -220,9 +228,11 @@ class AmqpServer:
         else:
             address = self._publish_naming_strategy(channel, params.get("routing_key"))
 
-        if address not in self._publisher_links:
-            link = await self._session.create_sender_link(address, f"sender-{channel}")
-            self._publisher_links[address] = link
+        # Use lock to prevent concurrent link creation for the same address
+        async with self._publisher_links_lock:
+            if address not in self._publisher_links:
+                link = await self._session.create_sender_link(address, f"sender-{channel}")
+                self._publisher_links[address] = link
 
         link = self._publisher_links[address]
 

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from repid.connections.amqp._uamqp.performatives import DetachFrame
 from repid.connections.amqp.helpers import AmqpReceivedMessage
-from repid.connections.amqp.protocol.protocol import ReceiverLink
+from repid.connections.amqp.protocol import ReceiverLink
 
 if TYPE_CHECKING:
     from repid.connections.abc import ReceivedMessageT

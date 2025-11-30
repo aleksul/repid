@@ -25,10 +25,9 @@ async def test_simple_message_dependency() -> None:
         received_message_id = m.message_id
 
     app.include_router(router)
-    app.messages.register_operation(operation_id="myactor", channel="default")
 
     async with TestClient(app) as client:
-        await client.send_message_json(operation_id="myactor", payload={})
+        await client.send_message_json(channel="default", payload={}, headers={"topic": "myactor"})
 
         assert len(client._sent_messages) == 1
         msg = client._sent_messages[0]
@@ -44,10 +43,9 @@ async def test_message_dependency_ack() -> None:
         await m.ack()
 
     app.include_router(router)
-    app.messages.register_operation(operation_id="myactor", channel="default")
 
     async with TestClient(app) as client:
-        await client.send_message_json(operation_id="myactor", payload={})
+        await client.send_message_json(channel="default", payload={}, headers={"topic": "myactor"})
 
         assert len(client._sent_messages) == 1
         msg = client._sent_messages[0]
@@ -63,10 +61,9 @@ async def test_message_dependency_nack() -> None:
         await m.nack()
 
     app.include_router(router)
-    app.messages.register_operation(operation_id="myactor", channel="default")
 
     async with TestClient(app) as client:
-        await client.send_message_json(operation_id="myactor", payload={})
+        await client.send_message_json(channel="default", payload={}, headers={"topic": "myactor"})
 
         assert len(client._sent_messages) == 1
         msg = client._sent_messages[0]
@@ -82,10 +79,9 @@ async def test_message_dependency_reject() -> None:
         await m.reject()
 
     app.include_router(router)
-    app.messages.register_operation(operation_id="myactor", channel="default")
 
     async with TestClient(app) as client:
-        await client.send_message_json(operation_id="myactor", payload={})
+        await client.send_message_json(channel="default", payload={}, headers={"topic": "myactor"})
 
         assert len(client._sent_messages) == 1
         msg = client._sent_messages[0]
@@ -98,7 +94,11 @@ async def test_message_dependency_send_message() -> None:
 
     @router.actor
     async def myactor(m: Message) -> None:
-        await m.send_message_json(channel="other_channel", payload={"foo": "bar"})
+        await m.send_message_json(
+            channel="other_channel",
+            payload={"foo": "bar"},
+            headers={"topic": "other_actor"},
+        )
 
     received_other = False
 
@@ -109,11 +109,9 @@ async def test_message_dependency_send_message() -> None:
         assert m.payload == b'{"foo":"bar"}'
 
     app.include_router(router)
-    app.messages.register_operation(operation_id="myactor", channel="default")
-    app.messages.register_operation(operation_id="other_op", channel="other_channel")
 
     async with TestClient(app) as client:
-        await client.send_message_json(operation_id="myactor", payload={})
+        await client.send_message_json(channel="default", payload={}, headers={"topic": "myactor"})
 
         assert len(client._sent_messages) == 2
 
@@ -134,10 +132,9 @@ async def test_message_dependency_reply() -> None:
         await m.reply_json(payload={"response": "ok"})
 
     app.include_router(router)
-    app.messages.register_operation(operation_id="myactor", channel="default")
 
     async with TestClient(app) as client:
-        await client.send_message_json(operation_id="myactor", payload={})
+        await client.send_message_json(channel="default", payload={}, headers={"topic": "myactor"})
 
         assert len(client._sent_messages) == 2
         msg = client._sent_messages[0]
@@ -163,19 +160,46 @@ async def test_depends() -> None:
         received = d
 
     app.include_router(router)
-    # Register the operation manually for the test
-    app.messages.register_operation(operation_id="myactor", channel="default")
 
     async with TestClient(app) as client:
-        await client.send_message_json(operation_id="myactor", payload={"arg1": "hello"})
+        await client.send_message_json(
+            channel="default",
+            payload={"arg1": "hello"},
+            headers={"topic": "myactor"},
+        )
 
     assert received == "aaa"
 
 
+async def _sub_dependency() -> str:
+    return "sub"
+
+
+async def _dependency(sub: Annotated[str, Depends(_sub_dependency)]) -> str:
+    return f"dep_{sub}"
+
+
 async def test_sub_depends() -> None:
-    # Sub-dependencies with MessageDependency not testable in unit tests
-    # Would need integration test
-    pass
+    app = Repid()
+    router = Router()
+
+    received = None
+
+    @router.actor
+    async def myactor(d: Annotated[str, Depends(_dependency)]) -> None:
+        nonlocal received
+        received = d
+
+    app.include_router(router)
+
+    async with TestClient(app) as client:
+        await client.send_message_json(
+            channel="default",
+            payload={},
+            headers={"topic": "myactor"},
+        )
+
+    assert received == "dep_sub"
 
 
 def test_non_default_arg() -> None:
@@ -211,11 +235,13 @@ async def test_multiple_depends() -> None:
         received2 = d2
 
     app.include_router(router)
-    # Register the operation manually for the test
-    app.messages.register_operation(operation_id="myactor", channel="default")
 
     async with TestClient(app) as client:
-        await client.send_message_json(operation_id="myactor", payload={"arg1": "hello"})
+        await client.send_message_json(
+            channel="default",
+            payload={"arg1": "hello"},
+            headers={"topic": "myactor"},
+        )
 
     assert received == "aaa"
     assert received2 == 123
@@ -243,11 +269,13 @@ async def test_dependency_override() -> None:
     dep.override(another_dependency)
 
     app.include_router(router)
-    # Register the operation manually for the test
-    app.messages.register_operation(operation_id="myactor", channel="default")
 
     async with TestClient(app) as client:
-        await client.send_message_json(operation_id="myactor", payload={"arg1": "hello"})
+        await client.send_message_json(
+            channel="default",
+            payload={"arg1": "hello"},
+            headers={"topic": "myactor"},
+        )
 
     assert received == "bbb"
 
@@ -267,11 +295,9 @@ async def test_dependency_with_default_value() -> None:
         received = d
 
     app.include_router(router)
-    # Register the operation manually for the test
-    app.messages.register_operation(operation_id="myactor", channel="default")
 
     async with TestClient(app) as client:
-        await client.send_message_json(operation_id="myactor", payload={})
+        await client.send_message_json(channel="default", payload={}, headers={"topic": "myactor"})
 
     assert received == 84
 
@@ -291,11 +317,9 @@ async def test_async_dependency() -> None:
         received = d
 
     app.include_router(router)
-    # Register the operation manually for the test
-    app.messages.register_operation(operation_id="myactor", channel="default")
 
     async with TestClient(app) as client:
-        await client.send_message_json(operation_id="myactor", payload={})
+        await client.send_message_json(channel="default", payload={}, headers={"topic": "myactor"})
 
     assert received == "async_value"
 
@@ -342,11 +366,10 @@ async def test_dependency_injection_complex() -> None:
 
     app = Repid()
     app.include_router(router)
-    app.messages.register_operation(operation_id="useless", channel="default")
 
     async with TestClient(app) as client:
         await client.send_message_json(
-            operation_id="useless",
+            channel="default",
             payload={"what": "Hello", "other": "123"},
             headers={"topic": "useless", "other_name": "1234567", "another_one": "42"},
         )
@@ -383,13 +406,12 @@ async def test_header_dependency() -> None:
         received_headers["h4"] = h4
 
     app.include_router(router)
-    app.messages.register_operation(operation_id="myactor", channel="default")
 
     async with TestClient(app) as client:
         await client.send_message_json(
-            operation_id="myactor",
+            channel="default",
             payload={},
-            headers={"h1": "value1", "custom-header": "value2", "h3": "456"},
+            headers={"topic": "myactor", "h1": "value1", "custom-header": "value2", "h3": "456"},
         )
 
     assert received_headers["h1"] == "value1"
@@ -410,14 +432,13 @@ async def test_header_dependency_validation_error() -> None:
         received = True
 
     app.include_router(router)
-    app.messages.register_operation(operation_id="myactor", channel="default")
 
     async with TestClient(app) as client:
         with pytest.raises(ValidationError):
             await client.send_message_json(
-                operation_id="myactor",
+                channel="default",
                 payload={},
-                headers={"h": "not-an-int"},
+                headers={"topic": "myactor", "h": "not-an-int"},
             )
 
     assert not received

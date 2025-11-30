@@ -128,7 +128,7 @@ async def test_pydantic_converter_properly_coerces_types() -> None:
         ),
         pytest.param(
             b'{"a": 5}',
-            "field required",
+            "Field required",
             id="missing_field",
         ),
     ],

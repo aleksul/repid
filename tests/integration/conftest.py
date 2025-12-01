@@ -9,6 +9,7 @@ from repid import Repid
 from repid.connections.abc import ServerT
 from repid.connections.amqp import AmqpServer
 from repid.connections.pubsub import PubsubServer
+from repid.connections.redis import RedisServer
 
 RABBITMQ_DEFINITIONS_JSON = Path(__file__).parent / "rabbitmq_definitions.json"
 
@@ -79,16 +80,15 @@ def pubsub_connection(pubsub_container: "wrappers.Container") -> ServerT:
 
 
 @pytest.fixture(scope="session")
-def redis_connection(redis_container: "wrappers.Container") -> ServerT:  # noqa: ARG001
-    # return RedisServer(f"redis://:test@localhost:{redis_container.ports['6379/tcp'][0]}/0")
-    return None  # type: ignore[return-value]
+def redis_connection(redis_container: "wrappers.Container") -> ServerT:
+    return RedisServer(f"redis://:test@localhost:{redis_container.ports['6379/tcp'][0]}/0")
 
 
 @pytest.fixture(
     params=[
         lazy_fixture("rabbitmq_connection"),
         lazy_fixture("pubsub_connection"),
-        # lazy_fixture("redis_connection"),
+        lazy_fixture("redis_connection"),
     ],
 )
 def autoconn(request: pytest.FixtureRequest) -> Repid:

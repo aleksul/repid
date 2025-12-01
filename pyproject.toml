@@ -60,7 +60,7 @@ pubsub = [
   "grpcio>=1.76.0"
 ]
 pydantic = ["pydantic>=2.0.0,<3.0.0"]
-redis = ["redis<7.0.0,>=6.0.0"]
+redis = ["redis<8.0.0,>=7.0.0"]
 
 [project.urls]
 documentation = "https://repid.aleksul.space"

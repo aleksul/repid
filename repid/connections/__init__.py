@@ -13,6 +13,11 @@ if is_installed("aiormq"):
 
     __all__ += ["AmqpServer"]
 
+if is_installed("redis"):
+    from repid.connections.redis import RedisServer
+
+    __all__ += ["RedisServer"]
+
 # check via try-import because pubsub is a sub-package of gcloud.aio
 imported_pubsub = False
 try:

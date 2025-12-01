@@ -277,6 +277,7 @@ class _Runner:
         self,
         channels_to_actors: dict[str, list[ActorData]],
         graceful_termination_timeout: float,
+        cancellation_timeout: float = 1.0,
     ) -> None:
         self._server_subscriber = await self.server.subscribe(
             channels_to_callbacks={
@@ -318,6 +319,17 @@ class _Runner:
             if pending:
                 logger.error("Some tasks timeouted when gracefully finishing runner.")
         self.cancel_event.set()
+
+        # Give cancelled tasks a moment to clean up (reject messages, etc.)
+        if self._tasks:
+            logger.debug("Some tasks are still running even after cancellation, waiting for them.")
+            await asyncio.wait(
+                self._tasks,
+                return_when=asyncio.ALL_COMPLETED,
+                timeout=cancellation_timeout,
+            )
+            if self._tasks:
+                logger.error("Some tasks did not finish even after cancellation and timeout.")
 
         try:
             await self._server_subscriber.close()

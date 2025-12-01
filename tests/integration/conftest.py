@@ -1,7 +1,6 @@
 from pathlib import Path
 from time import sleep
 
-import httpx
 import pytest
 from pytest_docker_tools import container, wrappers
 from pytest_lazy_fixtures import lf as lazy_fixture
@@ -34,18 +33,16 @@ rabbitmq_container = container(
 )
 
 pubsub_container = container(
-    image="gcr.io/google.com/cloudsdktool/google-cloud-cli:517.0.0-emulators",
-    ports={"8085/tcp": None},
-    command="gcloud beta emulators pubsub start --project=my-project --host-port=0.0.0.0:8085",
+    image="messagebird/gcloud-pubsub-emulator:latest",
+    ports={"8681/tcp": None},
+    environment={"PUBSUB_PROJECT1": "my-project,default:default,another:another"},
     scope="session",
 )
 
 
 @pytest.fixture(scope="session")
 def rabbitmq_connection(rabbitmq_container: "wrappers.Container") -> ServerT:
-    while (
-        not rabbitmq_container.ready() or "Server startup complete" not in rabbitmq_container.logs()
-    ):
+    while "Server startup complete" not in rabbitmq_container.logs():
         sleep(0.1)
 
     import_definitions_result = rabbitmq_container.exec_run(
@@ -65,33 +62,24 @@ def rabbitmq_connection(rabbitmq_container: "wrappers.Container") -> ServerT:
 
 @pytest.fixture(scope="session")
 def pubsub_connection(pubsub_container: "wrappers.Container") -> ServerT:
-    while (not pubsub_container.ready()) or (
-        "Server started, listening on" not in pubsub_container.logs()
-    ):
+    patterns = [
+        "Server started, listening on",
+        'Creating topic "default"',
+        'Creating subscription "default"',
+        'Creating topic "another"',
+        'Creating subscription "another"',
+    ]
+    while not all(pattern in pubsub_container.logs() for pattern in patterns):
         sleep(0.1)
 
-    port = pubsub_container.ports["8085/tcp"][0]
-
-    httpx.put(f"http://localhost:{port}/v1/projects/my-project/topics/default").raise_for_status()
-    httpx.put(f"http://localhost:{port}/v1/projects/my-project/topics/another").raise_for_status()
-    httpx.put(
-        f"http://localhost:{port}/v1/projects/my-project/subscriptions/default",
-        json={"topic": "projects/my-project/topics/default"},
-        headers={"Content-Type": "application/json"},
-    ).raise_for_status()
-    httpx.put(
-        f"http://localhost:{port}/v1/projects/my-project/subscriptions/another",
-        json={"topic": "projects/my-project/topics/another"},
-        headers={"Content-Type": "application/json"},
-    ).raise_for_status()
-
-    return PubsubServer(dsn=f"http://localhost:{port}/v1", default_project="my-project")
+    return PubsubServer(
+        dsn=f"http://localhost:{pubsub_container.ports['8681/tcp'][0]}/v1",
+        default_project="my-project",
+    )
 
 
 @pytest.fixture(scope="session")
-def redis_connection(redis_container: "wrappers.Container") -> ServerT:
-    while not redis_container.ready():
-        sleep(0.1)
+def redis_connection(redis_container: "wrappers.Container") -> ServerT:  # noqa: ARG001
     # return RedisServer(f"redis://:test@localhost:{redis_container.ports['6379/tcp'][0]}/0")
     return None  # type: ignore[return-value]
 

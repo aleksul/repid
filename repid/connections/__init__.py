@@ -16,7 +16,8 @@ if is_installed("aiormq"):
 # check via try-import because pubsub is a sub-package of gcloud.aio
 imported_pubsub = False
 try:
-    import gcloud.aio.pubsub
+    import google.auth
+    import grpc.aio
 except ImportError:
     imported_pubsub = False
 else:

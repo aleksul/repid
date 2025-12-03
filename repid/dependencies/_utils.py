@@ -36,8 +36,19 @@ def get_dependency(t: Any) -> DependencyT | None:
     if get_origin(t) is not Annotated:
         return None
     for metadata in t.__metadata__:
+        # Skip classes - they need to be instantiated to work as dependencies
+        if inspect.isclass(metadata) and issubclass(metadata, (Header, MessageDependency)):
+            continue
         if isinstance(metadata, DependencyT):
             return metadata
+    return None
+
+
+def validate_dependency(t: Any) -> None:
+    """Validate a type annotation and emit warnings for common misuses."""
+    if get_origin(t) is not Annotated:
+        return
+    for metadata in t.__metadata__:
         if inspect.isclass(metadata) and issubclass(metadata, (Header, MessageDependency)):
             warnings.warn(
                 "Using Header or Message classes directly as dependency has no effect.",
@@ -45,4 +56,3 @@ def get_dependency(t: Any) -> DependencyT | None:
                 stacklevel=2,
             )
             break
-    return None

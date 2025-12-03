@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, overload
 from repid._utils import NotSet, asyncify
 from repid.converter import DefaultConverter
 from repid.data import ActorData, Channel, CorrelationId
+from repid.dependencies._utils import validate_dependency
 from repid.middlewares import ActorMiddlewareT, _compile_actor_middleware_pipeline
 
 if TYPE_CHECKING:
@@ -427,6 +428,16 @@ class Router:
             previous_frame = current_frame.f_back
             if previous_frame is not None:
                 fn_locals = previous_frame.f_locals
+
+        # Validate dependencies early to emit warnings at registration time
+        signature = inspect.signature(
+            fn,
+            eval_str=True,
+            locals=fn_locals,
+            globals=fn.__globals__,
+        )
+        for p in signature.parameters.values():
+            validate_dependency(p.annotation)
 
         self._definitions.append(
             _ActorDefinition(

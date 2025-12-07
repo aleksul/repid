@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import re
+from collections.abc import Sequence
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 from repid.asyncapi.models import (
@@ -20,6 +23,7 @@ from repid.asyncapi.models.common import (
     MessageBindingsObject,
     MessageTrait,
     OperationBindingsObject,
+    ReferenceModel,
     ServerBindingsObject,
     Tag,
 )
@@ -36,7 +40,6 @@ if TYPE_CHECKING:
     from repid.data.message_schema import MessageExample, MessageSchema
     from repid.data.operation import SendOperation
     from repid.data.tag import Tag as TagModel
-    from repid.main import Repid
     from repid.message_registry import MessageRegistry
     from repid.router import Router
     from repid.server_registry import ServerRegistry
@@ -86,31 +89,42 @@ class AsyncAPIGenerator:
         self._component_message_traits: dict[str, MessageTrait] = {}
         self._component_tags: dict[str, Tag] = {}
         self._component_external_docs: dict[str, ExternalDocs] = {}
+        self._external_docs_component_lookup: dict[str, str] = {}
 
-    @staticmethod
-    def from_app(app: Repid) -> AsyncAPIGenerator:
-        """Create generator from a Repid app instance."""
-        return AsyncAPIGenerator(
-            routers=app.routers,  # type: ignore[attr-defined]
-            servers=app.servers,
-            messages=app.messages,
-            title=app.title,
-            version=app.version,
-            description=app.description,
-        )
-
-    def _deduplicate_tag(self, tag: Tag) -> Tag:
+    def _deduplicate_tag(self, tag: Tag) -> str:
         if tag["name"] not in self._component_tags:
             self._component_tags[tag["name"]] = tag
-        return tag
+        return tag["name"]
 
-    def _deduplicate_external_docs(self, docs: ExternalDocs) -> ExternalDocs:
-        key = docs["url"]
-        if key not in self._component_external_docs:
-            self._component_external_docs[key] = docs
-        return docs
+    @staticmethod
+    def _tag_ref(tag_name: str) -> ReferenceModel:
+        return {"$ref": f"#/components/tags/{tag_name}"}
 
-    def _generate_info(self) -> Info:  # noqa: C901
+    def _deduplicate_external_docs(self, docs: ExternalDocs) -> ExternalDocs | ReferenceModel:
+        url = docs.get("url", "")
+        if not url:
+            return docs
+        component_name = self._external_docs_component_lookup.get(url)
+        if component_name is None:
+            component_name = self._build_external_docs_component_name(url)
+            self._external_docs_component_lookup[url] = component_name
+            self._component_external_docs[component_name] = docs
+        return {"$ref": f"#/components/externalDocs/{component_name}"}
+
+    def _build_external_docs_component_name(self, url: str) -> str:
+        slug = re.sub(r"[^a-z0-9]+", "_", url.lower()).strip("_")
+        if not slug:
+            slug = "external_docs"
+        if not slug.startswith("external_docs"):
+            slug = f"external_docs_{slug}"
+        candidate = slug
+        index = 2
+        while candidate in self._component_external_docs:
+            candidate = f"{slug}_{index}"
+            index += 1
+        return candidate
+
+    def _generate_info(self) -> Info:  # noqa: C901, PLR0912
         info = Info(title=self.title, version=self.version)
         if self.description is not None:
             info["description"] = self.description
@@ -132,20 +146,25 @@ class AsyncAPIGenerator:
                 license_obj["url"] = self.license.url
             info["license"] = license_obj
         if self.tags:
-            info["tags"] = [
-                self._deduplicate_tag(
-                    Tag(name=tag.name, description=tag.description)
-                    if tag.description
-                    else Tag(name=tag.name),
-                )
-                for tag in self.tags
-                if tag.name
-            ]
+            tag_refs: list[ReferenceModel] = []
+            for tag in self.tags:
+                if not tag.name:
+                    continue
+                tag_dict: Tag = {"name": tag.name}
+                if tag.description:
+                    tag_dict["description"] = tag.description
+                tag_name = self._deduplicate_tag(tag_dict)
+                tag_refs.append(self._tag_ref(tag_name))
+            if tag_refs:
+                info["tags"] = tag_refs
         if self.external_docs is not None:
             docs = ExternalDocs(url=self.external_docs.url)
             if self.external_docs.description is not None:
                 docs["description"] = self.external_docs.description
-            info["externalDocs"] = self._deduplicate_external_docs(docs)
+            if self.external_docs.url:
+                info["externalDocs"] = self._deduplicate_external_docs(docs)
+            else:
+                info["externalDocs"] = docs
         return info
 
     def generate_schema(self) -> AsyncAPI3Schema:  # noqa: C901
@@ -201,11 +220,43 @@ class AsyncAPIGenerator:
         container: Any,
         objs: list[TagModel] | tuple[TagModel, ...] | None,
     ) -> None:
-        tags = [self._deduplicate_tag(tag) for tag in self._build_tags(objs)]
-        if tags:
-            container["tags"] = tags
+        tag_names = [self._deduplicate_tag(tag) for tag in self._build_tags(objs)]
+        if tag_names:
+            container["tags"] = [self._tag_ref(name) for name in tag_names]
 
-    def _docs_from_dataclass(self, docs: ExternalDocsModel | None) -> ExternalDocs | None:
+    def _tag_refs_from_dicts(self, tags: Sequence[Tag] | None) -> list[ReferenceModel] | None:
+        if not tags:
+            return None
+        refs: list[ReferenceModel] = []
+        for tag in tags:
+            tag_name = tag.get("name")
+            if not tag_name:
+                continue
+            stored_name = self._deduplicate_tag(tag)
+            refs.append(self._tag_ref(stored_name))
+        return refs or None
+
+    def _external_docs_from_object(
+        self,
+        docs: ExternalDocs | ExternalDocsModel | None,
+    ) -> ExternalDocs | ReferenceModel | None:
+        if docs is None:
+            return None
+        if isinstance(docs, dict):
+            if not docs.get("url"):
+                return None
+            return self._deduplicate_external_docs(docs)
+        if not docs.url:
+            return None
+        out: ExternalDocs = {"url": docs.url}
+        if docs.description:
+            out["description"] = docs.description
+        return self._deduplicate_external_docs(out)
+
+    def _docs_from_dataclass(
+        self,
+        docs: ExternalDocsModel | None,
+    ) -> ExternalDocs | ReferenceModel | None:
         if docs is None or not docs.url:
             return None
         out: ExternalDocs = {"url": docs.url}
@@ -223,7 +274,6 @@ class AsyncAPIGenerator:
             for msg in op.messages:
                 self._component_messages[msg.name] = self._message_from_schema(msg)
 
-        self._collect_schemas()
         self._collect_bindings_and_traits()
         self._collect_security_schemes()
 
@@ -259,17 +309,31 @@ class AsyncAPIGenerator:
         return messages_map
 
     @staticmethod
-    def _merge_channel_missing_fields(base: Channel, extra: Channel) -> None:
-        AsyncAPIGenerator._merge_simple_channel_fields(base, extra)
+    def _merge_channel_missing_fields(
+        base: Channel,
+        extra: Channel,
+        *,
+        merge_description: bool = True,
+    ) -> None:
+        AsyncAPIGenerator._merge_simple_channel_fields(
+            base,
+            extra,
+            merge_description=merge_description,
+        )
         AsyncAPIGenerator._merge_channel_messages(base, extra)
 
     @staticmethod
-    def _merge_simple_channel_fields(base: Channel, extra: Channel) -> None:
+    def _merge_simple_channel_fields(
+        base: Channel,
+        extra: Channel,
+        *,
+        merge_description: bool = True,
+    ) -> None:
         if "title" in extra and "title" not in base:
             base["title"] = extra["title"]
         if "summary" in extra and "summary" not in base:
             base["summary"] = extra["summary"]
-        if "description" in extra and "description" not in base:
+        if "description" in extra and "description" not in base and merge_description:
             base["description"] = extra["description"]
         if "tags" in extra and "tags" not in base:
             base["tags"] = extra["tags"]
@@ -288,13 +352,6 @@ class AsyncAPIGenerator:
         for k, v in extra["messages"].items():
             if k not in base["messages"]:
                 base["messages"][k] = v  # type: ignore[index]
-
-    def _collect_schemas(self) -> None:
-        for _op in self.messages._operations.values():
-            for msg in _op.messages:
-                if msg.payload:
-                    schema_name = f"{msg.name}_payload"
-                    self._component_schemas[schema_name] = msg.payload
 
     def _collect_bindings_and_traits(self) -> None:
         for router in self.routers:
@@ -324,23 +381,14 @@ class AsyncAPIGenerator:
             self._set_if(srv, "pathname", server.pathname)
             self._set_if(srv, "variables", server.variables)
             self._set_if(srv, "security", server.security)
-            tags_val = (
-                [self._deduplicate_tag(tag) for tag in server.tags if tag["name"]]
-                if server.tags is not None
-                else None
-            )
-            self._set_if(srv, "tags", tags_val)
-            ext_val = (
-                self._deduplicate_external_docs(server.external_docs)
-                if server.external_docs is not None
-                else None
-            )
-            self._set_if(srv, "externalDocs", ext_val)
+            self._set_if(srv, "tags", self._tag_refs_from_dicts(server.tags))
+            self._set_if(srv, "externalDocs", self._external_docs_from_object(server.external_docs))
             servers[name] = srv
         return servers
 
     def _generate_channels(self) -> dict[str, Channel]:
         channels: dict[str, Channel] = {}
+        router_channel_addresses: set[str] = set()
 
         for router in self.routers:
             actors_by_channel: dict[str, list[ActorData]] = router._actors_per_channel_address
@@ -349,11 +397,17 @@ class AsyncAPIGenerator:
                 messages_map = self._channel_messages_for_address(ch.address, actors_by_channel)
                 self._set_if(channel_obj, "messages", messages_map if messages_map else None)
                 channels[ch.address] = channel_obj
+                router_channel_addresses.add(ch.address)
 
         for op in self.messages._operations.values():
             key = op.channel.address
             base = channels.setdefault(key, {})
-            self._merge_channel_missing_fields(base, self._generate_operation_channel(op))
+            merge_description = key not in router_channel_addresses
+            self._merge_channel_missing_fields(
+                base,
+                self._generate_operation_channel(op),
+                merge_description=merge_description,
+            )
 
         for router in self.routers:
             for addr, actors in router._actors_per_channel_address.items():
@@ -423,7 +477,8 @@ class AsyncAPIGenerator:
                 },
             ]
             if actor.bindings is not None:
-                op["bindings"] = actor.bindings
+                binding_name = f"{actor.name}_bindings"
+                op["bindings"] = {"$ref": f"#/components/operationBindings/{binding_name}"}
             self._assign_tags(op, list(actor.tags) if actor.tags is not None else None)
             ext = self._docs_from_dataclass(actor.external_docs)
             if ext is not None:
@@ -472,9 +527,13 @@ class AsyncAPIGenerator:
         if obj.content_type is not None:
             msg["contentType"] = obj.content_type
         if obj.headers is not None:
-            msg["headers"] = obj.headers
+            headers_obj = deepcopy(obj.headers)
+            self._extract_definitions(headers_obj)
+            msg["headers"] = headers_obj
         if obj.payload is not None:
-            msg["payload"] = obj.payload
+            payload_obj = deepcopy(obj.payload)
+            self._extract_definitions(payload_obj)
+            msg["payload"] = payload_obj
 
         if obj.correlation_id is not None:
             corr: CorrelationId = {"location": obj.correlation_id.location}
@@ -546,10 +605,8 @@ class AsyncAPIGenerator:
     def _apply_input_schema(
         self,
         msg: MessageObject,
-        input_schema: ConverterInputSchema | None,
+        input_schema: ConverterInputSchema,
     ) -> None:
-        if input_schema is None:
-            return
         if input_schema.payload_schema is not None:
             msg["payload"] = input_schema.payload_schema
             self._extract_definitions(msg["payload"])

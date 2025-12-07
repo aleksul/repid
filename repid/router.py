@@ -136,9 +136,42 @@ class Router:
     @property
     def channels(self) -> list[Channel]:
         channels: dict[str, Channel] = {}
-        for actor in self.actors:
-            if actor.channel_address not in channels:
-                channels[actor.channel_address] = Channel(address=actor.channel_address)
+        for definition in self._definitions:
+            if definition.channel is None:
+                if isinstance(definition.router.channel, Channel):
+                    channel = definition.router.channel
+                elif definition.router.channel is NotSet:
+                    channel = Channel(address="default")
+                else:
+                    channel = Channel(address=definition.router.channel)
+            elif isinstance(definition.channel, Channel):
+                channel = definition.channel
+            else:
+                channel = Channel(address=definition.channel)
+            if channel.address not in channels:
+                channels[channel.address] = channel
+                continue
+            existing = channels[channel.address]
+            if not any(
+                (
+                    existing.title,
+                    existing.summary,
+                    existing.description,
+                    existing.parameters,
+                    existing.bindings,
+                    existing.external_docs,
+                ),
+            ) and any(
+                (
+                    channel.title,
+                    channel.summary,
+                    channel.description,
+                    channel.parameters,
+                    channel.bindings,
+                    channel.external_docs,
+                ),
+            ):
+                channels[channel.address] = channel
         return list(channels.values())
 
     @property

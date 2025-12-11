@@ -18,12 +18,9 @@ from repid.connections.in_memory.utils import DummyQueue
 from repid.logger import logger
 
 if TYPE_CHECKING:
-    from repid.asyncapi.models.common import (
-        ExternalDocs,
-        ServerBindingsObject,
-        Tag,
-    )
+    from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
+    from repid.data import ExternalDocs, Tag
 
 
 class InMemorySentMessage(SentMessageT):

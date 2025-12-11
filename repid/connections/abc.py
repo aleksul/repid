@@ -6,12 +6,9 @@ from contextlib import AbstractAsyncContextManager
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
 if TYPE_CHECKING:
-    from repid.asyncapi.models.common import (
-        ExternalDocs,
-        ServerBindingsObject,
-        Tag,
-    )
+    from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
+    from repid.data import ExternalDocs, Tag
 
 
 class BaseMessageT(Protocol):

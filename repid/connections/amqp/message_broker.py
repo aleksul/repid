@@ -15,13 +15,10 @@ from repid.connections.amqp.subscriber import AmqpSubscriber
 from repid.logger import logger
 
 if TYPE_CHECKING:
-    from repid.asyncapi.models.common import (
-        ExternalDocs,
-        ServerBindingsObject,
-        Tag,
-    )
+    from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
     from repid.connections.abc import ReceivedMessageT
+    from repid.data import ExternalDocs, Tag
 
 
 class AmqpServer:
@@ -48,7 +45,6 @@ class AmqpServer:
         self._title = title
         self._summary = summary
         self._description = description
-        self._protocol_version = "1.0.0"
         self._variables = variables
         self._security = security
         self._tags = tags
@@ -115,7 +111,7 @@ class AmqpServer:
 
     @property
     def protocol_version(self) -> str | None:
-        return self._protocol_version
+        return "1.0.0"
 
     @property
     def variables(self) -> Mapping[str, ServerVariable] | None:

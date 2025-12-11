@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from repid.asyncapi.models import ChannelBindingsObject, ChannelParameter
+    from repid.asyncapi.models import ChannelBindingsObject
 
     from .external_docs import ExternalDocs
 
@@ -15,7 +15,6 @@ class Channel:  # noqa: PLW1641
     title: str | None = None
     summary: str | None = None
     description: str | None = None
-    parameters: dict[str, ChannelParameter] | None = None
     bindings: ChannelBindingsObject | None = None
     external_docs: ExternalDocs | None = None
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from repid.asyncapi.models import (
     AsyncAPI3Schema,
@@ -15,34 +15,266 @@ from repid.asyncapi.models import (
     Operation,
     Server,
 )
-from repid.asyncapi.models.channels import ChannelParameter
 from repid.asyncapi.models.common import (
     ChannelBindingsObject,
     CorrelationId,
     ExternalDocs,
     MessageBindingsObject,
-    MessageTrait,
     OperationBindingsObject,
     ReferenceModel,
     ServerBindingsObject,
     Tag,
 )
 from repid.asyncapi.models.info import Contact, License
-from repid.asyncapi.models.operations import OperationTrait
+from repid.connections.abc import ServerT
+from repid.data.actor import ActorData
+from repid.data.channel import Channel as ChannelDataModel
+from repid.data.message_schema import MessageSchema
+from repid.data.operation import SendOperation
 
 if TYPE_CHECKING:
-    from repid.data.actor import ActorData
-    from repid.data.channel import Channel as ChannelData
     from repid.data.contact import Contact as ContactModel
     from repid.data.converter_input_schema import ConverterInputSchema
     from repid.data.external_docs import ExternalDocs as ExternalDocsModel
     from repid.data.license import License as LicenseModel
-    from repid.data.message_schema import MessageExample, MessageSchema
-    from repid.data.operation import SendOperation
+    from repid.data.message_schema import MessageExample
     from repid.data.tag import Tag as TagModel
     from repid.message_registry import MessageRegistry
     from repid.router import Router
     from repid.server_registry import ServerRegistry
+
+
+SecurityScheme = dict[str, object]
+
+
+class AsyncAPIComponents:
+    def __init__(self) -> None:
+        self.schemas: dict[str, dict] = {}
+        self.messages: dict[str, MessageObject] = {}
+        self.security_schemes: dict[str, SecurityScheme] = {}
+        self.server_bindings: dict[str, ServerBindingsObject] = {}
+        self.channel_bindings: dict[str, ChannelBindingsObject] = {}
+        self.operation_bindings: dict[str, OperationBindingsObject] = {}
+        self.message_bindings: dict[str, MessageBindingsObject] = {}
+        self.tags: dict[str, Tag] = {}
+        self.external_docs: dict[str, ExternalDocs] = {}
+
+        self._external_docs_lookup: dict[str, str] = {}
+
+    def add_message(self, message: MessageObject, original_name: str) -> str:
+        name = original_name
+        counter = 1
+        while name in self.messages:
+            name = f"{original_name}_{counter}"
+            counter += 1
+        self.messages[name] = message
+        return name
+
+    def add_tag(self, tag: TagModel) -> ReferenceModel:
+        tag_dict: Tag = {"name": tag.name}
+        if tag.description:
+            tag_dict["description"] = tag.description
+
+        if tag.external_docs:
+            ext = self.add_external_docs(tag.external_docs)
+            if ext:
+                tag_dict["externalDocs"] = ext
+
+        if tag.name not in self.tags:
+            self.tags[tag.name] = tag_dict
+
+        return {"$ref": f"#/components/tags/{tag.name}"}
+
+    def add_security_scheme(self, name: str, scheme: SecurityScheme) -> ReferenceModel:
+        if name not in self.security_schemes:
+            self.security_schemes[name] = scheme
+        return {"$ref": f"#/components/securitySchemes/{name}"}
+
+    def add_server_binding(self, name: str, binding: ServerBindingsObject) -> ReferenceModel:
+        if name not in self.server_bindings:
+            self.server_bindings[name] = binding
+        return {"$ref": f"#/components/serverBindings/{name}"}
+
+    def add_channel_binding(self, name: str, binding: ChannelBindingsObject) -> ReferenceModel:
+        if name not in self.channel_bindings:
+            self.channel_bindings[name] = binding
+        return {"$ref": f"#/components/channelBindings/{name}"}
+
+    def add_operation_binding(self, name: str, binding: OperationBindingsObject) -> ReferenceModel:
+        if name not in self.operation_bindings:
+            self.operation_bindings[name] = binding
+        return {"$ref": f"#/components/operationBindings/{name}"}
+
+    def add_message_binding(self, name: str, binding: MessageBindingsObject) -> ReferenceModel:
+        if name not in self.message_bindings:
+            self.message_bindings[name] = binding
+        return {"$ref": f"#/components/messageBindings/{name}"}
+
+    def add_external_docs(
+        self,
+        docs: ExternalDocsModel | ExternalDocs | None,
+    ) -> ExternalDocs | ReferenceModel | None:
+        if docs is None:
+            return None  # pragma: no cover
+
+        url = ""
+        description = None
+
+        if isinstance(docs, dict):
+            url = docs.get("url", "")
+            description = docs.get("description")
+        else:
+            url = docs.url
+            description = docs.description
+
+        if not url:
+            return None  # pragma: no cover
+
+        component_name = self._external_docs_lookup.get(url)
+        if component_name is None:
+            component_name = self._build_external_docs_component_name(url)
+            self._external_docs_lookup[url] = component_name
+
+            doc_obj: ExternalDocs = {"url": url}
+            if description:
+                doc_obj["description"] = description
+            self.external_docs[component_name] = doc_obj
+
+        return {"$ref": f"#/components/externalDocs/{component_name}"}
+
+    def _build_external_docs_component_name(self, url: str) -> str:
+        slug = re.sub(r"[^a-z0-9]+", "_", url.lower()).strip("_")
+        if not slug:
+            slug = "external_docs"
+        if not slug.startswith("external_docs"):
+            slug = f"external_docs_{slug}"
+        candidate = slug
+        index = 2
+        while candidate in self.external_docs:
+            candidate = f"{slug}_{index}"
+            index += 1
+        return candidate
+
+    def extract_definitions(self, schema: dict) -> None:
+        if "$defs" in schema:
+            for name, definition in schema.pop("$defs").items():
+                self.schemas[name] = definition
+
+
+class DataExtractor:
+    def __init__(self, components: AsyncAPIComponents):
+        self.components = components
+
+    def extract_common(
+        self,
+        source: ActorData | ChannelDataModel | MessageSchema | ServerT | SendOperation,
+        target: Channel | Operation | MessageObject | Server,
+    ) -> None:
+        if source.title is not None:
+            target["title"] = source.title
+        if source.summary is not None:
+            target["summary"] = source.summary
+        if source.description is not None:
+            target["description"] = source.description
+
+        if not isinstance(source, ChannelDataModel) and source.tags:
+            tags_list = [self.components.add_tag(t) for t in source.tags if t.name]
+            if tags_list:
+                target["tags"] = tags_list
+
+        if source.external_docs:
+            ext = self.components.add_external_docs(source.external_docs)
+            if ext:
+                target["externalDocs"] = ext
+
+    def message_from_schema(self, obj: MessageSchema) -> MessageObject:
+        msg: MessageObject = {"name": obj.name}
+        self.extract_common(obj, msg)
+
+        if obj.content_type is not None:
+            msg["contentType"] = obj.content_type
+        if obj.headers is not None:
+            headers_obj = deepcopy(obj.headers)
+            self.components.extract_definitions(headers_obj)
+            msg["headers"] = headers_obj
+        if obj.payload is not None:
+            payload_obj = deepcopy(obj.payload)
+            self.components.extract_definitions(payload_obj)
+            msg["payload"] = payload_obj
+
+        if obj.correlation_id is not None:
+            corr: CorrelationId = {"location": obj.correlation_id.location}
+            if obj.correlation_id.description is not None:
+                corr["description"] = obj.correlation_id.description
+            msg["correlationId"] = corr
+
+        if obj.deprecated:
+            msg["deprecated"] = True
+
+        if isinstance(obj.bindings, dict) and obj.bindings:
+            binding_name = f"{obj.name}-message_bindings"
+            msg["bindings"] = {"$ref": f"#/components/messageBindings/{binding_name}"}
+            self.components.add_message_binding(binding_name, obj.bindings)
+
+        self._attach_examples_from_schema(msg, obj)
+        return msg
+
+    def message_from_actor(self, actor: ActorData) -> MessageObject:
+        msg: MessageObject = {"name": actor.name}
+        self.extract_common(actor, msg)
+
+        input_schema = actor.converter.get_input_schema()
+        self._apply_input_schema(msg, input_schema)
+
+        if actor.deprecated:
+            msg["deprecated"] = True
+        return msg
+
+    def _apply_input_schema(
+        self,
+        msg: MessageObject,
+        input_schema: ConverterInputSchema,
+    ) -> None:
+        if input_schema.payload_schema is not None:
+            msg["payload"] = input_schema.payload_schema
+            self.components.extract_definitions(msg["payload"])
+        if input_schema.content_type is not None:
+            msg["contentType"] = input_schema.content_type
+        if input_schema.headers_schema is not None:
+            msg["headers"] = input_schema.headers_schema
+            self.components.extract_definitions(msg["headers"])
+        if input_schema.correlation_id is not None:
+            corr_obj = input_schema.correlation_id
+            corr: CorrelationId = {"location": corr_obj.location}
+            if corr_obj.description is not None:
+                corr["description"] = corr_obj.description
+            msg["correlationId"] = corr
+
+    @staticmethod
+    def _build_examples_list(
+        examples: tuple[MessageExample, ...] | None,
+    ) -> list[MessageExampleObject]:
+        if not examples:
+            return []
+        out: list[MessageExampleObject] = []
+        for ex in examples:
+            ex_dict: MessageExampleObject = {}  # type: ignore[assignment]
+            if ex.name is not None:
+                ex_dict["name"] = ex.name
+            if ex.summary is not None:
+                ex_dict["summary"] = ex.summary
+            if ex.headers is not None:
+                ex_dict["headers"] = ex.headers
+            if ex.payload is not None:
+                ex_dict["payload"] = ex.payload
+            if "headers" in ex_dict or "payload" in ex_dict:
+                out.append(ex_dict)
+        return out
+
+    def _attach_examples_from_schema(self, msg: MessageObject, obj: MessageSchema) -> None:
+        examples_list = self._build_examples_list(obj.examples)
+        if examples_list:
+            msg["examples"] = examples_list
 
 
 class AsyncAPIGenerator:
@@ -75,56 +307,61 @@ class AsyncAPIGenerator:
         self.tags = tags or []
         self.external_docs = external_docs
 
-        # Component collections
-        self._component_schemas: dict[str, dict] = {}
-        # NOTE: Channel parameters are not yet supported
-        self._component_parameters: dict[str, ChannelParameter] = {}
-        self._component_messages: dict[str, MessageObject] = {}
-        self._component_security_schemes: dict[str, Any] = {}
-        self._component_server_bindings: dict[str, ServerBindingsObject] = {}
-        self._component_channel_bindings: dict[str, ChannelBindingsObject] = {}
-        self._component_operation_bindings: dict[str, OperationBindingsObject] = {}
-        self._component_message_bindings: dict[str, MessageBindingsObject] = {}
-        self._component_operation_traits: dict[str, OperationTrait] = {}
-        self._component_message_traits: dict[str, MessageTrait] = {}
-        self._component_tags: dict[str, Tag] = {}
-        self._component_external_docs: dict[str, ExternalDocs] = {}
-        self._external_docs_component_lookup: dict[str, str] = {}
+    def generate_schema(self) -> AsyncAPI3Schema:  # noqa: C901, PLR0912
+        """Generate the AsyncAPI schema."""
+        components = AsyncAPIComponents()
+        extractor = DataExtractor(components)
+        message_keys: dict[int, str] = {}
 
-    def _deduplicate_tag(self, tag: Tag) -> str:
-        if tag["name"] not in self._component_tags:
-            self._component_tags[tag["name"]] = tag
-        return tag["name"]
+        # 1. Collect Messages and Bindings
+        for router in self.routers:
+            for actors in router._actors_per_channel_address.values():
+                for actor in actors:
+                    actor_msg = extractor.message_from_actor(actor)
+                    key = components.add_message(actor_msg, actor.name)
+                    message_keys[id(actor)] = key
 
-    @staticmethod
-    def _tag_ref(tag_name: str) -> ReferenceModel:
-        return {"$ref": f"#/components/tags/{tag_name}"}
+        for op in self.messages._operations.values():
+            for op_msg in op.messages:
+                op_msg_obj = extractor.message_from_schema(op_msg)
+                key = components.add_message(op_msg_obj, op_msg.name)
+                message_keys[id(op_msg)] = key
 
-    def _deduplicate_external_docs(self, docs: ExternalDocs) -> ExternalDocs | ReferenceModel:
-        url = docs.get("url", "")
-        if not url:
-            return docs
-        component_name = self._external_docs_component_lookup.get(url)
-        if component_name is None:
-            component_name = self._build_external_docs_component_name(url)
-            self._external_docs_component_lookup[url] = component_name
-            self._component_external_docs[component_name] = docs
-        return {"$ref": f"#/components/externalDocs/{component_name}"}
+        # 3. Generate parts that populate components
+        info = self._generate_info(components)
+        servers = self._generate_servers(extractor, components)
+        channels = self._generate_channels(extractor, components, message_keys)
+        operations = self._generate_operations(extractor, components, message_keys)
 
-    def _build_external_docs_component_name(self, url: str) -> str:
-        slug = re.sub(r"[^a-z0-9]+", "_", url.lower()).strip("_")
-        if not slug:
-            slug = "external_docs"
-        if not slug.startswith("external_docs"):
-            slug = f"external_docs_{slug}"
-        candidate = slug
-        index = 2
-        while candidate in self._component_external_docs:
-            candidate = f"{slug}_{index}"
-            index += 1
-        return candidate
+        # 4. Build Components Object
+        comps = Components(messages=components.messages)
+        if components.schemas:
+            comps["schemas"] = components.schemas
+        if components.security_schemes:
+            comps["securitySchemes"] = components.security_schemes
+        if components.server_bindings:
+            comps["serverBindings"] = components.server_bindings
+        if components.channel_bindings:
+            comps["channelBindings"] = components.channel_bindings
+        if components.operation_bindings:
+            comps["operationBindings"] = components.operation_bindings
+        if components.message_bindings:
+            comps["messageBindings"] = components.message_bindings
+        if components.tags:
+            comps["tags"] = components.tags
+        if components.external_docs:
+            comps["externalDocs"] = components.external_docs
 
-    def _generate_info(self) -> Info:  # noqa: C901, PLR0912
+        return AsyncAPI3Schema(
+            asyncapi="3.0.0",
+            info=info,
+            servers=servers,
+            channels=channels,
+            operations=operations,
+            components=comps,
+        )
+
+    def _generate_info(self, components: AsyncAPIComponents) -> Info:  # noqa: C901, PLR0912
         info = Info(title=self.title, version=self.version)
         if self.description is not None:
             info["description"] = self.description
@@ -145,161 +382,127 @@ class AsyncAPIGenerator:
             if self.license.url is not None:
                 license_obj["url"] = self.license.url
             info["license"] = license_obj
+
         if self.tags:
-            tag_refs: list[ReferenceModel] = []
-            for tag in self.tags:
-                if not tag.name:
-                    continue
-                tag_dict: Tag = {"name": tag.name}
-                if tag.description:
-                    tag_dict["description"] = tag.description
-                tag_name = self._deduplicate_tag(tag_dict)
-                tag_refs.append(self._tag_ref(tag_name))
-            if tag_refs:
-                info["tags"] = tag_refs
+            tags_list = [components.add_tag(t) for t in self.tags if t.name]
+            if tags_list:
+                info["tags"] = tags_list
+
         if self.external_docs is not None:
             docs = ExternalDocs(url=self.external_docs.url)
             if self.external_docs.description is not None:
                 docs["description"] = self.external_docs.description
             if self.external_docs.url:
-                info["externalDocs"] = self._deduplicate_external_docs(docs)
+                ext_doc = components.add_external_docs(docs)
+                if ext_doc:
+                    info["externalDocs"] = ext_doc
             else:
                 info["externalDocs"] = docs
         return info
 
-    def generate_schema(self) -> AsyncAPI3Schema:  # noqa: C901
-        """Generate the AsyncAPI schema."""
-        self._collect_all_components()
-        components = Components(messages=self._component_messages)
-        if self._component_schemas:
-            components["schemas"] = self._component_schemas
-        if self._component_parameters:
-            components["parameters"] = self._component_parameters
-        if self._component_security_schemes:
-            components["securitySchemes"] = self._component_security_schemes
-        if self._component_server_bindings:
-            components["serverBindings"] = self._component_server_bindings
-        if self._component_channel_bindings:
-            components["channelBindings"] = self._component_channel_bindings
-        if self._component_operation_bindings:
-            components["operationBindings"] = self._component_operation_bindings
-        if self._component_message_bindings:
-            components["messageBindings"] = self._component_message_bindings
-        if self._component_operation_traits:
-            components["operationTraits"] = self._component_operation_traits
-        if self._component_message_traits:
-            components["messageTraits"] = self._component_message_traits
-        if self._component_tags:
-            components["tags"] = self._component_tags
-        if self._component_external_docs:
-            components["externalDocs"] = self._component_external_docs
-        schema: AsyncAPI3Schema = AsyncAPI3Schema(
-            asyncapi="3.0.0",
-            info=self._generate_info(),
-            servers=self._generate_servers(),
-            channels=self._generate_channels(),
-            operations=self._generate_operations(),
-            components=components,
-        )
-        return schema
-
-    @staticmethod
-    def _build_tags(objs: list[TagModel] | tuple[TagModel, ...] | None) -> list[Tag]:
-        tags: list[Tag] = []
-        if not objs:
-            return tags
-        for t in objs:
-            tag_dict: Tag = {"name": t.name}
-            if t.description:
-                tag_dict["description"] = t.description
-            tags.append(tag_dict)
-        return tags
-
-    def _assign_tags(
+    def _generate_servers(
         self,
-        container: Any,
-        objs: list[TagModel] | tuple[TagModel, ...] | None,
-    ) -> None:
-        tag_names = [self._deduplicate_tag(tag) for tag in self._build_tags(objs)]
-        if tag_names:
-            container["tags"] = [self._tag_ref(name) for name in tag_names]
+        extractor: DataExtractor,
+        components: AsyncAPIComponents,
+    ) -> dict[str, Server]:
+        servers: dict[str, Server] = {}
+        for name, server in self.servers.list_servers().items():
+            srv: Server = {"host": server.host, "protocol": server.protocol}
+            extractor.extract_common(server, srv)
 
-    def _tag_refs_from_dicts(self, tags: Sequence[Tag] | None) -> list[ReferenceModel] | None:
-        if not tags:
-            return None
-        refs: list[ReferenceModel] = []
-        for tag in tags:
-            tag_name = tag.get("name")
-            if not tag_name:
-                continue
-            stored_name = self._deduplicate_tag(tag)
-            refs.append(self._tag_ref(stored_name))
-        return refs or None
+            bindings = self._process_server_bindings(server.bindings, name, components)
+            if bindings:
+                srv["bindings"] = bindings
 
-    def _external_docs_from_object(
+            if server.protocol_version is not None:
+                srv["protocolVersion"] = server.protocol_version
+            if server.pathname is not None:
+                srv["pathname"] = server.pathname
+            if server.variables is not None:
+                srv["variables"] = server.variables
+
+            security = self._process_security_schemes(
+                server.security,
+                name,
+                "server",
+                components,
+            )
+            if security:
+                srv["security"] = security
+
+            servers[name] = srv
+        return servers
+
+    def _generate_channels(  # noqa: C901
         self,
-        docs: ExternalDocs | ExternalDocsModel | None,
-    ) -> ExternalDocs | ReferenceModel | None:
-        if docs is None:
-            return None
-        if isinstance(docs, dict):
-            if not docs.get("url"):
-                return None
-            return self._deduplicate_external_docs(docs)
-        if not docs.url:
-            return None
-        out: ExternalDocs = {"url": docs.url}
-        if docs.description:
-            out["description"] = docs.description
-        return self._deduplicate_external_docs(out)
+        extractor: DataExtractor,
+        components: AsyncAPIComponents,
+        message_keys: dict[int, str],
+    ) -> dict[str, Channel]:
+        channels: dict[str, Channel] = {}
+        router_channel_addresses: set[str] = set()
 
-    def _docs_from_dataclass(
-        self,
-        docs: ExternalDocsModel | None,
-    ) -> ExternalDocs | ReferenceModel | None:
-        if docs is None or not docs.url:
-            return None
-        out: ExternalDocs = {"url": docs.url}
-        if docs.description:
-            out["description"] = docs.description
-        return self._deduplicate_external_docs(out)
-
-    def _collect_all_components(self) -> None:
-        self._component_messages = {}
         for router in self.routers:
-            for actors in router._actors_per_channel_address.values():
-                for actor in actors:
-                    self._component_messages[actor.name] = self._message_from_actor(actor)
+            actors_by_channel: dict[str, list[ActorData]] = router._actors_per_channel_address
+            for ch in router.channels:
+                channel_obj: Channel = {}
+                extractor.extract_common(ch, channel_obj)
+                if isinstance(ch, ChannelDataModel):
+                    bindings = self._process_channel_bindings(
+                        ch.bindings,
+                        ch.address,
+                        components,
+                    )
+                    if bindings:
+                        channel_obj["bindings"] = bindings
+
+                messages_map = self._channel_messages_for_address(ch.address, actors_by_channel)
+                if messages_map:
+                    channel_obj["messages"] = messages_map
+
+                channels[ch.address] = channel_obj
+                router_channel_addresses.add(ch.address)
+
         for op in self.messages._operations.values():
-            for msg in op.messages:
-                self._component_messages[msg.name] = self._message_from_schema(msg)
+            if op.channel.address not in channels:
+                channels[op.channel.address] = {}
 
-        self._collect_bindings_and_traits()
-        self._collect_security_schemes()
+            channel_obj = channels[op.channel.address]
+            extractor.extract_common(op.channel, channel_obj)
 
-    @staticmethod
-    def _set_if(container: Any, key: str, value: Any | None) -> None:
-        if value is not None:
-            container[key] = value
+            bindings = self._process_channel_bindings(
+                op.channel.bindings,
+                op.channel.address,
+                components,
+            )
+            if bindings:
+                channel_obj["bindings"] = bindings
 
-    def _channel_base_from_dataclass(self, ch: ChannelData) -> Channel:
-        out: Channel = {}
-        self._set_if(out, "title", ch.title)
-        self._set_if(out, "summary", ch.summary)
-        self._set_if(out, "description", ch.description)
-        if ch.bindings is not None:
-            out["bindings"] = ch.bindings
-        doc = self._docs_from_dataclass(ch.external_docs)
-        if doc is not None:
-            out["externalDocs"] = doc
-        return out
+            operation_channel = channel_obj
+            if op.messages:
+                op_ch_messages = {
+                    msg.name: ReferenceModel(
+                        {
+                            "$ref": f"#/components/messages/{message_keys.get(id(msg), msg.name)}",
+                        },
+                    )
+                    for msg in op.messages
+                }
+                operation_messages: dict[
+                    str,
+                    ReferenceModel,
+                ] = operation_channel.setdefault("messages", {})  # type: ignore[assignment]
+                for k, v in op_ch_messages.items():
+                    if k not in operation_messages:
+                        operation_messages[k] = v
+        return channels
 
     def _channel_messages_for_address(
         self,
         address: str,
         actors_by_channel: dict[str, list[ActorData]],
-    ) -> dict[str, Any]:
-        messages_map: dict[str, Any] = {}
+    ) -> dict[str, ReferenceModel]:
+        messages_map: dict[str, ReferenceModel] = {}
         for actor in actors_by_channel.get(address, []):
             messages_map[actor.name] = {"$ref": f"#/components/messages/{actor.name}"}
         for op in self.messages._operations.values():
@@ -308,155 +511,39 @@ class AsyncAPIGenerator:
                     messages_map[msg.name] = {"$ref": f"#/components/messages/{msg.name}"}
         return messages_map
 
-    @staticmethod
-    def _merge_channel_missing_fields(
-        base: Channel,
-        extra: Channel,
-        *,
-        merge_description: bool = True,
-    ) -> None:
-        AsyncAPIGenerator._merge_simple_channel_fields(
-            base,
-            extra,
-            merge_description=merge_description,
-        )
-        AsyncAPIGenerator._merge_channel_messages(base, extra)
-
-    @staticmethod
-    def _merge_simple_channel_fields(
-        base: Channel,
-        extra: Channel,
-        *,
-        merge_description: bool = True,
-    ) -> None:
-        if "title" in extra and "title" not in base:
-            base["title"] = extra["title"]
-        if "summary" in extra and "summary" not in base:
-            base["summary"] = extra["summary"]
-        if "description" in extra and "description" not in base and merge_description:
-            base["description"] = extra["description"]
-        if "tags" in extra and "tags" not in base:
-            base["tags"] = extra["tags"]
-        if "externalDocs" in extra and "externalDocs" not in base:
-            base["externalDocs"] = extra["externalDocs"]
-        if "bindings" in extra and "bindings" not in base:
-            base["bindings"] = extra["bindings"]
-
-    @staticmethod
-    def _merge_channel_messages(base: Channel, extra: Channel) -> None:
-        if "messages" not in extra:
-            return
-        if "messages" not in base:
-            base["messages"] = extra["messages"]
-            return
-        for k, v in extra["messages"].items():
-            if k not in base["messages"]:
-                base["messages"][k] = v  # type: ignore[index]
-
-    def _collect_bindings_and_traits(self) -> None:
-        for router in self.routers:
-            for actor in router.actors:
-                if actor.bindings is not None:
-                    binding_name = f"{actor.name}_bindings"
-                    self._component_operation_bindings[binding_name] = actor.bindings
-
-    def _collect_security_schemes(self) -> None:
-        for _name, server in self.servers.list_servers().items():
-            if server.security:
-                for scheme in server.security:
-                    if isinstance(scheme, dict):
-                        for scheme_name, scheme_val in scheme.items():
-                            if scheme_name not in self._component_security_schemes:
-                                self._component_security_schemes[scheme_name] = scheme_val
-
-    def _generate_servers(self) -> dict[str, Server]:
-        servers: dict[str, Server] = {}
-        for name, server in self.servers.list_servers().items():
-            srv: Server = {"host": server.host, "protocol": server.protocol}
-            self._set_if(srv, "title", server.title)
-            self._set_if(srv, "description", server.description)
-            self._set_if(srv, "bindings", server.bindings)
-            self._set_if(srv, "summary", server.summary)
-            self._set_if(srv, "protocolVersion", server.protocol_version)
-            self._set_if(srv, "pathname", server.pathname)
-            self._set_if(srv, "variables", server.variables)
-            self._set_if(srv, "security", server.security)
-            self._set_if(srv, "tags", self._tag_refs_from_dicts(server.tags))
-            self._set_if(srv, "externalDocs", self._external_docs_from_object(server.external_docs))
-            servers[name] = srv
-        return servers
-
-    def _generate_channels(self) -> dict[str, Channel]:
-        channels: dict[str, Channel] = {}
-        router_channel_addresses: set[str] = set()
-
-        for router in self.routers:
-            actors_by_channel: dict[str, list[ActorData]] = router._actors_per_channel_address
-            for ch in router.channels:
-                channel_obj = self._channel_base_from_dataclass(ch)
-                messages_map = self._channel_messages_for_address(ch.address, actors_by_channel)
-                self._set_if(channel_obj, "messages", messages_map if messages_map else None)
-                channels[ch.address] = channel_obj
-                router_channel_addresses.add(ch.address)
-
-        for op in self.messages._operations.values():
-            key = op.channel.address
-            base = channels.setdefault(key, {})
-            merge_description = key not in router_channel_addresses
-            self._merge_channel_missing_fields(
-                base,
-                self._generate_operation_channel(op),
-                merge_description=merge_description,
-            )
-
-        for router in self.routers:
-            for addr, actors in router._actors_per_channel_address.items():
-                if addr not in channels:
-                    channels[addr] = {}
-                ch_entry = channels[addr]
-                if "messages" not in ch_entry:
-                    ch_entry["messages"] = {}
-                ch_messages = ch_entry["messages"]
-                for actor in actors:
-                    if actor.name not in ch_messages:
-                        ch_messages[actor.name] = {  # type: ignore[index]
-                            "$ref": f"#/components/messages/{actor.name}",
-                        }
-        return channels
-
-    def _generate_operation_channel(self, op: SendOperation) -> Channel:
-        ch: Channel = {}
-        if op.title is not None:
-            ch["title"] = op.title
-        if op.summary is not None:
-            ch["summary"] = op.summary
-        if op.description is not None:
-            ch["description"] = op.description
-        if op.messages:
-            ch["messages"] = {
-                msg.name: {"$ref": f"#/components/messages/{msg.name}"} for msg in op.messages
-            }
-        self._assign_tags(ch, list(op.tags))
-        ext = self._docs_from_dataclass(op.external_docs)
-        if ext is not None:
-            ch["externalDocs"] = ext
-        return ch
-
-    def _generate_operations(self) -> dict[str, Operation]:
+    def _generate_operations(
+        self,
+        extractor: DataExtractor,
+        components: AsyncAPIComponents,
+        message_keys: dict[int, str],
+    ) -> dict[str, Operation]:
         operations: dict[str, Operation] = {}
         for router in self.routers:
             for actor in router.actors:
                 operations.update(
-                    self._generate_router_operations(actor.channel_address, {actor.name: actor}),
+                    self._generate_router_operations(
+                        actor.channel_address,
+                        {actor.name: actor},
+                        extractor,
+                        components,
+                    ),
                 )
         for op_id, op_obj in self.messages._operations.items():
-            operations[op_id] = self._generate_operation_send(op_obj)
+            operations[op_id] = self._generate_operation_send(
+                op_obj,
+                extractor,
+                components,
+                op_id,
+                message_keys,
+            )
         return operations
 
     def _generate_router_operations(
         self,
         channel: str,
         actors: dict[str, ActorData],
+        extractor: DataExtractor,
+        components: AsyncAPIComponents,
     ) -> dict[str, Operation]:
         result: dict[str, Operation] = {}
         for actor_name, actor in actors.items():
@@ -465,159 +552,135 @@ class AsyncAPIGenerator:
                 "action": "receive",
                 "channel": {"$ref": channel_ref},
             }
-            if actor.title is not None:
-                op["title"] = actor.title
-            if actor.summary is not None:
-                op["summary"] = actor.summary
-            if actor.description is not None:
-                op["description"] = actor.description
+            extractor.extract_common(actor, op)
+
             op["messages"] = [
                 {
                     "$ref": f"#/channels/{channel.replace('/', '~1')}/messages/{actor_name.replace('/', '~1')}",
                 },
             ]
-            if actor.bindings is not None:
-                binding_name = f"{actor.name}_bindings"
-                op["bindings"] = {"$ref": f"#/components/operationBindings/{binding_name}"}
-            self._assign_tags(op, list(actor.tags) if actor.tags is not None else None)
-            ext = self._docs_from_dataclass(actor.external_docs)
-            if ext is not None:
-                op["externalDocs"] = ext
-            if actor.security is not None:
-                op["security"] = actor.security
+
+            bindings = self._process_operation_bindings(
+                actor.bindings,
+                actor.name,
+                components,
+            )
+            if bindings:
+                op["bindings"] = bindings
+
+            security = self._process_security_schemes(
+                actor.security,
+                f"receive_{actor_name}",
+                "operation",
+                components,
+            )
+            if security:
+                op["security"] = security
             result[f"receive_{actor_name}"] = op
         return result
 
-    def _generate_operation_send(self, op_obj: SendOperation) -> Operation:
+    def _generate_operation_send(
+        self,
+        op_obj: SendOperation,
+        extractor: DataExtractor,
+        components: AsyncAPIComponents,
+        op_id: str,
+        message_keys: dict[int, str],
+    ) -> Operation:
         channel_ref = f"#/channels/{op_obj.channel.address.replace('/', '~1')}"
         op: Operation = {
             "action": "send",
             "channel": {"$ref": channel_ref},
         }
-        if op_obj.title is not None:
-            op["title"] = op_obj.title
-        if op_obj.summary is not None:
-            op["summary"] = op_obj.summary
-        if op_obj.description is not None:
-            op["description"] = op_obj.description
+        extractor.extract_common(op_obj, op)
+
         if op_obj.messages:
             escaped_channel = op_obj.channel.address.replace("/", "~1")
             op["messages"] = [
-                {"$ref": f"#/channels/{escaped_channel}/messages/{msg.name.replace('/', '~1')}"}
+                {
+                    "$ref": f"#/channels/{escaped_channel}/messages/{message_keys.get(id(msg), msg.name).replace('/', '~1')}",
+                }
                 for msg in op_obj.messages
             ]
-        self._assign_tags(op, list(op_obj.tags))
-        ext = self._docs_from_dataclass(op_obj.external_docs)
-        if ext is not None:
-            op["externalDocs"] = ext
-        if op_obj.bindings is not None:
-            op["bindings"] = op_obj.bindings
-        if op_obj.security:
-            op["security"] = op_obj.security
+
+        bindings = self._process_operation_bindings(
+            op_obj.bindings,
+            op_id,
+            components,
+        )
+        if bindings:
+            op["bindings"] = bindings
+
+        security = self._process_security_schemes(
+            op_obj.security,
+            op_id,
+            "operation",
+            components,
+        )
+        if security:
+            op["security"] = security
         return op
 
-    def _message_from_schema(self, obj: MessageSchema) -> MessageObject:  # noqa: C901
-        msg: MessageObject = {"name": obj.name}
-        if obj.title is not None:
-            msg["title"] = obj.title
-        if obj.summary is not None:
-            msg["summary"] = obj.summary
-        if obj.description is not None:
-            msg["description"] = obj.description
-        if obj.content_type is not None:
-            msg["contentType"] = obj.content_type
-        if obj.headers is not None:
-            headers_obj = deepcopy(obj.headers)
-            self._extract_definitions(headers_obj)
-            msg["headers"] = headers_obj
-        if obj.payload is not None:
-            payload_obj = deepcopy(obj.payload)
-            self._extract_definitions(payload_obj)
-            msg["payload"] = payload_obj
-
-        if obj.correlation_id is not None:
-            corr: CorrelationId = {"location": obj.correlation_id.location}
-            if obj.correlation_id.description is not None:
-                corr["description"] = obj.correlation_id.description
-            msg["correlationId"] = corr
-
-        self._assign_tags(msg, list(obj.tags) if obj.tags is not None else None)
-        ext = self._docs_from_dataclass(obj.external_docs)
-        if ext is not None:
-            msg["externalDocs"] = ext
-        if obj.deprecated:
-            msg["deprecated"] = True
-
-        self._attach_examples_from_schema(msg, obj)
-        return msg
-
-    def _message_from_actor(self, actor: ActorData) -> MessageObject:
-        msg: MessageObject = {"name": actor.name}
-        if actor.title is not None:
-            msg["title"] = actor.title
-        if actor.summary is not None:
-            msg["summary"] = actor.summary
-        if actor.description is not None:
-            msg["description"] = actor.description
-
-        input_schema = actor.converter.get_input_schema()
-        self._apply_input_schema(msg, input_schema)
-
-        if actor.deprecated:
-            msg["deprecated"] = True
-        self._assign_tags(msg, list(actor.tags) if actor.tags is not None else None)
-        ext = self._docs_from_dataclass(actor.external_docs)
-        if ext is not None:
-            msg["externalDocs"] = ext
-        return msg
-
-    @staticmethod
-    def _build_examples_list(
-        examples: tuple[MessageExample, ...] | None,
-    ) -> list[MessageExampleObject]:
-        if not examples:
-            return []
-        out: list[MessageExampleObject] = []
-        for ex in examples:
-            ex_dict: MessageExampleObject = {}  # type: ignore[assignment]
-            if ex.name is not None:
-                ex_dict["name"] = ex.name
-            if ex.summary is not None:
-                ex_dict["summary"] = ex.summary
-            if ex.headers is not None:
-                ex_dict["headers"] = ex.headers
-            if ex.payload is not None:
-                ex_dict["payload"] = ex.payload
-            if "headers" in ex_dict or "payload" in ex_dict:
-                out.append(ex_dict)
-        return out
-
-    def _attach_examples_from_schema(self, msg: MessageObject, obj: MessageSchema) -> None:
-        examples_list = self._build_examples_list(obj.examples)
-        if examples_list:
-            msg["examples"] = examples_list
-
-    def _extract_definitions(self, schema: dict) -> None:
-        if "$defs" in schema:
-            for name, definition in schema.pop("$defs").items():
-                self._component_schemas[name] = definition
-
-    def _apply_input_schema(
+    def _process_security_schemes(
         self,
-        msg: MessageObject,
-        input_schema: ConverterInputSchema,
-    ) -> None:
-        if input_schema.payload_schema is not None:
-            msg["payload"] = input_schema.payload_schema
-            self._extract_definitions(msg["payload"])
-        if input_schema.content_type is not None:
-            msg["contentType"] = input_schema.content_type
-        if input_schema.headers_schema is not None:
-            msg["headers"] = input_schema.headers_schema
-            self._extract_definitions(msg["headers"])
-        if input_schema.correlation_id is not None:
-            corr_obj = input_schema.correlation_id
-            corr: CorrelationId = {"location": corr_obj.location}
-            if corr_obj.description is not None:
-                corr["description"] = corr_obj.description
-            msg["correlationId"] = corr
+        security: Sequence[SecurityScheme | ReferenceModel] | None,
+        parent_id: str,
+        parent_type: str,
+        components: AsyncAPIComponents,
+    ) -> list[SecurityScheme | ReferenceModel] | None:
+        if not security:
+            return None
+
+        processed_security: list[SecurityScheme | ReferenceModel] = []
+        for index, scheme in enumerate(security):
+            if isinstance(scheme, dict) and "$ref" not in scheme:
+                scheme_name = f"{parent_id}_{parent_type}-security-schema-{index}"
+                components.add_security_scheme(scheme_name, scheme)
+                processed_security.append(
+                    {"$ref": f"#/components/securitySchemes/{scheme_name}"},
+                )
+            else:  # pragma: no cover
+                processed_security.append(scheme)
+        return processed_security
+
+    def _process_server_bindings(
+        self,
+        bindings: ServerBindingsObject | ReferenceModel | None,
+        parent_id: str,
+        components: AsyncAPIComponents,
+    ) -> ReferenceModel | ServerBindingsObject | None:
+        if not bindings:
+            return None
+        if "$ref" in bindings:
+            return bindings  # pragma: no cover
+
+        binding_name = f"{parent_id}_bindings"
+        return components.add_server_binding(binding_name, bindings)
+
+    def _process_channel_bindings(
+        self,
+        bindings: ChannelBindingsObject | ReferenceModel | None,
+        parent_id: str,
+        components: AsyncAPIComponents,
+    ) -> ReferenceModel | ChannelBindingsObject | None:
+        if not bindings:
+            return None
+        if "$ref" in bindings:
+            return bindings  # pragma: no cover
+
+        binding_name = f"{parent_id}_bindings"
+        return components.add_channel_binding(binding_name, bindings)
+
+    def _process_operation_bindings(
+        self,
+        bindings: OperationBindingsObject | ReferenceModel | None,
+        parent_id: str,
+        components: AsyncAPIComponents,
+    ) -> ReferenceModel | OperationBindingsObject | None:
+        if not bindings:
+            return None
+        if "$ref" in bindings:
+            return bindings  # pragma: no cover
+
+        binding_name = f"{parent_id}_bindings"
+        return components.add_operation_binding(binding_name, bindings)

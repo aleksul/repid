@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 import pytest
+from pydantic import BaseModel
 
 from repid import Contact, ExternalDocs, Header, License, Repid, Router, Tag
+from repid.connections.amqp import AmqpServer
 from repid.connections.in_memory import InMemoryServer
 from repid.data.channel import Channel as ChannelData
 from repid.data.message_schema import CorrelationId, MessageExample, MessageSchema
@@ -42,10 +44,337 @@ def test_asyncapi_generator_basic() -> None:
     app.include_router(router)
 
     schema = app.generate_asyncapi_schema()
+
     assert schema["info"] == {
         "title": "Test API",
         "version": "2.0.0",
         "description": "Test description",
+    }
+
+
+def test_asyncapi_generator_server() -> None:
+    app = Repid()
+    app.servers.register_server(
+        "default",
+        InMemoryServer(
+            title="In-Memory Server",
+            description="A simple in-memory message broker that implements the ServerT protocol",
+            summary="In-memory message broker for testing and development",
+            tags=[Tag(name="in-memory")],
+            external_docs=ExternalDocs(url="https://example.com/in-memory-docs"),
+        ),
+    )
+
+    schema = app.generate_asyncapi_schema()
+
+    assert schema == {
+        "asyncapi": "3.0.0",
+        "info": {"title": "Repid AsyncAPI", "version": "0.0.1"},
+        "servers": {
+            "default": {
+                "host": "localhost",
+                "protocol": "in-memory",
+                "title": "In-Memory Server",
+                "description": "A simple in-memory message broker that implements the ServerT protocol",
+                "summary": "In-memory message broker for testing and development",
+                "protocolVersion": "1.0.0",
+                "tags": [{"$ref": "#/components/tags/in-memory"}],
+                "externalDocs": {
+                    "$ref": "#/components/externalDocs/external_docs_https_example_com_in_memory_docs",
+                },
+            },
+        },
+        "channels": {},
+        "operations": {},
+        "components": {
+            "messages": {},
+            "tags": {"in-memory": {"name": "in-memory"}},
+            "externalDocs": {
+                "external_docs_https_example_com_in_memory_docs": {
+                    "url": "https://example.com/in-memory-docs",
+                },
+            },
+        },
+    }
+
+
+def test_asyncapi_generator_amqp_server() -> None:
+    app = Repid()
+    app.servers.register_server(
+        "default",
+        AmqpServer(
+            "localhost",
+            title="AMQP Server",
+            description="A simple AMQP message broker that implements the ServerT protocol",
+            summary="AMQP message broker for testing and development",
+            variables={
+                "vhost": {"description": "The virtual host to connect to"},
+            },
+            security=[
+                {
+                    "type": "scramSha256",
+                    "description": "Provide your username and password for SASL/SCRAM authentication",
+                },
+            ],
+            tags=[Tag(name="amqp")],
+            external_docs=ExternalDocs(url="https://example.com/amqp-docs"),
+            bindings={
+                "amqp1": {
+                    "exchange": {"name": "test-exchange", "type": "topic"},
+                },
+            },
+        ),
+    )
+
+    schema = app.generate_asyncapi_schema()
+
+    assert schema == {
+        "asyncapi": "3.0.0",
+        "info": {"title": "Repid AsyncAPI", "version": "0.0.1"},
+        "servers": {
+            "default": {
+                "host": "None",
+                "protocol": "amqp",
+                "title": "AMQP Server",
+                "summary": "AMQP message broker for testing and development",
+                "description": "A simple AMQP message broker that implements the ServerT protocol",
+                "tags": [{"$ref": "#/components/tags/amqp"}],
+                "externalDocs": {
+                    "$ref": "#/components/externalDocs/external_docs_https_example_com_amqp_docs",
+                },
+                "bindings": {"$ref": "#/components/serverBindings/default_bindings"},
+                "protocolVersion": "1.0.0",
+                "pathname": "localhost",
+                "variables": {"vhost": {"description": "The virtual host to connect to"}},
+                "security": [
+                    {"$ref": "#/components/securitySchemes/default_server-security-schema-0"},
+                ],
+            },
+        },
+        "channels": {},
+        "operations": {},
+        "components": {
+            "messages": {},
+            "securitySchemes": {
+                "default_server-security-schema-0": {
+                    "type": "scramSha256",
+                    "description": "Provide your username and password for SASL/SCRAM authentication",
+                },
+            },
+            "serverBindings": {
+                "default_bindings": {
+                    "amqp1": {"exchange": {"name": "test-exchange", "type": "topic"}},
+                },
+            },
+            "tags": {"amqp": {"name": "amqp"}},
+            "externalDocs": {
+                "external_docs_https_example_com_amqp_docs": {
+                    "url": "https://example.com/amqp-docs",
+                },
+            },
+        },
+    }
+
+
+def test_asyncapi_generator_payload_references_model() -> None:
+    app = Repid(
+        title="Test API",
+        version="2.0.0",
+        description="Test description",
+    )
+    router = Router()
+
+    class OtherModel(BaseModel):
+        b: int
+
+    @router.actor
+    async def test_actor(a: OtherModel) -> None:
+        pass
+
+    app.include_router(router)
+
+    schema = app.generate_asyncapi_schema()
+
+    assert schema == {
+        "asyncapi": "3.0.0",
+        "info": {"title": "Test API", "version": "2.0.0", "description": "Test description"},
+        "servers": {},
+        "channels": {
+            "default": {"messages": {"test_actor": {"$ref": "#/components/messages/test_actor"}}},
+        },
+        "operations": {
+            "receive_test_actor": {
+                "action": "receive",
+                "channel": {"$ref": "#/channels/default"},
+                "summary": "Test Actor",
+                "messages": [{"$ref": "#/channels/default/messages/test_actor"}],
+            },
+        },
+        "components": {
+            "messages": {
+                "test_actor": {
+                    "name": "test_actor",
+                    "summary": "Test Actor",
+                    "payload": {
+                        "properties": {"a": {"$ref": "#/components/schemas/OtherModel"}},
+                        "required": ["a"],
+                        "title": "test_actor_payload",
+                        "type": "object",
+                    },
+                    "contentType": "application/json",
+                },
+            },
+            "schemas": {
+                "OtherModel": {
+                    "properties": {"b": {"title": "B", "type": "integer"}},
+                    "required": ["b"],
+                    "title": "OtherModel",
+                    "type": "object",
+                },
+            },
+        },
+    }
+
+
+def test_asyncapi_generator_empty_tag_has_no_effect() -> None:
+    app = Repid(
+        title="Test API",
+        version="2.0.0",
+        description="Test description",
+        tags=[Tag(name="")],
+    )
+    router = Router()
+
+    @router.actor
+    async def test_actor() -> None:
+        pass
+
+    app.include_router(router)
+
+    schema = app.generate_asyncapi_schema()
+
+    assert schema["info"] == {
+        "title": "Test API",
+        "version": "2.0.0",
+        "description": "Test description",
+    }
+
+
+def test_asyncapi_generator_external_docs_with_weird_names() -> None:
+    app = Repid(
+        title="Test API",
+        version="2.0.0",
+        description="Test description",
+        external_docs=ExternalDocs(url="~<><>__"),
+    )
+    router = Router(
+        channel=ChannelData(
+            address="default",
+            external_docs=ExternalDocs(url="<>?>~"),
+        ),
+    )
+
+    @router.actor
+    async def test_actor() -> None:
+        pass
+
+    app.include_router(router)
+
+    schema = app.generate_asyncapi_schema()
+
+    assert schema == {
+        "asyncapi": "3.0.0",
+        "info": {
+            "title": "Test API",
+            "version": "2.0.0",
+            "description": "Test description",
+            "externalDocs": {"$ref": "#/components/externalDocs/external_docs"},
+        },
+        "servers": {},
+        "channels": {
+            "default": {
+                "externalDocs": {"$ref": "#/components/externalDocs/external_docs_2"},
+                "messages": {"test_actor": {"$ref": "#/components/messages/test_actor"}},
+            },
+        },
+        "operations": {
+            "receive_test_actor": {
+                "action": "receive",
+                "channel": {"$ref": "#/channels/default"},
+                "summary": "Test Actor",
+                "messages": [{"$ref": "#/channels/default/messages/test_actor"}],
+            },
+        },
+        "components": {
+            "messages": {
+                "test_actor": {"name": "test_actor", "summary": "Test Actor", "contentType": ""},
+            },
+            "externalDocs": {
+                "external_docs": {"url": "~<><>__"},
+                "external_docs_2": {"url": "<>?>~"},
+            },
+        },
+    }
+
+
+def test_asyncapi_generator_tags_with_weird_names() -> None:
+    app = Repid(
+        title="Test API",
+        version="2.0.0",
+        description="Test description",
+        tags=[
+            Tag(name="~<><>__"),
+            Tag(name="<>?>~"),
+        ],
+    )
+    router = Router()
+
+    @router.actor(tags=[Tag(name="~<><>__")])
+    async def test_actor() -> None:
+        pass
+
+    app.include_router(router)
+
+    schema = app.generate_asyncapi_schema()
+
+    assert schema == {
+        "asyncapi": "3.0.0",
+        "info": {
+            "title": "Test API",
+            "version": "2.0.0",
+            "description": "Test description",
+            "tags": [
+                {"$ref": "#/components/tags/~<><>__"},
+                {"$ref": "#/components/tags/<>?>~"},
+            ],
+        },
+        "servers": {},
+        "channels": {
+            "default": {"messages": {"test_actor": {"$ref": "#/components/messages/test_actor"}}},
+        },
+        "operations": {
+            "receive_test_actor": {
+                "action": "receive",
+                "channel": {"$ref": "#/channels/default"},
+                "summary": "Test Actor",
+                "tags": [{"$ref": "#/components/tags/~<><>__"}],
+                "messages": [{"$ref": "#/channels/default/messages/test_actor"}],
+            },
+        },
+        "components": {
+            "messages": {
+                "test_actor": {
+                    "name": "test_actor",
+                    "summary": "Test Actor",
+                    "tags": [{"$ref": "#/components/tags/~<><>__"}],
+                    "contentType": "",
+                },
+            },
+            "tags": {
+                "~<><>__": {"name": "~<><>__"},
+                "<>?>~": {"name": "<>?>~"},
+            },
+        },
     }
 
 
@@ -62,7 +391,13 @@ def test_asyncapi_generator_populates_all_info_fields_in_schema() -> None:
         ),
         license=License(name="MIT", url="https://opensource.org/licenses/MIT"),
         tags=[
-            Tag(name="tag1", description="Tag 1 description"),
+            Tag(
+                name="tag1",
+                description="Tag 1 description",
+                external_docs=ExternalDocs(
+                    url="https://example.com/tag1-docs",
+                ),
+            ),
             Tag(name="tag2"),
         ],
         external_docs=ExternalDocs(
@@ -77,6 +412,7 @@ def test_asyncapi_generator_populates_all_info_fields_in_schema() -> None:
         pass
 
     app.include_router(router)
+
     schema = app.generate_asyncapi_schema()
 
     assert schema["info"] == {
@@ -100,8 +436,35 @@ def test_asyncapi_generator_populates_all_info_fields_in_schema() -> None:
     }
 
 
-def test_asyncapi_generator_accepts_partial_contact_info_url_only() -> None:
-    app = Repid(contact=Contact(url="https://example.com"))
+@pytest.mark.parametrize(
+    ("app_kwargs", "expected_key", "expected_value"),
+    [
+        pytest.param(
+            {"contact": Contact(url="https://example.com")},
+            "contact",
+            {"url": "https://example.com"},
+            id="contact_url_only",
+        ),
+        pytest.param(
+            {"contact": Contact(email="test@example.com")},
+            "contact",
+            {"email": "test@example.com"},
+            id="contact_email_only",
+        ),
+        pytest.param(
+            {"license": License(name="Proprietary")},
+            "license",
+            {"name": "Proprietary"},
+            id="license_name_only",
+        ),
+    ],
+)
+def test_asyncapi_generator_accepts_partial_info(
+    app_kwargs: dict[str, Any],
+    expected_key: str,
+    expected_value: dict[str, Any],
+) -> None:
+    app = Repid(**app_kwargs)
     router = Router()
 
     @router.actor
@@ -109,48 +472,14 @@ def test_asyncapi_generator_accepts_partial_contact_info_url_only() -> None:
         pass
 
     app.include_router(router)
+
     schema = app.generate_asyncapi_schema()
 
-    assert schema["info"]["contact"] == {"url": "https://example.com"}
+    assert schema["info"][expected_key] == expected_value  # type: ignore[literal-required]
 
 
-def test_asyncapi_generator_accepts_partial_contact_info_email_only() -> None:
-    app = Repid(contact=Contact(email="test@example.com"))
-    router = Router()
-
-    @router.actor
-    async def test_actor() -> None:
-        pass
-
-    app.include_router(router)
-    schema = app.generate_asyncapi_schema()
-
-    assert schema["info"]["contact"] == {"email": "test@example.com"}
-
-
-def test_asyncapi_generator_accepts_license_without_url() -> None:
-    app = Repid(license=License(name="Proprietary"))
-    router = Router()
-
-    @router.actor
-    async def test_actor() -> None:
-        pass
-
-    app.include_router(router)
-    schema = app.generate_asyncapi_schema()
-
-    assert schema["info"]["license"] == {"name": "Proprietary"}
-
-
-def test_asyncapi_generator_includes_message_registry_operations_in_schema() -> None:
+def test_asyncapi_generator_message_registry_operation() -> None:
     app = Repid()
-    router = Router()
-
-    @router.actor
-    async def my_actor(arg: str) -> None:
-        pass
-
-    app.include_router(router)
 
     app.messages.register_operation(
         operation_id="test_op",
@@ -198,66 +527,41 @@ def test_asyncapi_generator_includes_message_registry_operations_in_schema() -> 
         "info": {"title": "Repid AsyncAPI", "version": "0.0.1"},
         "servers": {},
         "channels": {
-            "default": {"messages": {"my_actor": {"$ref": "#/components/messages/my_actor"}}},
             "test_channel": {
-                "title": "Test Operation",
-                "summary": "Test summary",
-                "description": "Test description",
-                "tags": [{"$ref": "#/components/tags/op-tag"}],
-                "externalDocs": {
-                    "$ref": "#/components/externalDocs/external_docs_https_example_com_op_docs",
-                },
                 "messages": {"test_message": {"$ref": "#/components/messages/test_message"}},
             },
         },
         "operations": {
-            "receive_my_actor": {
-                "action": "receive",
-                "channel": {"$ref": "#/channels/default"},
-                "summary": "My Actor",
-                "messages": [{"$ref": "#/channels/default/messages/my_actor"}],
-            },
             "test_op": {
                 "action": "send",
                 "channel": {"$ref": "#/channels/test_channel"},
                 "title": "Test Operation",
                 "summary": "Test summary",
                 "description": "Test description",
-                "messages": [{"$ref": "#/channels/test_channel/messages/test_message"}],
                 "tags": [{"$ref": "#/components/tags/op-tag"}],
                 "externalDocs": {
                     "$ref": "#/components/externalDocs/external_docs_https_example_com_op_docs",
                 },
+                "messages": [{"$ref": "#/channels/test_channel/messages/test_message"}],
             },
         },
         "components": {
             "messages": {
-                "my_actor": {
-                    "name": "my_actor",
-                    "summary": "My Actor",
-                    "payload": {
-                        "properties": {"arg": {"title": "Arg", "type": "string"}},
-                        "required": ["arg"],
-                        "title": "my_actor_payload",
-                        "type": "object",
-                    },
-                    "contentType": "application/json",
-                },
                 "test_message": {
                     "name": "test_message",
                     "title": "Test Message",
                     "summary": "Test message summary",
                     "description": "Test message description",
+                    "tags": [{"$ref": "#/components/tags/msg-tag"}],
+                    "externalDocs": {
+                        "$ref": "#/components/externalDocs/external_docs_https_example_com_msg_docs",
+                    },
                     "contentType": "application/json",
                     "headers": {"type": "object"},
                     "payload": {"type": "object"},
                     "correlationId": {
                         "location": "$message.header#/x-correlation-id",
                         "description": "Correlation ID",
-                    },
-                    "tags": [{"$ref": "#/components/tags/msg-tag"}],
-                    "externalDocs": {
-                        "$ref": "#/components/externalDocs/external_docs_https_example_com_msg_docs",
                     },
                     "deprecated": True,
                     "examples": [
@@ -279,15 +583,13 @@ def test_asyncapi_generator_includes_message_registry_operations_in_schema() -> 
                     "url": "https://example.com/msg-docs",
                     "description": "Message docs",
                 },
-                "external_docs_https_example_com_op_docs": {
-                    "url": "https://example.com/op-docs",
-                },
+                "external_docs_https_example_com_op_docs": {"url": "https://example.com/op-docs"},
             },
         },
     }
 
 
-def test_asyncapi_generator_collects_actor_bindings_in_components() -> None:
+def test_asyncapi_generator_actor_bindings() -> None:
     app = Repid()
     router = Router()
 
@@ -302,6 +604,7 @@ def test_asyncapi_generator_collects_actor_bindings_in_components() -> None:
         pass
 
     app.include_router(router)
+
     schema = app.generate_asyncapi_schema()
 
     assert schema["components"]["operationBindings"] == {
@@ -322,34 +625,7 @@ def test_asyncapi_generator_collects_actor_bindings_in_components() -> None:
     }
 
 
-def test_asyncapi_generator_includes_registered_servers_in_schema() -> None:
-    app = Repid()
-    router = Router()
-
-    @router.actor
-    async def test_actor() -> None:
-        pass
-
-    app.include_router(router)
-
-    server = InMemoryServer()
-    app.servers.register_server("default", server, is_default=True)
-
-    schema = app.generate_asyncapi_schema()
-
-    assert schema["servers"] == {
-        "default": {
-            "host": "localhost",
-            "protocol": "in-memory",
-            "title": "In-Memory Server",
-            "description": "A simple in-memory message broker that implements the ServerT protocol",
-            "summary": "In-memory message broker for testing and development",
-            "protocolVersion": "1.0.0",
-        },
-    }
-
-
-def test_asyncapi_generator_includes_actor_metadata_in_operation() -> None:
+def test_asyncapi_generator_actor_metadata() -> None:
     app = Repid()
     router = Router()
 
@@ -369,6 +645,7 @@ def test_asyncapi_generator_includes_actor_metadata_in_operation() -> None:
         pass
 
     app.include_router(router)
+
     schema = app.generate_asyncapi_schema()
 
     assert schema == {
@@ -392,7 +669,11 @@ def test_asyncapi_generator_includes_actor_metadata_in_operation() -> None:
                 "externalDocs": {
                     "$ref": "#/components/externalDocs/external_docs_https_example_com_actor_docs",
                 },
-                "security": ({"apiKey": []},),
+                "security": [
+                    {
+                        "$ref": "#/components/securitySchemes/receive_detailed_actor_operation-security-schema-0",
+                    },
+                ],
             },
         },
         "components": {
@@ -423,11 +704,16 @@ def test_asyncapi_generator_includes_actor_metadata_in_operation() -> None:
                     "description": "Actor docs",
                 },
             },
+            "securitySchemes": {
+                "receive_detailed_actor_operation-security-schema-0": {
+                    "apiKey": [],
+                },
+            },
         },
     }
 
 
-def test_asyncapi_generator_includes_channel_with_bindings() -> None:
+def test_asyncapi_generator_channel_bindings() -> None:
     app = Repid()
     router = Router(
         channel=ChannelData(
@@ -449,6 +735,7 @@ def test_asyncapi_generator_includes_channel_with_bindings() -> None:
         pass
 
     app.include_router(router)
+
     schema = app.generate_asyncapi_schema()
 
     assert schema == {
@@ -460,14 +747,10 @@ def test_asyncapi_generator_includes_channel_with_bindings() -> None:
                 "title": "Custom Channel",
                 "summary": "Channel summary",
                 "description": "Channel description",
-                "bindings": {
-                    "amqp": {
-                        "queue": {"name": "test-queue"},
-                    },
-                },
                 "externalDocs": {
                     "$ref": "#/components/externalDocs/external_docs_https_example_com_channel_docs",
                 },
+                "bindings": {"$ref": "#/components/channelBindings/custom-channel_bindings"},
                 "messages": {
                     "actor_on_channel": {"$ref": "#/components/messages/actor_on_channel"},
                 },
@@ -489,11 +772,125 @@ def test_asyncapi_generator_includes_channel_with_bindings() -> None:
                     "contentType": "",
                 },
             },
+            "channelBindings": {
+                "custom-channel_bindings": {"amqp": {"queue": {"name": "test-queue"}}},
+            },
+            "externalDocs": {
+                "external_docs_https_example_com_channel_docs": {
+                    "url": "https://example.com/channel-docs",
+                },
+            },
         },
     }
 
 
-def test_asyncapi_generator_merges_channel_fields_from_different_sources() -> None:
+def test_asyncapi_generator_channel_merge() -> None:
+    app = Repid()
+    router = Router()
+
+    app.messages.register_operation(
+        operation_id="minimal_op",
+        channel="test-channel",
+        messages=[MessageSchema(name="operation_message", payload={"type": "object"})],
+    )
+
+    @router.actor(channel="test-channel")
+    async def test_actor() -> None:
+        pass
+
+    app.include_router(router)
+    schema = app.generate_asyncapi_schema()
+
+    assert schema["channels"] == {
+        "test-channel": {
+            "messages": {
+                "operation_message": {"$ref": "#/components/messages/operation_message"},
+                "test_actor": {"$ref": "#/components/messages/test_actor"},
+            },
+        },
+    }
+
+
+def test_asyncapi_generator_channel_merge_actor_and_actor() -> None:
+    app = Repid()
+    router = Router()
+
+    @router.actor(channel="shared-channel")
+    async def actor1() -> None:
+        pass
+
+    @router.actor(
+        channel=ChannelData(
+            address="shared-channel",
+            title="My Channel",
+            summary="Shared summary",
+            description="Shared description",
+            bindings={
+                "amqp": {
+                    "queue": {"name": "test-queue"},
+                },
+            },
+            external_docs=ExternalDocs(url="https://example.com/channel-docs"),
+        ),
+    )
+    async def actor2() -> None:
+        pass
+
+    app.include_router(router)
+
+    schema = app.generate_asyncapi_schema()
+
+    assert schema == {
+        "asyncapi": "3.0.0",
+        "info": {"title": "Repid AsyncAPI", "version": "0.0.1"},
+        "servers": {},
+        "channels": {
+            "shared-channel": {
+                "title": "My Channel",
+                "summary": "Shared summary",
+                "description": "Shared description",
+                "externalDocs": {
+                    "$ref": "#/components/externalDocs/external_docs_https_example_com_channel_docs",
+                },
+                "bindings": {"$ref": "#/components/channelBindings/shared-channel_bindings"},
+                "messages": {
+                    "actor1": {"$ref": "#/components/messages/actor1"},
+                    "actor2": {"$ref": "#/components/messages/actor2"},
+                },
+            },
+        },
+        "operations": {
+            "receive_actor1": {
+                "action": "receive",
+                "channel": {"$ref": "#/channels/shared-channel"},
+                "summary": "Actor1",
+                "messages": [{"$ref": "#/channels/shared-channel/messages/actor1"}],
+            },
+            "receive_actor2": {
+                "action": "receive",
+                "channel": {"$ref": "#/channels/shared-channel"},
+                "summary": "Actor2",
+                "messages": [{"$ref": "#/channels/shared-channel/messages/actor2"}],
+            },
+        },
+        "components": {
+            "messages": {
+                "actor1": {"name": "actor1", "summary": "Actor1", "contentType": ""},
+                "actor2": {"name": "actor2", "summary": "Actor2", "contentType": ""},
+            },
+            "channelBindings": {
+                "shared-channel_bindings": {"amqp": {"queue": {"name": "test-queue"}}},
+            },
+            "externalDocs": {
+                "external_docs_https_example_com_channel_docs": {
+                    "url": "https://example.com/channel-docs",
+                },
+            },
+        },
+    }
+
+
+def test_asyncapi_generator_channel_merge_actor_and_operation() -> None:
     app = Repid()
     router = Router()
 
@@ -505,10 +902,13 @@ def test_asyncapi_generator_merges_channel_fields_from_different_sources() -> No
 
     app.messages.register_operation(
         operation_id="op_on_shared",
-        channel="shared-channel",
-        title="Shared Channel",
-        summary="Shared summary",
-        description="Shared description",
+        channel=ChannelData(
+            address="shared-channel",
+            title="My Channel",
+        ),
+        title="Operation title",
+        summary="Operation summary",
+        description="Operation description",
         messages=[MessageSchema(name="op_message", payload={"type": "object"})],
     )
 
@@ -520,12 +920,11 @@ def test_asyncapi_generator_merges_channel_fields_from_different_sources() -> No
         "servers": {},
         "channels": {
             "shared-channel": {
+                "title": "My Channel",
                 "messages": {
                     "actor1": {"$ref": "#/components/messages/actor1"},
                     "op_message": {"$ref": "#/components/messages/op_message"},
                 },
-                "title": "Shared Channel",
-                "summary": "Shared summary",
             },
         },
         "operations": {
@@ -538,9 +937,9 @@ def test_asyncapi_generator_merges_channel_fields_from_different_sources() -> No
             "op_on_shared": {
                 "action": "send",
                 "channel": {"$ref": "#/channels/shared-channel"},
-                "title": "Shared Channel",
-                "summary": "Shared summary",
-                "description": "Shared description",
+                "title": "Operation title",
+                "summary": "Operation summary",
+                "description": "Operation description",
                 "messages": [
                     {"$ref": "#/channels/shared-channel/messages/op_message"},
                 ],
@@ -558,7 +957,7 @@ def test_asyncapi_generator_merges_channel_fields_from_different_sources() -> No
     }
 
 
-def test_asyncapi_generator_deduplicates_tags_in_components() -> None:
+def test_asyncapi_generator_tag_deduplication() -> None:
     app = Repid(tags=[Tag(name="common-tag")])
     router = Router()
 
@@ -571,6 +970,7 @@ def test_asyncapi_generator_deduplicates_tags_in_components() -> None:
         pass
 
     app.include_router(router)
+
     schema = app.generate_asyncapi_schema()
 
     assert schema == {
@@ -625,7 +1025,7 @@ def test_asyncapi_generator_deduplicates_tags_in_components() -> None:
     }
 
 
-def test_asyncapi_generator_deduplicates_external_docs_in_components() -> None:
+def test_asyncapi_generator_external_docs_deduplication() -> None:
     app = Repid(external_docs=ExternalDocs(url="https://example.com/docs"))
     router = Router()
 
@@ -638,6 +1038,7 @@ def test_asyncapi_generator_deduplicates_external_docs_in_components() -> None:
         pass
 
     app.include_router(router)
+
     schema = app.generate_asyncapi_schema()
 
     assert schema == {
@@ -704,56 +1105,62 @@ def test_asyncapi_generator_deduplicates_external_docs_in_components() -> None:
     }
 
 
-def test_external_docs_with_empty_url_still_included_in_schema() -> None:
+def test_asyncapi_generator_external_docs_empty_url() -> None:
     app = Repid(external_docs=ExternalDocs(url=""))
-    router = Router()
 
-    @router.actor
-    async def test_actor() -> None:
-        pass
-
-    app.include_router(router)
     schema = app.generate_asyncapi_schema()
 
     assert schema["info"]["externalDocs"] == {"url": ""}
 
 
-def test_actor_with_correlation_id_generates_correlation_id_in_message() -> None:
+@pytest.mark.parametrize(
+    "correlation_id",
+    [
+        pytest.param(
+            CorrelationId(location="$message.header#/correlationId"),
+            id="correlation_id",
+        ),
+        pytest.param(
+            CorrelationId(
+                location="$message.header#/correlationId",
+                description="Request correlation ID",
+            ),
+            id="correlation_id_with_description",
+        ),
+    ],
+)
+def test_asyncapi_generator_actor_correlation_id(correlation_id: CorrelationId) -> None:
     app = Repid()
     router = Router()
 
-    @router.actor(correlation_id=CorrelationId(location="$message.header#/correlationId"))
+    @router.actor(correlation_id=correlation_id)
     async def actor_with_correlation(x: int) -> None:
         pass
 
     app.include_router(router)
+
     schema = app.generate_asyncapi_schema()
+
+    expected_correlation_id: dict[str, Any] = {"location": correlation_id.location}
+    if correlation_id.description:
+        expected_correlation_id["description"] = correlation_id.description
 
     assert schema["components"]["messages"]["actor_with_correlation"] == {
         "name": "actor_with_correlation",
         "summary": "Actor With Correlation",
         "payload": {
-            "properties": {
-                "x": {"title": "X", "type": "integer"},
-            },
+            "properties": {"x": {"title": "X", "type": "integer"}},
             "required": ["x"],
             "title": "actor_with_correlation_payload",
             "type": "object",
         },
         "contentType": "application/json",
-        "correlationId": {"location": "$message.header#/correlationId"},
+        "correlationId": expected_correlation_id,
     }
 
 
-def test_operation_with_bindings_includes_bindings_in_schema() -> None:
+def test_asyncapi_generator_operation_bindings() -> None:
     app = Repid()
-    router = Router()
-
-    @router.actor
-    async def test_actor() -> None:
-        pass
-
-    app.include_router(router)
 
     app.messages.register_operation(
         operation_id="op_with_bindings",
@@ -769,34 +1176,25 @@ def test_operation_with_bindings_includes_bindings_in_schema() -> None:
         "asyncapi": "3.0.0",
         "info": {"title": "Repid AsyncAPI", "version": "0.0.1"},
         "servers": {},
-        "channels": {
-            "default": {"messages": {"test_actor": {"$ref": "#/components/messages/test_actor"}}},
-            "test_channel": {},
-        },
+        "channels": {"test_channel": {}},
         "operations": {
-            "receive_test_actor": {
-                "action": "receive",
-                "channel": {"$ref": "#/channels/default"},
-                "summary": "Test Actor",
-                "messages": [{"$ref": "#/channels/default/messages/test_actor"}],
-            },
             "op_with_bindings": {
                 "action": "send",
                 "channel": {"$ref": "#/channels/test_channel"},
-                "bindings": {"amqp": {"routingKey": "test-key"}},
+                "bindings": {"$ref": "#/components/operationBindings/op_with_bindings_bindings"},
             },
         },
         "components": {
-            "messages": {
-                "test_actor": {"name": "test_actor", "summary": "Test Actor", "contentType": ""},
+            "messages": {},
+            "operationBindings": {
+                "op_with_bindings_bindings": {"amqp": {"routingKey": "test-key"}},
             },
         },
     }
 
 
-def test_operation_with_security_includes_security_in_schema() -> None:
+def test_asyncapi_generator_operation_security() -> None:
     app = Repid()
-    router = Router()
 
     app.messages.register_operation(
         operation_id="secure_op",
@@ -804,7 +1202,6 @@ def test_operation_with_security_includes_security_in_schema() -> None:
         security=[{"apiKey": []}],
     )
 
-    app.include_router(router)
     schema = app.generate_asyncapi_schema()
 
     assert schema == {
@@ -816,14 +1213,25 @@ def test_operation_with_security_includes_security_in_schema() -> None:
             "secure_op": {
                 "action": "send",
                 "channel": {"$ref": "#/channels/secure_channel"},
-                "security": ({"apiKey": []},),
+                "security": [
+                    {
+                        "$ref": "#/components/securitySchemes/secure_op_operation-security-schema-0",
+                    },
+                ],
             },
         },
-        "components": {"messages": {}},
+        "components": {
+            "messages": {},
+            "securitySchemes": {
+                "secure_op_operation-security-schema-0": {
+                    "apiKey": [],
+                },
+            },
+        },
     }
 
 
-def test_actor_with_header_dependency_generates_headers_schema() -> None:
+def test_asyncapi_generator_actor_header() -> None:
     app = Repid()
     router = Router()
 
@@ -831,10 +1239,12 @@ def test_actor_with_header_dependency_generates_headers_schema() -> None:
     async def actor_with_header(
         arg1: str,
         x_custom: Annotated[str, Header(name="X-Custom")],
+        x_optional: Annotated[int | None, Header(name="X-Optional")] = None,
     ) -> None:
         pass
 
     app.include_router(router)
+
     schema = app.generate_asyncapi_schema()
 
     assert schema == {
@@ -869,7 +1279,14 @@ def test_actor_with_header_dependency_generates_headers_schema() -> None:
                     },
                     "contentType": "application/json",
                     "headers": {
-                        "properties": {"X-Custom": {"title": "X-Custom", "type": "string"}},
+                        "properties": {
+                            "X-Custom": {"title": "X-Custom", "type": "string"},
+                            "X-Optional": {
+                                "title": "X-Optional",
+                                "default": None,
+                                "anyOf": [{"type": "integer"}, {"type": "null"}],
+                            },
+                        },
                         "required": ["X-Custom"],
                         "title": "actor_with_header_headers",
                         "type": "object",
@@ -880,44 +1297,8 @@ def test_actor_with_header_dependency_generates_headers_schema() -> None:
     }
 
 
-def test_actor_with_correlation_id_includes_description_in_schema() -> None:
+def test_asyncapi_generator_operation() -> None:
     app = Repid()
-    router = Router()
-
-    @router.actor(
-        correlation_id=CorrelationId(
-            location="$message.header#/correlationId",
-            description="Request correlation ID",
-        ),
-    )
-    async def actor_with_corr_desc(x: int) -> None:
-        pass
-
-    app.include_router(router)
-    schema = app.generate_asyncapi_schema()
-
-    assert schema["components"]["messages"] == {
-        "actor_with_corr_desc": {
-            "name": "actor_with_corr_desc",
-            "summary": "Actor With Corr Desc",
-            "payload": {
-                "properties": {"x": {"title": "X", "type": "integer"}},
-                "required": ["x"],
-                "title": "actor_with_corr_desc_payload",
-                "type": "object",
-            },
-            "contentType": "application/json",
-            "correlationId": {
-                "location": "$message.header#/correlationId",
-                "description": "Request correlation ID",
-            },
-        },
-    }
-
-
-def test_channel_from_operation_only_is_included_in_schema() -> None:
-    app = Repid()
-    router = Router()
 
     app.messages.register_operation(
         operation_id="standalone_op",
@@ -926,60 +1307,6 @@ def test_channel_from_operation_only_is_included_in_schema() -> None:
         description="Standalone channel description",
     )
 
-    app.include_router(router)
-    schema = app.generate_asyncapi_schema()
-
-    assert schema["channels"] == {
-        "standalone-channel": {
-            "title": "Standalone Channel Title",
-            "description": "Standalone channel description",
-        },
-    }
-
-
-def test_merge_channel_when_extra_has_no_messages_field() -> None:
-    app = Repid()
-    router = Router()
-
-    app.messages.register_operation(
-        operation_id="minimal_op",
-        channel="test-channel",
-        messages=[MessageSchema(name="operation_message", payload={"type": "object"})],
-    )
-
-    @router.actor(channel="test-channel")
-    async def test_actor() -> None:
-        pass
-
-    app.include_router(router)
-    schema = app.generate_asyncapi_schema()
-
-    assert schema["channels"] == {
-        "test-channel": {
-            "messages": {
-                "operation_message": {"$ref": "#/components/messages/operation_message"},
-                "test_actor": {"$ref": "#/components/messages/test_actor"},
-            },
-        },
-    }
-
-
-def test_merge_channel_messages_when_base_has_no_messages() -> None:
-    app = Repid()
-    router = Router()
-
-    app.messages.register_operation(
-        operation_id="op_with_msg",
-        channel="msg-channel",
-        messages=[
-            MessageSchema(
-                name="op_message",
-                payload={"type": "object"},
-            ),
-        ],
-    )
-
-    app.include_router(router)
     schema = app.generate_asyncapi_schema()
 
     assert schema == {
@@ -987,169 +1314,158 @@ def test_merge_channel_messages_when_base_has_no_messages() -> None:
         "info": {"title": "Repid AsyncAPI", "version": "0.0.1"},
         "servers": {},
         "channels": {
-            "msg-channel": {
-                "messages": {"op_message": {"$ref": "#/components/messages/op_message"}},
+            "standalone-channel": {},
+        },
+        "operations": {
+            "standalone_op": {
+                "action": "send",
+                "channel": {"$ref": "#/channels/standalone-channel"},
+                "title": "Standalone Channel Title",
+                "description": "Standalone channel description",
+            },
+        },
+        "components": {"messages": {}},
+    }
+
+
+def test_asyncapi_generator_operation_complex() -> None:
+    app = Repid()
+
+    app.messages.register_operation(
+        operation_id="manual_op",
+        channel=ChannelData(
+            address="manual-channel",
+            title="Manual Channel",
+            summary="A manually defined channel summary",
+            description="A manually defined channel",
+            bindings={"amqp": {"is": "queue"}},
+            external_docs=ExternalDocs(
+                url="https://example.com/manual-channel-docs",
+                description="Manual channel docs",
+            ),
+        ),
+        title="Manual Operation",
+        summary="A manual operation summary",
+        description="A manual operation description",
+        messages=[
+            MessageSchema(
+                name="ManualMessage",
+                title="Manual Message",
+                payload={"type": "string"},
+                correlation_id=CorrelationId(location="$message.header#/cid"),
+                content_type="application/json",
+                examples=(
+                    MessageExample(
+                        name="ex1",
+                        payload="test",
+                        headers={"cid": "123"},
+                    ),
+                ),
+                bindings={
+                    "amqp": {
+                        "contentEncoding": "gzip",
+                        "messageType": "user.signup",
+                        "bindingVersion": "0.3.0",
+                    },
+                },
+            ),
+        ],
+        security=[{"apiKey": []}],
+        tags=[Tag(name="manual-op-tag", description="Manual operation tag")],
+        external_docs=ExternalDocs(
+            url="https://example.com/manual-op-docs",
+            description="Manual operation docs",
+        ),
+        bindings={
+            "amqp": {"priority": 5},
+        },
+    )
+
+    schema = app.generate_asyncapi_schema()
+
+    assert schema == {
+        "asyncapi": "3.0.0",
+        "info": {"title": "Repid AsyncAPI", "version": "0.0.1"},
+        "servers": {},
+        "channels": {
+            "manual-channel": {
+                "title": "Manual Channel",
+                "summary": "A manually defined channel summary",
+                "description": "A manually defined channel",
+                "externalDocs": {
+                    "$ref": "#/components/externalDocs/external_docs_https_example_com_manual_channel_docs",
+                },
+                "bindings": {"$ref": "#/components/channelBindings/manual-channel_bindings"},
+                "messages": {"ManualMessage": {"$ref": "#/components/messages/ManualMessage"}},
             },
         },
         "operations": {
-            "op_with_msg": {
+            "manual_op": {
                 "action": "send",
-                "channel": {"$ref": "#/channels/msg-channel"},
-                "messages": [{"$ref": "#/channels/msg-channel/messages/op_message"}],
+                "channel": {"$ref": "#/channels/manual-channel"},
+                "title": "Manual Operation",
+                "summary": "A manual operation summary",
+                "description": "A manual operation description",
+                "tags": [{"$ref": "#/components/tags/manual-op-tag"}],
+                "externalDocs": {
+                    "$ref": "#/components/externalDocs/external_docs_https_example_com_manual_op_docs",
+                },
+                "messages": [{"$ref": "#/channels/manual-channel/messages/ManualMessage"}],
+                "bindings": {"$ref": "#/components/operationBindings/manual_op_bindings"},
+                "security": [
+                    {"$ref": "#/components/securitySchemes/manual_op_operation-security-schema-0"},
+                ],
             },
         },
         "components": {
-            "messages": {"op_message": {"name": "op_message", "payload": {"type": "object"}}},
-        },
-    }
-
-
-def test_operation_with_external_docs_creates_channel_in_schema() -> None:
-    app = Repid()
-    router = Router()
-
-    app.messages.register_operation(
-        operation_id="op_with_docs",
-        channel="docs-channel",
-        external_docs=ExternalDocs(
-            url="https://example.com/docs",
-            description="External documentation",
-        ),
-    )
-
-    app.include_router(router)
-    schema = app.generate_asyncapi_schema()
-
-    assert schema["channels"] == {
-        "docs-channel": {
+            "messages": {
+                "ManualMessage": {
+                    "name": "ManualMessage",
+                    "title": "Manual Message",
+                    "contentType": "application/json",
+                    "payload": {"type": "string"},
+                    "correlationId": {"location": "$message.header#/cid"},
+                    "bindings": {
+                        "$ref": "#/components/messageBindings/ManualMessage-message_bindings",
+                    },
+                    "examples": [{"name": "ex1", "headers": {"cid": "123"}, "payload": "test"}],
+                },
+            },
+            "securitySchemes": {"manual_op_operation-security-schema-0": {"apiKey": []}},
+            "channelBindings": {"manual-channel_bindings": {"amqp": {"is": "queue"}}},
+            "operationBindings": {"manual_op_bindings": {"amqp": {"priority": 5}}},
+            "messageBindings": {
+                "ManualMessage-message_bindings": {
+                    "amqp": {
+                        "contentEncoding": "gzip",
+                        "messageType": "user.signup",
+                        "bindingVersion": "0.3.0",
+                    },
+                },
+            },
+            "tags": {
+                "manual-op-tag": {"name": "manual-op-tag", "description": "Manual operation tag"},
+            },
             "externalDocs": {
-                "$ref": "#/components/externalDocs/external_docs_https_example_com_docs",
+                "external_docs_https_example_com_manual_channel_docs": {
+                    "url": "https://example.com/manual-channel-docs",
+                    "description": "Manual channel docs",
+                },
+                "external_docs_https_example_com_manual_op_docs": {
+                    "url": "https://example.com/manual-op-docs",
+                    "description": "Manual operation docs",
+                },
             },
         },
     }
 
 
-def test_operation_with_tags_creates_channel_in_schema() -> None:
-    app = Repid()
-    router = Router()
-
-    app.messages.register_operation(
-        operation_id="op_with_tags",
-        channel="tags-channel",
-        tags=[Tag(name="op-tag", description="Operation tag")],
-    )
-
-    app.include_router(router)
-    schema = app.generate_asyncapi_schema()
-
-    assert schema["channels"] == {
-        "tags-channel": {
-            "tags": [{"$ref": "#/components/tags/op-tag"}],
-        },
-    }
-
-
-def test_operation_with_amqp_bindings_includes_bindings_in_schema() -> None:
-    app = Repid()
-    router = Router()
-
-    app.messages.register_operation(
-        operation_id="op_with_bindings",
-        channel="bindings-channel",
-        bindings={"amqp": {"ack": True}},
-    )
-
-    app.include_router(router)
-    schema = app.generate_asyncapi_schema()
-
-    assert schema["operations"] == {
-        "op_with_bindings": {
-            "action": "send",
-            "channel": {"$ref": "#/channels/bindings-channel"},
-            "bindings": {"amqp": {"ack": True}},
-        },
-    }
-
-
-def test_channel_with_bindings_in_channel_data() -> None:
-    app = Repid()
-    router = Router(
-        channel=ChannelData(
-            address="bound-channel",
-            bindings={"amqp": {"is": "queue"}},
-        ),
-    )
-
-    @router.actor
-    async def test_actor() -> None:
-        pass
-
-    app.include_router(router)
-    schema = app.generate_asyncapi_schema()
-
-    assert schema["channels"] == {
-        "bound-channel": {
-            "bindings": {"amqp": {"is": "queue"}},
-            "messages": {"test_actor": {"$ref": "#/components/messages/test_actor"}},
-        },
-    }
-
-
-def test_router_channel_not_in_messages_registry_is_added_to_schema() -> None:
-    app = Repid()
-    router = Router(channel="router-channel")
-
-    @router.actor
-    async def my_actor() -> None:
-        pass
-
-    app.include_router(router)
-
-    app.messages.register_operation(
-        operation_id="other_op",
-        channel="other-channel",
-    )
-
-    schema = app.generate_asyncapi_schema()
-
-    assert schema["channels"] == {
-        "router-channel": {"messages": {"my_actor": {"$ref": "#/components/messages/my_actor"}}},
-        "other-channel": {},
-    }
-
-
-def test_messages_added_to_existing_channel_without_messages_key() -> None:
-    app = Repid()
-    router = Router(channel="shared-channel")
-
-    @router.actor
-    async def actor1() -> None:
-        pass
-
-    app.include_router(router)
-
-    app.messages.register_operation(
-        operation_id="pre_op",
-        channel="shared-channel",
-        title="Pre-existing operation",
-    )
-
-    schema = app.generate_asyncapi_schema()
-
-    assert schema["channels"] == {
-        "shared-channel": {
-            "messages": {"actor1": {"$ref": "#/components/messages/actor1"}},
-            "title": "Pre-existing operation",
-        },
-    }
-
-
-def test_actor_message_not_duplicated_when_already_in_channel() -> None:
+def test_asyncapi_generator_message_name_collision() -> None:
     app = Repid()
     router = Router(channel="test-channel")
 
     @router.actor
-    async def my_actor() -> None:
+    async def my_actor(payload1: str) -> None:
         pass
 
     app.include_router(router)
@@ -1157,125 +1473,56 @@ def test_actor_message_not_duplicated_when_already_in_channel() -> None:
     app.messages.register_operation(
         operation_id="same_name_op",
         channel="test-channel",
-        messages=[MessageSchema(name="my_actor")],
+        messages=[
+            MessageSchema(
+                name="my_actor",
+                payload={"type": "object"},
+            ),
+        ],
     )
 
     schema = app.generate_asyncapi_schema()
 
-    assert schema["channels"] == {
-        "test-channel": {"messages": {"my_actor": {"$ref": "#/components/messages/my_actor"}}},
-    }
-
-
-def test_channel_with_external_docs_via_channel_data() -> None:
-    app = Repid()
-    router = Router(
-        channel=ChannelData(
-            address="docs-channel",
-            title="Documented Channel",
-            external_docs=ExternalDocs(url="https://docs.example.com"),
-        ),
-    )
-
-    @router.actor
-    async def test_actor() -> None:
-        pass
-
-    app.include_router(router)
-    schema = app.generate_asyncapi_schema()
-
-    assert schema["channels"] == {
-        "docs-channel": {
-            "title": "Documented Channel",
-            "externalDocs": {
-                "$ref": "#/components/externalDocs/external_docs_https_docs_example_com",
+    assert schema == {
+        "asyncapi": "3.0.0",
+        "info": {"title": "Repid AsyncAPI", "version": "0.0.1"},
+        "servers": {},
+        "channels": {
+            "test-channel": {"messages": {"my_actor": {"$ref": "#/components/messages/my_actor"}}},
+        },
+        "operations": {
+            "receive_my_actor": {
+                "action": "receive",
+                "channel": {"$ref": "#/channels/test-channel"},
+                "summary": "My Actor",
+                "messages": [{"$ref": "#/channels/test-channel/messages/my_actor"}],
             },
+            "same_name_op": {
+                "action": "send",
+                "channel": {"$ref": "#/channels/test-channel"},
+                "messages": [{"$ref": "#/channels/test-channel/messages/my_actor_1"}],
+            },
+        },
+        "components": {
             "messages": {
-                "test_actor": {"$ref": "#/components/messages/test_actor"},
-            },
-        },
-    }
-
-
-def test_actor_with_content_type_generates_message_content_type() -> None:
-    app = Repid()
-    router = Router()
-
-    @router.actor
-    async def actor_with_payload(data: dict) -> None:
-        pass
-
-    app.include_router(router)
-    schema = app.generate_asyncapi_schema()
-
-    assert schema["components"] == {
-        "messages": {
-            "actor_with_payload": {
-                "name": "actor_with_payload",
-                "summary": "Actor With Payload",
-                "payload": {
-                    "properties": {
-                        "data": {"additionalProperties": True, "title": "Data", "type": "object"},
+                "my_actor": {
+                    "name": "my_actor",
+                    "summary": "My Actor",
+                    "payload": {
+                        "properties": {"payload1": {"title": "Payload1", "type": "string"}},
+                        "required": ["payload1"],
+                        "title": "my_actor_payload",
+                        "type": "object",
                     },
-                    "required": ["data"],
-                    "title": "actor_with_payload_payload",
-                    "type": "object",
+                    "contentType": "application/json",
                 },
-                "contentType": "application/json",
+                "my_actor_1": {"name": "my_actor", "payload": {"type": "object"}},
             },
         },
     }
 
 
-def test_server_with_description() -> None:
-    app = Repid()
-    router = Router()
-
-    @router.actor
-    async def test_actor() -> None:
-        pass
-
-    app.include_router(router)
-
-    server = InMemoryServer(
-        title="Tagged Server",
-        description="A server with description",
-    )
-    app.servers.register_server("tagged", server)
-
-    schema = app.generate_asyncapi_schema()
-
-    assert schema["servers"] == {
-        "tagged": {
-            "host": "localhost",
-            "protocol": "in-memory",
-            "title": "Tagged Server",
-            "description": "A server with description",
-            "summary": "In-memory message broker for testing and development",
-            "protocolVersion": "1.0.0",
-        },
-    }
-
-
-def test_operation_messages_included_in_channel_messages() -> None:
-    app = Repid()
-    router = Router()
-
-    app.messages.register_operation(
-        operation_id="op_with_msg",
-        channel="my-channel",
-        messages=[MessageSchema(name="OpMessage")],
-    )
-
-    app.include_router(router)
-    schema = app.generate_asyncapi_schema()
-
-    assert schema["channels"] == {
-        "my-channel": {"messages": {"OpMessage": {"$ref": "#/components/messages/OpMessage"}}},
-    }
-
-
-def test_multiple_actors_on_same_channel() -> None:
+def test_asyncapi_generator_multiple_actors_on_same_channel() -> None:
     app = Repid()
     router = Router(channel="shared-channel")
 
@@ -1290,17 +1537,42 @@ def test_multiple_actors_on_same_channel() -> None:
     app.include_router(router)
     schema = app.generate_asyncapi_schema()
 
-    assert schema["channels"] == {
-        "shared-channel": {
+    assert schema == {
+        "asyncapi": "3.0.0",
+        "info": {"title": "Repid AsyncAPI", "version": "0.0.1"},
+        "servers": {},
+        "channels": {
+            "shared-channel": {
+                "messages": {
+                    "actor1": {"$ref": "#/components/messages/actor1"},
+                    "actor2": {"$ref": "#/components/messages/actor2"},
+                },
+            },
+        },
+        "operations": {
+            "receive_actor1": {
+                "action": "receive",
+                "channel": {"$ref": "#/channels/shared-channel"},
+                "summary": "Actor1",
+                "messages": [{"$ref": "#/channels/shared-channel/messages/actor1"}],
+            },
+            "receive_actor2": {
+                "action": "receive",
+                "channel": {"$ref": "#/channels/shared-channel"},
+                "summary": "Actor2",
+                "messages": [{"$ref": "#/channels/shared-channel/messages/actor2"}],
+            },
+        },
+        "components": {
             "messages": {
-                "actor1": {"$ref": "#/components/messages/actor1"},
-                "actor2": {"$ref": "#/components/messages/actor2"},
+                "actor1": {"name": "actor1", "summary": "Actor1", "contentType": ""},
+                "actor2": {"name": "actor2", "summary": "Actor2", "contentType": ""},
             },
         },
     }
 
 
-def test_nested_router_actors_included_in_schema() -> None:
+def test_asyncapi_generator_nested_router() -> None:
     app = Repid()
     parent_router = Router()
     child_router = Router()
@@ -1314,7 +1586,6 @@ def test_nested_router_actors_included_in_schema() -> None:
 
     schema = app.generate_asyncapi_schema()
 
-    # insert_assert(schema)
     assert schema == {
         "asyncapi": "3.0.0",
         "info": {"title": "Repid AsyncAPI", "version": "0.0.1"},
@@ -1335,117 +1606,4 @@ def test_nested_router_actors_included_in_schema() -> None:
                 "child_actor": {"name": "child_actor", "summary": "Child Actor", "contentType": ""},
             },
         },
-    }
-
-
-def test_actor_with_all_metadata() -> None:
-    app = Repid()
-    router = Router()
-
-    @router.actor(
-        title="Full Actor",
-        summary="Actor summary",
-        description="Actor description",
-        tags=[Tag(name="full-tag")],
-        external_docs=ExternalDocs(url="https://full-docs.example.com"),
-        bindings={"amqp": {"ack": True}},
-        correlation_id=CorrelationId(location="$message.header#/id"),
-    )
-    async def full_actor(x: int) -> None:
-        pass
-
-    app.include_router(router)
-    schema = app.generate_asyncapi_schema()
-
-    assert schema == {
-        "asyncapi": "3.0.0",
-        "info": {"title": "Repid AsyncAPI", "version": "0.0.1"},
-        "servers": {},
-        "channels": {
-            "default": {"messages": {"full_actor": {"$ref": "#/components/messages/full_actor"}}},
-        },
-        "operations": {
-            "receive_full_actor": {
-                "action": "receive",
-                "channel": {"$ref": "#/channels/default"},
-                "title": "Full Actor",
-                "summary": "Actor summary",
-                "description": "Actor description",
-                "messages": [{"$ref": "#/channels/default/messages/full_actor"}],
-                "bindings": {
-                    "$ref": "#/components/operationBindings/full_actor_bindings",
-                },
-                "tags": [{"$ref": "#/components/tags/full-tag"}],
-                "externalDocs": {
-                    "$ref": "#/components/externalDocs/external_docs_https_full_docs_example_com",
-                },
-            },
-        },
-        "components": {
-            "messages": {
-                "full_actor": {
-                    "name": "full_actor",
-                    "title": "Full Actor",
-                    "summary": "Actor summary",
-                    "description": "Actor description",
-                    "payload": {
-                        "properties": {"x": {"title": "X", "type": "integer"}},
-                        "required": ["x"],
-                        "title": "full_actor_payload",
-                        "type": "object",
-                    },
-                    "contentType": "application/json",
-                    "correlationId": {"location": "$message.header#/id"},
-                    "tags": [{"$ref": "#/components/tags/full-tag"}],
-                    "externalDocs": {
-                        "$ref": "#/components/externalDocs/external_docs_https_full_docs_example_com",
-                    },
-                },
-            },
-            "operationBindings": {"full_actor_bindings": {"amqp": {"ack": True}}},
-            "tags": {"full-tag": {"name": "full-tag"}},
-            "externalDocs": {
-                "external_docs_https_full_docs_example_com": {
-                    "url": "https://full-docs.example.com",
-                },
-            },
-        },
-    }
-
-
-def test_message_with_full_example() -> None:
-    app = Repid()
-    router = Router()
-
-    app.messages.register_operation(
-        operation_id="example_op",
-        channel="example-channel",
-        messages=[
-            MessageSchema(
-                name="ExampleMessage",
-                examples=(
-                    MessageExample(
-                        name="full_example",
-                        summary="Full example",
-                        headers={"Content-Type": "application/json"},
-                        payload={"id": 1, "name": "test"},
-                    ),
-                ),
-            ),
-        ],
-    )
-
-    app.include_router(router)
-    schema = app.generate_asyncapi_schema()
-
-    assert schema["components"]["messages"]["ExampleMessage"] == {
-        "name": "ExampleMessage",
-        "examples": [
-            {
-                "name": "full_example",
-                "summary": "Full example",
-                "headers": {"Content-Type": "application/json"},
-                "payload": {"id": 1, "name": "test"},
-            },
-        ],
     }

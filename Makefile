@@ -14,9 +14,8 @@ rebuild-lockfiles: .uv
 erase-coverage: .uv
 	uv run coverage erase
 
-fast-test: .uv
-	erase-coverage
-	uv run coverage run -m pytest -m 'not integration' --ignore='tests/test_hypothesis.py'
+fast-test: .uv erase-coverage
+	uv run coverage run -m pytest tests/unit
 	uv run coverage report --omit 'repid/connections/**'
 
 only-test: .uv

@@ -103,6 +103,7 @@ class DefaultConverter:
         self,
         fn: Callable[..., Coroutine],
         *,
+        fn_locals: dict[str, Any] | None = None,
         correlation_id: CorrelationId | None,
     ) -> None:
         raise NotImplementedError  # pragma: no cover
@@ -131,10 +132,12 @@ class BasicConverter:
     ) -> None:
         self.fn = fn
         self.correlation_id = correlation_id
+        local = fn_locals.copy() if fn_locals is not None else {}
+        local.update(fn.__globals__)
         signature = inspect.signature(
             fn,
             eval_str=True,
-            locals=fn_locals,
+            locals=local,
             globals=fn.__globals__,
         )
         self.args: dict[str, Any] = {}
@@ -256,10 +259,12 @@ class PydanticConverter:
     ) -> None:
         self.fn = fn
         self.correlation_id = correlation_id
+        local = fn_locals.copy() if fn_locals is not None else {}
+        local.update(fn.__globals__)
         signature = inspect.signature(
             fn,
             eval_str=True,
-            locals=fn_locals,
+            locals=local,
             globals=fn.__globals__,
         )
 
@@ -465,7 +470,7 @@ class PydanticConverter:
             return None
         if message.content_type not in (None, "", "application/json"):
             raise ValueError(f"Unsupported content type: {message.content_type}")
-        return self.payload_pydantic_model.model_validate_json(message.payload)
+        return self.payload_pydantic_model.model_validate_json(message.payload or b"{}")
 
     def _parse_headers(self, message: ReceivedMessageT) -> BaseModel | None:
         if self.headers_pydantic_model is None:

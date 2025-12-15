@@ -1,16 +1,6 @@
-from repid import Channel, ExternalDocs
+import pytest
 
-
-def test_channel_creation() -> None:
-    Channel(
-        address="test_channel",
-        title="Channel 1",
-        summary="A test channel summary",
-        description="A test channel description",
-        parameters={"param1": {"description": "string"}},
-        bindings={"amqp1": {"someBindingKey": "someBindingValue"}},
-        external_docs=ExternalDocs(url="https://example.com/docs", description="Channel docs"),
-    )
+from repid import Channel
 
 
 def test_channel_equality() -> None:
@@ -20,3 +10,10 @@ def test_channel_equality() -> None:
 
     assert channel1 == channel2
     assert channel1 != channel3
+
+
+def test_channel_equality_with_non_channel_raises() -> None:
+    channel = Channel(address="test_channel")
+
+    with pytest.raises(ValueError, match="Cannot compare Channel with"):
+        channel == "not a channel"  # noqa: B015

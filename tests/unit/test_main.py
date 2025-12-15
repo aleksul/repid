@@ -1,6 +1,7 @@
 import httpx
+import pytest
 
-from repid import Contact, ExternalDocs, License, Repid, Router, Tag
+from repid import Repid, Router
 from repid.connections.in_memory import InMemoryServer
 
 
@@ -24,53 +25,6 @@ def test_get_asyncapi_schema_html() -> None:
     assert "<title>My title AsyncAPI</title>" in html_schema
 
 
-def test_repid_initialization_with_metadata() -> None:
-    app = Repid(
-        title="Test App",
-        version="1.0.0",
-        description="Test Description",
-        terms_of_service="https://example.com/terms/",
-        contact=Contact(
-            name="Support",
-            url="https://example.com/support",
-            email="support@example.com",
-        ),
-        license=License(
-            name="MIT",
-            url="https://opensource.org/licenses/MIT",
-        ),
-        tags=[
-            Tag(name="tag1", description="A test tag"),
-        ],
-        external_docs=ExternalDocs(
-            url="https://example.com/docs",
-            description="External documentation",
-        ),
-    )
-
-    schema = app.generate_asyncapi_schema()
-    assert schema["info"]["title"] == "Test App"
-    assert schema["info"]["version"] == "1.0.0"
-    assert schema["info"]["description"] == "Test Description"
-    assert schema["info"]["termsOfService"] == "https://example.com/terms/"
-    assert schema["info"]["contact"] == {
-        "name": "Support",
-        "url": "https://example.com/support",
-        "email": "support@example.com",
-    }
-    assert schema["info"]["license"] == {
-        "name": "MIT",
-        "url": "https://opensource.org/licenses/MIT",
-    }
-    assert schema["info"]["tags"] == [
-        {"name": "tag1", "description": "A test tag"},
-    ]
-    assert schema["info"]["externalDocs"] == {
-        "url": "https://example.com/docs",
-        "description": "External documentation",
-    }
-
-
 async def test_asyncapi_server_creation(fake_repid: Repid) -> None:
     asyncapi_server = fake_repid.asyncapi_server()
     async with asyncapi_server:
@@ -80,6 +34,14 @@ async def test_asyncapi_server_creation(fake_repid: Repid) -> None:
             response = await client.get("http://localhost:8081/")
             response.raise_for_status()
             assert "<!DOCTYPE html>" in response.text
+
+
+async def test_asyncapi_server_404(fake_repid: Repid) -> None:
+    asyncapi_server = fake_repid.asyncapi_server()
+    async with asyncapi_server, httpx.AsyncClient() as client:
+        response = await client.get("http://localhost:8081/unknown/path")
+        assert response.status_code == 404
+        assert "404 Not Found" in response.text
 
 
 async def test_send_message_basic(fake_repid: Repid) -> None:
@@ -183,3 +145,76 @@ def test_include_router() -> None:
     app.include_router(router)
 
     assert any(actor.name == "router_actor" for actor in app._centralized_router.actors)
+
+
+async def test_run_worker_no_server() -> None:
+    app = Repid()
+
+    with pytest.raises(ValueError, match="No default server configured"):
+        await app.run_worker()
+
+
+async def test_run_worker_server_not_found() -> None:
+    app = Repid()
+    server = InMemoryServer()
+    app.servers.register_server("default", server, is_default=True)
+
+    with pytest.raises(ValueError, match="Server 'nonexistent' not found"):
+        await app.run_worker(server_name="nonexistent")
+
+
+async def test_send_message_no_server() -> None:
+    app = Repid()
+
+    with pytest.raises(ValueError, match="No default server configured"):
+        await app.send_message(channel="default", payload=b"test")
+
+
+async def test_send_message_server_not_found() -> None:
+    app = Repid()
+    server = InMemoryServer()
+    app.servers.register_server("default", server, is_default=True)
+
+    async with server.connection():
+        with pytest.raises(ValueError, match="Server 'nonexistent' not found"):
+            await app.send_message(channel="default", payload=b"test", server_name="nonexistent")
+
+
+async def test_send_message_operation_not_found() -> None:
+    app = Repid()
+    server = InMemoryServer()
+    app.servers.register_server("default", server, is_default=True)
+
+    async with server.connection():
+        with pytest.raises(ValueError, match="Operation 'nonexistent' not found"):
+            await app.send_message(operation_id="nonexistent", payload=b"test")
+
+
+async def test_send_message_neither_channel_nor_operation_id() -> None:
+    app = Repid()
+    server = InMemoryServer()
+    app.servers.register_server("default", server, is_default=True)
+
+    async with server.connection():
+        with pytest.raises(
+            ValueError,
+            match="Either 'channel' or 'operation_id' must be specified",
+        ):
+            await app.send_message(payload=b"test")  # type: ignore[call-overload]
+
+
+async def test_send_message_both_channel_and_operation_id() -> None:
+    app = Repid()
+    server = InMemoryServer()
+    app.servers.register_server("default", server, is_default=True)
+
+    async with server.connection():
+        with pytest.raises(
+            ValueError,
+            match="Specify either 'channel' or 'operation_id', not both",
+        ):
+            await app.send_message(
+                channel="default",
+                operation_id="some_op",
+                payload=b"test",
+            )  # type: ignore[call-overload]

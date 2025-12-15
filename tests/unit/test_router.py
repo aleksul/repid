@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 from repid import Router
-from repid.data.channel import Channel
+from repid.converter import BasicConverter
+from repid.data import Channel, MessageData
+from repid.router import catch_all_routing_strategy, topic_based_routing_strategy
 
 
 def test_empty_router() -> None:
@@ -107,3 +111,68 @@ def test_router_defaults_propagation_override() -> None:
     assert len(router2.actors) == 1
     assert router2.actors[0].channel_address == "channel2"
     assert router2.actors[0].name == "actor_in_router2"
+
+
+def test_topic_based_routing_strategy_no_headers() -> None:
+    strategy = topic_based_routing_strategy(actor_name="test_actor")
+    result = strategy(MessageData(payload=b"", headers=None))
+
+    assert result is False
+
+
+def test_topic_based_routing_strategy_matching() -> None:
+    strategy = topic_based_routing_strategy(actor_name="test_actor")
+    result = strategy(MessageData(payload=b"", headers={"topic": "test_actor"}))
+
+    assert result is True
+
+
+def test_topic_based_routing_strategy_not_matching() -> None:
+    strategy = topic_based_routing_strategy(actor_name="test_actor")
+    result = strategy(MessageData(payload=b"", headers={"topic": "other_actor"}))
+
+    assert result is False
+
+
+def test_catch_all_routing_strategy() -> None:
+    strategy = catch_all_routing_strategy(actor_name="any")
+    result = strategy(MessageData(payload=b"", headers=None))
+
+    assert result is True
+
+
+def test_include_router_propagates_timeout() -> None:
+    router1 = Router(timeout=30.0)
+    router2 = Router()
+
+    router1.include_router(router2)
+
+    assert router2.timeout == 30.0
+
+
+def test_include_router_propagates_run_in_process() -> None:
+    router1 = Router(run_in_process=True)
+    router2 = Router()
+
+    router1.include_router(router2)
+
+    assert router2.run_in_process is True
+
+
+def test_include_router_propagates_pool_executor() -> None:
+    executor = ThreadPoolExecutor(max_workers=2)
+    router1 = Router(pool_executor=executor)
+    router2 = Router()
+
+    router1.include_router(router2)
+
+    assert router2.pool_executor is executor
+
+
+def test_include_router_propagates_converter() -> None:
+    router1 = Router(converter=BasicConverter)
+    router2 = Router()
+
+    router1.include_router(router2)
+
+    assert router2.converter is BasicConverter

@@ -33,16 +33,8 @@ class _MockServer:
         server_specific_parameters: dict[str, Any] | None = None,  # noqa: ARG002
     ) -> None:
         """Publish a message to a channel by queuing it in the test client."""
-        # Find operation ID for the channel
-        operation_id = None
-        for op_id, operation in self._test_client.app.messages._operations.items():
-            if operation.channel.address == channel:
-                operation_id = op_id
-                break
-
-        # Create and track the message
         test_message = TestMessage(
-            operation_id=operation_id,
+            operation_id=None,
             payload=message.payload,
             headers=message.headers,
             content_type=message.content_type,
@@ -223,6 +215,7 @@ class TestClient:
         auto_process: bool = True,
         raise_on_actor_not_found: bool = True,
         raise_on_actor_error: bool = True,
+        raise_on_operation_not_found: bool = True,
     ) -> None:
         """Initialize the test client.
 
@@ -231,11 +224,13 @@ class TestClient:
             auto_process (bool, optional): Whether to automatically process messages when sent. Defaults to True.
             raise_on_actor_not_found (bool, optional): Whether to raise error when no actor found for message. Defaults to True.
             raise_on_actor_error (bool, optional): Whether to raise exceptions from actor execution. Defaults to True.
+            raise_on_operation_not_found (bool, optional): Whether to raise error when operation ID is not found. Defaults to True.
         """
         self.app = app
         self.auto_process = auto_process
         self.raise_on_actor_not_found = raise_on_actor_not_found
         self.raise_on_actor_error = raise_on_actor_error
+        self.raise_on_operation_not_found = raise_on_operation_not_found
 
         self._sent_messages: list[TestMessage] = []
         self._processed_messages: list[TestMessage] = []
@@ -269,7 +264,7 @@ class TestClient:
         if operation_id is not None:
             operation = self.app.messages.get_operation(operation_id)
             if operation is None:
-                if self.raise_on_actor_not_found:
+                if self.raise_on_operation_not_found:
                     raise ValueError(f"Operation '{operation_id}' not found.")
                 return
             channel = operation.channel.address
@@ -437,12 +432,6 @@ class TestClient:
         if actor is None:
             if self.raise_on_actor_not_found:
                 raise ValueError(f"No actor found for channel '{test_message.channel}'")
-            # Mark as processed with error
-            test_message._exception = ValueError(
-                f"No actor found for channel '{test_message.channel}'",
-            )
-            test_message._processed = True
-            self._processed_messages.append(test_message)
             return test_message
 
         # _actor_run returns either the result or the exception
@@ -515,39 +504,65 @@ class TestClient:
                 messages.append(await self._process_message(message))
         return messages
 
+    @overload
+    def get_sent_messages(self, *, operation_id: str) -> list[TestMessage]: ...
+
+    @overload
+    def get_sent_messages(self, *, channel: str) -> list[TestMessage]: ...
+
+    @overload
+    def get_sent_messages(self) -> list[TestMessage]: ...
+
     def get_sent_messages(
         self,
         *,
         operation_id: str | None = None,
+        channel: str | None = None,
     ) -> list[TestMessage]:
         """Get all messages sent during testing.
 
         Args:
             operation_id (str | None, optional): Filter by operation ID. Defaults to None.
+            channel (str | None, optional): Filter by channel. Defaults to None.
 
         Returns:
             list[TestMessage]: The list of sent messages.
         """
-        if operation_id is None:
-            return self._sent_messages.copy()
-        return [m for m in self._sent_messages if m.operation_id == operation_id]
+        if operation_id is not None:
+            return [m for m in self._sent_messages if m.operation_id == operation_id]
+        if channel is not None:
+            return [m for m in self._sent_messages if m.channel == channel]
+        return self._sent_messages.copy()
+
+    @overload
+    def get_processed_messages(self, *, operation_id: str) -> list[TestMessage]: ...
+
+    @overload
+    def get_processed_messages(self, *, channel: str) -> list[TestMessage]: ...
+
+    @overload
+    def get_processed_messages(self) -> list[TestMessage]: ...
 
     def get_processed_messages(
         self,
         *,
         operation_id: str | None = None,
+        channel: str | None = None,
     ) -> list[TestMessage]:
         """Get all messages that have been processed.
 
         Args:
             operation_id (str | None, optional): Filter by operation ID. Defaults to None.
+            channel (str | None, optional): Filter by channel. Defaults to None.
 
         Returns:
             list[TestMessage]: The list of processed messages.
         """
-        if operation_id is None:
-            return self._processed_messages.copy()
-        return [m for m in self._processed_messages if m.operation_id == operation_id]
+        if operation_id is not None:
+            return [m for m in self._processed_messages if m.operation_id == operation_id]
+        if channel is not None:
+            return [m for m in self._processed_messages if m.channel == channel]
+        return self._processed_messages.copy()
 
     def clear(self) -> None:
         """Clear state of the test client (sent and processed messages)"""

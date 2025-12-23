@@ -19,7 +19,7 @@ fast-test: .uv erase-coverage
 	uv run coverage report --omit 'repid/connections/**'
 
 only-test: .uv
-	uv run coverage run -m pytest --diff-symbols --hypothesis-verbosity=normal tests/
+	uv run coverage run -m pytest tests/
 
 report-coverage: .uv
 	uv run coverage report --no-skip-covered --show-missing

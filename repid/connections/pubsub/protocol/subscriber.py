@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from typing import TYPE_CHECKING, cast
@@ -197,6 +198,9 @@ class PubsubSubscriber:
             yield initial_request
 
             # Then yield ack/nack requests from the queue
+            last_activity = time.monotonic()
+            heartbeat_interval = 25.0
+
             while not self._shutdown_event.is_set():
                 try:
                     request = await asyncio.wait_for(
@@ -204,7 +208,17 @@ class PubsubSubscriber:
                         timeout=1.0,
                     )
                     yield request
+                    last_activity = time.monotonic()
                 except asyncio.TimeoutError:
+                    if time.monotonic() - last_activity > heartbeat_interval:
+                        logger.debug(
+                            "Sending heartbeat.",
+                            extra={"subscription": subscription_path},
+                        )
+                        yield StreamingPullRequest(
+                            stream_ack_deadline_seconds=self._stream_ack_deadline_seconds,
+                        )
+                        last_activity = time.monotonic()
                     continue
 
         # Start the stream

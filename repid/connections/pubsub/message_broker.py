@@ -162,9 +162,18 @@ class PubsubServer:
         if channel_factory is not None:
             self._channel_factory = channel_factory
         else:
+            # Default gRPC keepalive options to prevent connection drops by load balancers
+            # (e.g., GFE drops idle connections after 60s)
+            default_options: list[tuple[str, str | int]] = [
+                ("grpc.keepalive_time_ms", 30000),
+                ("grpc.keepalive_timeout_ms", 10000),
+                ("grpc.keepalive_permit_without_calls", 1),
+                ("grpc.http2.max_pings_without_data", 0),
+            ]
             self._channel_factory = GrpcChannelFactory(
                 dsn=dsn,
                 credentials_provider=self._credentials_provider,
+                options=default_options,
             )
 
         # Parse target for AsyncAPI info

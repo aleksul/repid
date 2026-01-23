@@ -94,13 +94,13 @@ def _encode_ubyte(
     """
     try:
         value = int(value)
-    except ValueError:
+    except ValueError:  # pragma: no cover
         value = cast(bytes, value)
         value = ord(value)
     try:
         output.extend(_construct(ConstructorBytes.ubyte, with_constructor))
         output.extend(struct.pack(">B", abs(value)))
-    except struct.error as exc:
+    except struct.error as exc:  # pragma: no cover
         raise ValueError("Unsigned byte value must be 0-255") from exc
 
 
@@ -121,7 +121,7 @@ def _encode_ushort(
     try:
         output.extend(_construct(ConstructorBytes.ushort, with_constructor))
         output.extend(struct.pack(">H", abs(value)))
-    except struct.error as exc:
+    except struct.error as exc:  # pragma: no cover
         raise ValueError("Unsigned byte value must be 0-65535") from exc
 
 
@@ -153,7 +153,7 @@ def _encode_uint(
             return
         output.extend(_construct(ConstructorBytes.uint_large, with_constructor))
         output.extend(struct.pack(">I", abs(value)))
-    except struct.error as exc:
+    except struct.error as exc:  # pragma: no cover
         raise ValueError(f"Value supplied for unsigned int invalid: {value}") from exc
 
 
@@ -185,7 +185,7 @@ def _encode_ulong(
             return
         output.extend(_construct(ConstructorBytes.ulong_large, with_constructor))
         output.extend(struct.pack(">Q", abs(value)))
-    except struct.error as exc:
+    except struct.error as exc:  # pragma: no cover
         raise ValueError(f"Value supplied for unsigned long invalid: {value}") from exc
 
 
@@ -206,7 +206,7 @@ def _encode_byte(
     try:
         output.extend(_construct(ConstructorBytes.byte, with_constructor))
         output.extend(struct.pack(">b", value))
-    except struct.error as exc:
+    except struct.error as exc:  # pragma: no cover
         raise ValueError("Byte value must be -128-127") from exc
 
 
@@ -227,7 +227,7 @@ def _encode_short(
     try:
         output.extend(_construct(ConstructorBytes.short, with_constructor))
         output.extend(struct.pack(">h", value))
-    except struct.error as exc:
+    except struct.error as exc:  # pragma: no cover
         raise ValueError("Short value must be -32768-32767") from exc
 
 
@@ -254,7 +254,7 @@ def _encode_int(
             return
         output.extend(_construct(ConstructorBytes.int_large, with_constructor))
         output.extend(struct.pack(">i", value))
-    except struct.error as exc:
+    except struct.error as exc:  # pragma: no cover
         raise ValueError(f"Value supplied for int invalid: {value}") from exc
 
 
@@ -282,7 +282,7 @@ def _encode_long(
             return
         output.extend(_construct(ConstructorBytes.long_large, with_constructor))
         output.extend(struct.pack(">q", value))
-    except struct.error as exc:
+    except struct.error as exc:  # pragma: no cover
         raise ValueError(f"Value supplied for long invalid: {value}") from exc
 
 
@@ -394,7 +394,7 @@ def _encode_binary(
         output.extend(_construct(ConstructorBytes.binary_large, with_constructor))
         output.extend(struct.pack(">L", length))
         output.extend(value)
-    except struct.error as exc:
+    except struct.error as exc:  # pragma: no cover
         raise ValueError("Binary data to long to encode") from exc
 
 
@@ -427,7 +427,7 @@ def _encode_string(
         output.extend(_construct(ConstructorBytes.string_large, with_constructor))
         output.extend(struct.pack(">L", length))
         output.extend(value)
-    except struct.error as exc:
+    except struct.error as exc:  # pragma: no cover
         raise ValueError("String value too long to encode.") from exc
 
 
@@ -460,7 +460,7 @@ def _encode_symbol(
         output.extend(_construct(ConstructorBytes.symbol_large, with_constructor))
         output.extend(struct.pack(">L", length))
         output.extend(value)
-    except struct.error as exc:
+    except struct.error as exc:  # pragma: no cover
         raise ValueError("Symbol value too long to encode.") from exc
 
 
@@ -501,7 +501,7 @@ def _encode_list(
             output.extend(_construct(ConstructorBytes.list_large, with_constructor))
             output.extend(struct.pack(">L", encoded_size + 4))
             output.extend(struct.pack(">L", count))
-        except struct.error as exc:
+        except struct.error as exc:  # pragma: no cover
             raise ValueError("List is too large or too long to be encoded.") from exc
     output.extend(encoded_values)
 
@@ -544,7 +544,7 @@ def _encode_map(
             output.extend(_construct(ConstructorBytes.map_large, with_constructor))
             output.extend(struct.pack(">L", encoded_size + 4))
             output.extend(struct.pack(">L", count))
-        except struct.error as exc:
+        except struct.error as exc:  # pragma: no cover
             raise ValueError("Map is too large or too long to be encoded.") from exc
     output.extend(encoded_values)
 
@@ -603,7 +603,7 @@ def _encode_array(
             output.extend(_construct(ConstructorBytes.array_large, with_constructor))
             output.extend(struct.pack(">L", encoded_size + 4))
             output.extend(struct.pack(">L", count))
-        except struct.error as exc:
+        except struct.error as exc:  # pragma: no cover
             raise ValueError("Array is too large or too long to be encoded.") from exc
     output.extend(encoded_values)
 

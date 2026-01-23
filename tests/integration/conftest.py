@@ -81,6 +81,11 @@ def pubsub_connection(pubsub_container: "wrappers.Container") -> ServerT:
 
 @pytest.fixture(scope="session")
 def redis_connection(redis_container: "wrappers.Container") -> ServerT:
+    while "Ready to accept connections tcp" not in redis_container.logs():
+        sleep(0.1)
+
+    sleep(3)
+
     return RedisServer(f"redis://:test@localhost:{redis_container.ports['6379/tcp'][0]}/0")
 
 

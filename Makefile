@@ -16,7 +16,7 @@ erase-coverage: .uv
 
 fast-test: .uv erase-coverage
 	uv run coverage run -m pytest tests/unit
-	uv run coverage report --omit 'repid/connections/**'
+	uv run coverage report --omit 'repid/connections/**' --show-missing
 
 only-test: .uv
 	uv run coverage run -m pytest tests/

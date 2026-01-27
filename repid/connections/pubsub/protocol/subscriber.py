@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from contextlib import suppress
 from typing import TYPE_CHECKING, cast
 
+import grpc
 import grpc.aio
 
 from repid.logger import logger
@@ -128,6 +129,18 @@ class PubsubSubscriber:
             try:
                 await self._run_streaming_pull(config, write_queue)
             except grpc.aio.AioRpcError as e:
+                if (
+                    e.code() == grpc.StatusCode.UNAVAILABLE
+                    and (details := e.details()) is not None
+                    and "The StreamingPull stream closed for an expected reason and should be recreated"
+                    in details
+                ):
+                    logger.debug(
+                        "StreamingPull closed for expected reason (likely max stream duration), reconnecting immediately.",
+                        extra={"subscription": subscription_path},
+                    )
+                    continue
+
                 await self._resilience_state.record_failure()
 
                 if not self._resilience_state.is_retryable(e):

@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import TypeVar
 
+import grpc
 import grpc.aio
 
 T = TypeVar("T")
@@ -58,6 +59,18 @@ class ResilienceConfig:
                 grpc.StatusCode.RESOURCE_EXHAUSTED,
                 grpc.StatusCode.ABORTED,
                 grpc.StatusCode.INTERNAL,
+                grpc.StatusCode.UNKNOWN,
+            },
+        ),
+    )
+    terminating_status_codes: frozenset[grpc.StatusCode] = field(
+        default_factory=lambda: frozenset(
+            {
+                grpc.StatusCode.CANCELLED,
+                grpc.StatusCode.INVALID_ARGUMENT,
+                grpc.StatusCode.NOT_FOUND,
+                grpc.StatusCode.PERMISSION_DENIED,
+                grpc.StatusCode.UNAUTHENTICATED,
             },
         ),
     )
@@ -135,8 +148,14 @@ class ResilienceState:
         return max(0.0, delay + jitter)
 
     def is_retryable(self, error: grpc.aio.AioRpcError) -> bool:
-        """Check if an error should trigger a retry."""
-        return error.code() in self._config.retryable_status_codes
+        """Check if an error should trigger a retry.
+
+        Returns True if the error is explicitly retryable or NOT explicitly terminating.
+        """
+        code = error.code()
+        if code in self._config.retryable_status_codes:
+            return True
+        return code not in self._config.terminating_status_codes
 
     def should_retry(self) -> bool:
         """Check if we should attempt another retry."""

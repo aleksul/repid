@@ -1,6 +1,7 @@
 from pathlib import Path
 from time import sleep
 
+import grpc
 import pytest
 from pytest_docker_tools import container, wrappers
 from pytest_lazy_fixtures import lf as lazy_fixture
@@ -10,6 +11,7 @@ from repid.connections.abc import ServerT
 from repid.connections.amqp import AmqpServer
 from repid.connections.pubsub import PubsubServer
 from repid.connections.redis import RedisServer
+from tests.integration.pubsub_proto_helpers import Subscription, Topic
 
 RABBITMQ_DEFINITIONS_JSON = Path(__file__).parent / "rabbitmq_definitions.json"
 
@@ -33,11 +35,17 @@ rabbitmq_container = container(
     scope="session",
 )
 
+
+class DeltioContainer(wrappers.Container):
+    def ready(self) -> bool:
+        return "listening on" in self.logs()
+
+
 pubsub_container = container(
-    image="messagebird/gcloud-pubsub-emulator:latest",
-    ports={"8681/tcp": None},
-    environment={"PUBSUB_PROJECT1": "my-project,default:default,another:another"},
+    image="ghcr.io/jeffijoe/deltio:latest",
+    ports={"8085/tcp": None},
     scope="session",
+    wrapper_class=DeltioContainer,
 )
 
 
@@ -63,18 +71,65 @@ def rabbitmq_connection(rabbitmq_container: "wrappers.Container") -> ServerT:
 
 @pytest.fixture(scope="session")
 def pubsub_connection(pubsub_container: "wrappers.Container") -> ServerT:
-    patterns = [
-        "Server started, listening on",
-        'Creating topic "default"',
-        'Creating subscription "default"',
-        'Creating topic "another"',
-        'Creating subscription "another"',
-    ]
-    while not all(pattern in pubsub_container.logs() for pattern in patterns):
-        sleep(0.1)
+    # Wait for container ports to be assigned
+    port = None
+    for _ in range(100):
+        try:
+            pubsub_container._container.reload()
+            port = pubsub_container.ports["8085/tcp"][0]
+            break
+        except (KeyError, AttributeError):
+            sleep(0.1)
+
+    if port is None:
+        raise RuntimeError("Could not get port from deltio container")
+
+    target = f"localhost:{port}"
+
+    # Wait for readiness
+    for _ in range(100):
+        try:
+            with grpc.insecure_channel(target) as channel:
+                grpc.channel_ready_future(channel).result(timeout=0.1)
+            break
+        except Exception:
+            sleep(0.1)
+    else:
+        raise TimeoutError("Deltio container failed to start")
+
+    # Create topics and subscriptions
+    with grpc.insecure_channel(target) as channel:
+        create_topic = channel.unary_unary(
+            "/google.pubsub.v1.Publisher/CreateTopic",
+            request_serializer=Topic.serialize,
+            response_deserializer=lambda x: x,
+        )
+        create_subscription = channel.unary_unary(
+            "/google.pubsub.v1.Subscriber/CreateSubscription",
+            request_serializer=Subscription.serialize,
+            response_deserializer=lambda x: x,
+        )
+
+        create_topic(Topic(name="projects/my-project/topics/default"))
+        create_subscription(
+            Subscription(
+                name="projects/my-project/subscriptions/default",
+                topic="projects/my-project/topics/default",
+                ack_deadline_seconds=10,
+            ),
+        )
+
+        create_topic(Topic(name="projects/my-project/topics/another"))
+        create_subscription(
+            Subscription(
+                name="projects/my-project/subscriptions/another",
+                topic="projects/my-project/topics/another",
+                ack_deadline_seconds=10,
+            ),
+        )
 
     return PubsubServer(
-        dsn=f"http://localhost:{pubsub_container.ports['8681/tcp'][0]}/v1",
+        dsn=f"http://{target}",
         default_project="my-project",
     )
 

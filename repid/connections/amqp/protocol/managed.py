@@ -166,6 +166,7 @@ class SenderPool:
         self._managed_session = managed_session
         self._links: dict[str, SenderLink] = {}
         self._link_names: dict[str, str] = {}  # address -> link name
+        self._link_counter = 0
         self._lock = asyncio.Lock()
 
     async def get(self, address: str, name: str | None = None) -> SenderLink:
@@ -192,10 +193,10 @@ class SenderPool:
             session = await self._managed_session.get_session()
 
             # Create new link
-            link_name = (
-                name or self._link_names.get(address) or f"sender-{address}-{len(self._links)}"
-            )
-            self._link_names[address] = link_name
+            self._link_counter += 1
+            base_name = name or self._link_names.get(address) or f"sender-{address}"
+            link_name = f"{base_name}-{self._link_counter}"
+            self._link_names[address] = base_name
 
             link = await session.create_sender(address, link_name)
             self._links[address] = link
@@ -263,10 +264,11 @@ class SenderPool:
 
     async def close(self) -> None:
         """Close all links in the pool."""
-        for link in list(self._links.values()):
-            with contextlib.suppress(Exception):
-                await link.detach()
-        self._links.clear()
+        async with self._lock:
+            for link in list(self._links.values()):
+                with contextlib.suppress(Exception):
+                    await link.detach()
+            self._links.clear()
 
 
 class ReceiverPool:
@@ -299,6 +301,7 @@ class ReceiverPool:
             Callable[[bytes, dict[str, Any] | None, int, bytes, ReceiverLink], Any],
         ] = {}
         self._link_names: dict[str, str] = {}  # address -> link name
+        self._link_counter = 0
         self._lock = asyncio.Lock()
         self._stop_event = asyncio.Event()
 
@@ -328,8 +331,10 @@ class ReceiverPool:
         async with self._lock:
             # Store callback for re-subscription
             self._callbacks[address] = callback
-            link_name = name or f"receiver-{address}-{len(self._links)}"
-            self._link_names[address] = link_name
+            self._link_counter += 1
+            base_name = name or f"receiver-{address}"
+            link_name = f"{base_name}-{self._link_counter}"
+            self._link_names[address] = base_name
 
             return await self._create_link(address, callback, link_name)
 
@@ -360,9 +365,11 @@ class ReceiverPool:
             self._links.clear()
 
             # Re-create all subscriptions
-            for address, callback in self._callbacks.items():
+            for address, callback in list(self._callbacks.items()):
                 try:
-                    link_name = self._link_names.get(address, f"receiver-{address}")
+                    self._link_counter += 1
+                    base_name = self._link_names.get(address, f"receiver-{address}")
+                    link_name = f"{base_name}-{self._link_counter}"
                     await self._create_link(address, callback, link_name)
                     logger.debug("ReceiverPool: re-subscribed to %s", address)
                 except Exception:
@@ -392,9 +399,10 @@ class ReceiverPool:
             self._on_reconnected,
         )
 
-        for link in list(self._links.values()):
-            with contextlib.suppress(Exception):
-                await link.detach()
+        async with self._lock:
+            for link in list(self._links.values()):
+                with contextlib.suppress(Exception):
+                    await link.detach()
 
-        self._links.clear()
-        self._callbacks.clear()
+            self._links.clear()
+            self._callbacks.clear()

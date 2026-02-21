@@ -20,7 +20,7 @@ imported_pubsub = False
 try:
     import google.auth
     import grpc.aio
-except ImportError:
+except ImportError:  # pragma: no cover
     imported_pubsub = False
 else:
     imported_pubsub = True

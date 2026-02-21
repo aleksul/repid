@@ -210,8 +210,7 @@ class InMemorySubscriber(SubscriberT):
             await asyncio.gather(*self._channel_tasks.values())
         except asyncio.CancelledError:
             for t in self._channel_tasks.values():
-                if not t.done():
-                    t.cancel()
+                t.cancel()
             raise
 
     async def _channel_consumer(

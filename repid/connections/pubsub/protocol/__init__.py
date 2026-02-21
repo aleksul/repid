@@ -7,9 +7,8 @@ not be imported directly by users.
 
 from ._helpers import ChannelConfig as ChannelConfig
 from ._helpers import QueuedDelivery as QueuedDelivery
-from .channel import ChannelFactory as ChannelFactory
-from .channel import GrpcChannelFactory as GrpcChannelFactory
-from .channel import InsecureChannelFactory as InsecureChannelFactory
+from .channel import create_channel as create_channel
+from .channel import parse_dsn as parse_dsn
 from .credentials import CredentialsProvider as CredentialsProvider
 from .credentials import GoogleDefaultCredentials as GoogleDefaultCredentials
 from .credentials import InsecureCredentials as InsecureCredentials

@@ -1,9 +1,3 @@
-"""Credentials management for Pub/Sub gRPC authentication.
-
-This module provides abstractions for credential providers, enabling
-testability and flexibility in authentication approaches.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -29,15 +23,11 @@ class CredentialsProvider(Protocol):
         ...
 
     async def ensure_valid(self) -> None:
-        """Ensure credentials are valid, refreshing if necessary.
-
-        This should check credentials.expired and refresh via
-        asyncio.to_thread if needed.
-        """
+        """Ensure credentials are valid, refreshing if necessary."""
         ...
 
     def get_token(self) -> str | None:
-        """Get the current access token, or None for insecure connections."""
+        """Get the current access token, or None if not available."""
         ...
 
 
@@ -93,8 +83,9 @@ class GoogleDefaultCredentials:
         """Check if credentials are expired and refresh if needed."""
         await self._ensure_initialized()
 
-        if self._credentials is None:
-            raise RuntimeError("Credentials not initialized")
+        if self._credentials is None:  # pragma: no cover
+            # should never happen
+            raise RuntimeError("Credentials are not initialized.")
 
         if self._credentials.expired or not self._credentials.valid:
             await asyncio.to_thread(self._refresh)

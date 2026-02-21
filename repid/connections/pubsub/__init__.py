@@ -10,11 +10,8 @@ This module provides a Pub/Sub server implementation with:
 
 from .helpers import ChannelOverride as ChannelOverride
 from .message_broker import PubsubServer as PubsubServer
-from .protocol import ChannelFactory as ChannelFactory
 from .protocol import CredentialsProvider as CredentialsProvider
 from .protocol import GoogleDefaultCredentials as GoogleDefaultCredentials
-from .protocol import GrpcChannelFactory as GrpcChannelFactory
-from .protocol import InsecureChannelFactory as InsecureChannelFactory
 from .protocol import InsecureCredentials as InsecureCredentials
 from .protocol import PubsubReceivedMessage as PubsubReceivedMessage
 from .protocol import PubsubSubscriber as PubsubSubscriber

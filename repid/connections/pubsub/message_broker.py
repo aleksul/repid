@@ -16,7 +16,6 @@ from .protocol import (
     ChannelConfig,
     CredentialsProvider,
     GoogleDefaultCredentials,
-    GrpcChannelFactory,
     InsecureCredentials,
     PublishRequest,
     PublishResponse,
@@ -24,6 +23,8 @@ from .protocol import (
     PubsubSubscriber,
     ResilienceConfig,
     ResilienceState,
+    create_channel,
+    parse_dsn,
     with_retry,
 )
 
@@ -31,8 +32,6 @@ if TYPE_CHECKING:
     from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
     from repid.data import ExternalDocs, Tag
-
-    from .protocol import ChannelFactory
 
 
 # gRPC method paths
@@ -78,7 +77,6 @@ class PubsubServer:
         stream_ack_deadline_seconds: int = 300,
         # Dependency injection for testability
         credentials_provider: CredentialsProvider | None = None,
-        channel_factory: ChannelFactory | None = None,
     ) -> None:
         """Initialize the Pub/Sub server.
 
@@ -158,32 +156,19 @@ class PubsubServer:
             # Default behavior: DSN provided means use insecure
             self._credentials_provider = InsecureCredentials()
 
-        # Set up channel factory
-        if channel_factory is not None:
-            self._channel_factory = channel_factory
-        else:
-            # Default gRPC keepalive options to prevent connection drops by load balancers
-            # (e.g., GFE drops idle connections after 60s)
-            default_options: list[tuple[str, str | int]] = [
-                ("grpc.keepalive_time_ms", 30000),
-                ("grpc.keepalive_timeout_ms", 10000),
-                ("grpc.keepalive_permit_without_calls", 1),
-                ("grpc.http2.max_pings_without_data", 0),
-            ]
-            self._channel_factory = GrpcChannelFactory(
-                dsn=dsn,
-                credentials_provider=self._credentials_provider,
-                options=default_options,
-            )
+        # Default gRPC keepalive options to prevent connection drops by load balancers
+        # (e.g., GFE drops idle connections after 60s)
+        self._channel_options: list[tuple[str, str | int]] = [
+            ("grpc.keepalive_time_ms", 30000),
+            ("grpc.keepalive_timeout_ms", 10000),
+            ("grpc.keepalive_permit_without_calls", 1),
+            ("grpc.http2.max_pings_without_data", 0),
+        ]
 
         # Parse target for AsyncAPI info
-        target = self._channel_factory.target
-        if ":" in target:
-            self._host = target
-            self._pathname = None
-        else:
-            self._host = f"{target}:443"
-            self._pathname = None
+        target = parse_dsn(dsn)
+        self._host = target
+        self._pathname = None
 
         # Connection state
         self._channel: grpc.aio.Channel | None = None
@@ -272,7 +257,11 @@ class PubsubServer:
         await self._credentials_provider.ensure_valid()
 
         # Create gRPC channel
-        self._channel = await self._channel_factory.create()
+        self._channel = await create_channel(
+            dsn=self._dsn,
+            credentials_provider=self._credentials_provider,
+            options=self._channel_options,
+        )
         logger.debug("Connected to Pub/Sub via gRPC.")
 
     async def disconnect(self) -> None:

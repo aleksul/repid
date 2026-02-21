@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from typing import Any, cast
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -671,7 +672,11 @@ async def test_session_handle_end_various_states() -> None:
     await session.handle_performative(end)
 
 
-async def test_session_create_sender_not_ready() -> None:
+@patch(
+    "repid.connections.amqp.protocol.session.Session.wait_ready",
+    side_effect=asyncio.TimeoutError,
+)
+async def test_session_create_sender_not_ready(_mock_wait_ready: MagicMock) -> None:  # noqa: PT019
     connection = FakeConnection()
     session = Session(cast(AmqpConnection, connection), channel=1)
 

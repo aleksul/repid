@@ -55,12 +55,12 @@ async def test_abstract_attach() -> None:
 async def test_sender_link_flow_consumed_credit() -> None:
     session = Mock()
     link = SenderLink(session, "name", "addr", 0)
-    link._delivery_count = 10
+    link._delivery_count = 12
     link._link_credit = 5
 
     flow = FlowFrame(
         handle=0,
-        delivery_count=12,
+        delivery_count=10,
         link_credit=10,
         next_incoming_id=0,
         incoming_window=100,
@@ -173,6 +173,10 @@ async def test_sender_link_send_message(sender: SenderLink) -> None:
     sender._state_machine.transition_sync("send_attach")
     sender._state_machine.transition_sync("recv_attach")
 
+    # Grant credit
+    sender._link_credit = 10
+    sender._credit_available.set()
+
     payload = b"hello world"
     await sender.send(payload)
 
@@ -184,10 +188,68 @@ async def test_sender_link_send_message(sender: SenderLink) -> None:
     assert frame.settled is True
 
 
+async def test_sender_link_send_waits_for_credit(sender: SenderLink) -> None:
+    # Setup link as attached and ready
+    sender._state_machine.transition_sync("send_attach")
+    sender._state_machine.transition_sync("recv_attach")
+
+    # Initially 0 credit
+    assert sender.link_credit == 0
+    assert not sender._credit_available.is_set()
+
+    # Start sending in background
+    send_task = asyncio.create_task(sender.send(b"hello"))
+
+    # Yield to let send_task wait
+    await asyncio.sleep(0.01)
+    assert not send_task.done()
+
+    # Grant credit
+    flow = FlowFrame(
+        next_incoming_id=0,
+        incoming_window=100,
+        next_outgoing_id=0,
+        outgoing_window=100,
+        handle=0,
+        delivery_count=0,
+        link_credit=1,
+    )
+    await sender._handle_flow(flow)
+
+    # Now send should complete
+    await send_task
+
+    # Credit should be consumed
+    assert sender.link_credit == 0
+    assert not sender._credit_available.is_set()
+
+    # Should send transfer frame
+    assert len(cast(Any, sender.session.connection).sent) == 1
+    frame = cast(Any, sender.session.connection).sent[0][1]
+    assert isinstance(frame, TransferFrame)
+
+
+async def test_sender_link_send_timeout_waiting_for_credit(sender: SenderLink) -> None:
+    # Setup link as attached and ready
+    sender._state_machine.transition_sync("send_attach")
+    sender._state_machine.transition_sync("recv_attach")
+
+    # Initially 0 credit
+    assert sender.link_credit == 0
+
+    # Send with short timeout
+    with pytest.raises(LinkError, match="Timeout waiting for link credit"):
+        await sender.send(b"hello", _timeout=0.01)
+
+
 async def test_sender_link_send_large_message(sender: SenderLink) -> None:
     # Setup link as attached and ready
     sender._state_machine.transition_sync("send_attach")
     sender._state_machine.transition_sync("recv_attach")
+
+    # Grant credit
+    sender._link_credit = 10
+    sender._credit_available.set()
 
     # Set small max frame size on connection to force fragmentation
     sender.session.connection.max_frame_size = 64  # type: ignore[misc]

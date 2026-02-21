@@ -27,6 +27,10 @@ class FakeConnection:
 class FakeSession:
     connection: FakeConnection
     channel: int = 1
+    _next_incoming_id: int = 0
+    _next_outgoing_id: int = 0
+    _incoming_window: int = 100
+    _outgoing_window: int = 100
 
     def _remove_link(self, _link: Any) -> None:
         return None

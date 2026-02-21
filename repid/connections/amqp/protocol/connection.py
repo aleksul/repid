@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 import uuid
 from dataclasses import dataclass, field
 from types import TracebackType
@@ -23,6 +24,7 @@ from typing_extensions import Self
 from repid.connections.amqp._uamqp.constants import MAX_FRAME_SIZE_BYTES, MIN_MAX_FRAME_SIZE
 from repid.connections.amqp._uamqp.performatives import (
     CloseFrame,
+    EmptyFrame,
     OpenFrame,
     SASLChallenge,
     SASLInit,
@@ -172,6 +174,7 @@ class AmqpConnection:
 
         # Background tasks
         self._read_task: asyncio.Task[None] | None = None
+        self._heartbeat_task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
 
         # Waiters for responses
@@ -343,6 +346,13 @@ class AmqpConnection:
             name=f"amqp-read-{self._connection_id}",
         )
 
+        # 5. Start heartbeat loop if needed
+        if self._remote_idle_timeout:
+            self._heartbeat_task = asyncio.create_task(
+                self._heartbeat_loop(),
+                name=f"amqp-heartbeat-{self._connection_id}",
+            )
+
     async def _do_sasl_auth(self) -> None:
         """Perform SASL authentication."""
         await self._emit(ConnectionEvent.SASL_START)
@@ -502,6 +512,13 @@ class AmqpConnection:
                 await self._read_task
             self._read_task = None
 
+        # Cancel heartbeat task
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._heartbeat_task
+            self._heartbeat_task = None
+
         # Close transport
         await self._transport.close()
 
@@ -542,6 +559,39 @@ class AmqpConnection:
                 # Connection lost unexpectedly - only handle if not already reconnected
                 task = asyncio.create_task(self._handle_unexpected_close())
                 task.add_done_callback(lambda _t: None)  # Prevent GC
+
+    async def _heartbeat_loop(self) -> None:
+        """Background task to send empty frames (heartbeats) to keep connection alive."""
+        if not self._remote_idle_timeout:
+            return
+
+        # Send heartbeat at half the idle timeout interval
+        interval = self._remote_idle_timeout / 2000.0  # idle_timeout is in milliseconds
+
+        try:
+            while not self._stop_event.is_set() and self._state_machine.is_usable():
+                time_since_last_write = time.monotonic() - self._transport.metrics.last_write_time
+                sleep_time = interval - time_since_last_write
+
+                if sleep_time > 0:
+                    await asyncio.sleep(sleep_time)
+
+                if self._stop_event.is_set() or not self._state_machine.is_usable():
+                    break
+
+                # Check again after sleeping
+                time_since_last_write = time.monotonic() - self._transport.metrics.last_write_time
+                if time_since_last_write < interval:
+                    continue
+
+                try:
+                    await self._transport.send_performative(0, EmptyFrame())
+                    logger.debug("Sent AMQP heartbeat frame")
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("Failed to send heartbeat: %s", exc)
+                    break
+        except asyncio.CancelledError:
+            pass
 
     async def _handle_unexpected_close(self) -> None:
         """Handle unexpected connection loss."""

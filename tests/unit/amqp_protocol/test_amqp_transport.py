@@ -10,6 +10,7 @@ import pytest
 from repid.connections.amqp._uamqp._encode import performative_to_bytes
 from repid.connections.amqp._uamqp.performatives import (
     CloseFrame,
+    EmptyFrame,
     OpenFrame,
 )
 from repid.connections.amqp.protocol.events import (
@@ -207,10 +208,10 @@ async def test_amqp_transport_read_frame_header_only() -> None:
 
     transport._reader = mock_reader
 
-    # Should raise error when trying to decode empty frame
-    # (bytes_to_performative will fail on invalid/empty data)
-    with pytest.raises((ValueError, IndexError, struct.error)):  # Will raise some decoding error
-        await transport.read_frame()
+    # Should return EmptyFrame
+    channel, performative = await transport.read_frame()
+    assert channel == 0
+    assert isinstance(performative, EmptyFrame)
 
 
 async def test_transport_properties() -> None:

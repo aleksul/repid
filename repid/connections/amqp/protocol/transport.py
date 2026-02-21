@@ -372,6 +372,7 @@ class AmqpTransport:
             self._writer.write(data)
             await self._writer.drain()
             self._metrics.bytes_sent += len(data)
+            self._metrics.last_write_time = time.monotonic()
 
     # -------------------------------------------------------------------------
     # Protocol Headers

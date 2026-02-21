@@ -26,6 +26,13 @@ class Performative:
 
 
 @dataclass(slots=True, kw_only=True)
+class EmptyFrame(Performative):
+    """Empty frame (heartbeat)."""
+
+    CODE: ClassVar[int] = -1  # Not a real performative code
+
+
+@dataclass(slots=True, kw_only=True)
 class OpenFrame(Performative):
     """OPEN performative. Negotiate Connection parameters.
 

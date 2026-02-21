@@ -295,6 +295,9 @@ def bytes_to_performative(data: bytes) -> performatives.Performative:
     body_start = doff * 4
     body_buffer = buffer[body_start:size]
 
+    if len(body_buffer) == 0:
+        return performatives.EmptyFrame()
+
     # Decode Described Type
     # Expect 0x00
     if body_buffer[0] != 0x00:

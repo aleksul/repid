@@ -51,6 +51,10 @@ def test_performative_encoding_various_types() -> None:
     encoded = performative_to_bytes(begin_frame, 1)
     assert len(encoded) > 0
 
+    empty_frame = performatives.EmptyFrame()
+    encoded = performative_to_bytes(empty_frame, 2)
+    assert encoded == b"\x00\x00\x00\x08\x02\x00\x00\x02"
+
     attach_frame = AttachFrame(name="test-link", handle=5, role=True, source=None, target=None)
     encoded = performative_to_bytes(attach_frame, 1)
     assert len(encoded) > 0

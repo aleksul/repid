@@ -801,6 +801,9 @@ def _encode_performative_body(performative: EncodableT) -> bytes:
 
 
 def performative_to_bytes(performative: EncodableT, channel: int = 0) -> bytes:
+    if isinstance(performative, performatives.EmptyFrame):
+        return b"\x00\x00\x00\x08\x02\x00" + channel.to_bytes(2, "big")
+
     output = bytearray()
     output.extend(_encode_performative_body(performative))
 

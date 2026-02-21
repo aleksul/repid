@@ -55,3 +55,30 @@ async def test_args_job(autoconn: Repid) -> None:
         await asyncio.wait_for(autoconn.run_worker(messages_limit=1, tasks_limit=1), timeout=5.0)
 
     assert hit
+
+
+async def test_3000_messages(autoconn: Repid) -> None:
+    router = Router()
+
+    hit_counter = 0
+
+    @router.actor
+    async def awesome_job() -> None:
+        nonlocal hit_counter
+        hit_counter += 1
+
+    autoconn.include_router(router)
+
+    async with autoconn.servers.default.connection():
+        for _ in range(3000):
+            await autoconn.send_message_json(
+                channel="default",
+                payload={},
+                headers={"topic": "awesome_job"},
+            )
+        await asyncio.wait_for(
+            autoconn.run_worker(messages_limit=3000, tasks_limit=100),
+            timeout=60.0,
+        )
+
+    assert hit_counter == 3000

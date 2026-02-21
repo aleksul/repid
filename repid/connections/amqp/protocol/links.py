@@ -274,7 +274,7 @@ class SenderLink(Link):
 
         # Flow control wait event
         self._credit_available = asyncio.Event()
-        self._credit_available.set()  # Initially set (assume we can send)
+        self._credit_available.clear()  # Initially cleared (wait for credit)
 
     @property
     def link_credit(self) -> int:
@@ -338,8 +338,16 @@ class SenderLink(Link):
             raise LinkError("Link is not usable")
 
         # Wait for credit if needed
-        # TODO: implement proper credit-based flow control
-        # For now, we just send
+        while self._link_credit <= 0:
+            try:
+                await asyncio.wait_for(self._credit_available.wait(), timeout=_timeout)
+            except asyncio.TimeoutError as e:
+                raise LinkError("Timeout waiting for link credit") from e
+
+        # Consume one credit
+        self._link_credit -= 1
+        if self._link_credit <= 0:
+            self._credit_available.clear()
 
         # Build message
         msg = Message(
@@ -373,8 +381,9 @@ class SenderLink(Link):
                 self._session.channel,
                 frame,
             )
+            self._session._next_outgoing_id = (self._session._next_outgoing_id + 1) & 0xFFFFFFFF
 
-        self._delivery_count += 1
+        self._delivery_count = (self._delivery_count + 1) & 0xFFFFFFFF
 
         logger.debug(
             "SenderLink %s: sent message (delivery=%d, frames=%d)",
@@ -387,12 +396,14 @@ class SenderLink(Link):
         """Handle FLOW frame (credit update)."""
         if flow.link_credit is not None:
             old_credit = self._link_credit
-            self._link_credit = flow.link_credit
+
             if flow.delivery_count is not None:
-                # Adjust for already consumed credit
-                consumed = flow.delivery_count - self._delivery_count
-                if consumed > 0:
-                    self._link_credit = max(0, self._link_credit - consumed)
+                # AMQP 1.0 spec: link-credit_snd := delivery-count_rcv + link-credit_rcv - delivery-count_snd
+                in_flight = (self._delivery_count - flow.delivery_count) & 0xFFFFFFFF
+                self._link_credit = flow.link_credit - in_flight
+                self._link_credit = max(self._link_credit, 0)
+            else:
+                self._link_credit = flow.link_credit
 
             logger.debug(
                 "SenderLink %s: credit updated %d -> %d",
@@ -489,10 +500,10 @@ class ReceiverLink(Link):
     async def _send_flow(self) -> None:
         """Send FLOW frame to grant credit."""
         flow_frame = FlowFrame(
-            next_incoming_id=0,
-            incoming_window=100,
-            next_outgoing_id=0,
-            outgoing_window=100,
+            next_incoming_id=self._session._next_incoming_id,
+            incoming_window=self._session._incoming_window,
+            next_outgoing_id=self._session._next_outgoing_id,
+            outgoing_window=self._session._outgoing_window,
             handle=self._handle,
             delivery_count=self._delivery_count,
             link_credit=self._link_credit,
@@ -552,7 +563,7 @@ class ReceiverLink(Link):
                 await result
 
             # Update delivery count
-            self._delivery_count += 1
+            self._delivery_count = (self._delivery_count + 1) & 0xFFFFFFFF
 
             # Check if we need to replenish credit
             if self._link_credit > 0:

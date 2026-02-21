@@ -74,8 +74,8 @@ class Session:
         # Flow control
         self._next_outgoing_id = 0
         self._next_incoming_id = 0
-        self._incoming_window = 100
-        self._outgoing_window = 100
+        self._incoming_window = 2048
+        self._outgoing_window = 2048
 
         # Remote flow control
         self._remote_incoming_window = 0
@@ -236,6 +236,7 @@ class Session:
         """Handle BEGIN frame (session mapped)."""
         self._remote_incoming_window = begin.incoming_window or 0
         self._remote_outgoing_window = begin.outgoing_window or 0
+        self._next_incoming_id = begin.next_outgoing_id
 
         await self._state_machine.transition("recv_begin")
         self._ready.set()
@@ -307,7 +308,11 @@ class Session:
         if flow.next_incoming_id is not None:
             self._remote_incoming_window = (
                 (flow.next_incoming_id or 0) + (flow.incoming_window or 0) - self._next_outgoing_id
-            )
+            ) & 0xFFFFFFFF
+        if flow.next_outgoing_id is not None:
+            self._remote_outgoing_window = (
+                (flow.next_outgoing_id or 0) + (flow.outgoing_window or 0) - self._next_incoming_id
+            ) & 0xFFFFFFFF
 
         # Dispatch to link if handle specified
         if flow.handle is not None and flow.handle in self._links_by_remote_handle:
@@ -316,6 +321,7 @@ class Session:
 
     async def _handle_transfer(self, transfer: TransferFrame) -> None:
         """Handle TRANSFER frame (incoming message)."""
+        self._next_incoming_id = (self._next_incoming_id + 1) & 0xFFFFFFFF
         handle = transfer.handle
         if handle is None:
             logger.error("Session %d: TRANSFER missing handle", self._channel)

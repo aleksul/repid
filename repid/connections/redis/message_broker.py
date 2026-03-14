@@ -6,6 +6,8 @@ import json
 import uuid
 from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from itertools import groupby
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -29,7 +31,6 @@ if TYPE_CHECKING:
     from repid.data import ExternalDocs, Tag
 
 
-# Default naming strategies
 def _default_stream_name_strategy(channel: str) -> str:
     return f"repid:{channel}"
 
@@ -42,13 +43,23 @@ def _default_dlq_stream_strategy(channel: str) -> str:
     return f"repid:{channel}:dlq"
 
 
+@dataclass(frozen=True)
+class ChannelConfig:
+    """Routing metadata for a single channel."""
+
+    stream: str
+    group: str
+    dlq: str | None
+    dlq_maxlen: int | None = None
+
+
 def _build_message_fields(
     payload: bytes,
     headers: dict[str, str] | None,
     content_type: str | None,
-) -> dict[Any, Any]:
+) -> dict[bytes, bytes | str]:
     """Build Redis stream message fields from payload, headers, and content type."""
-    fields: dict[Any, Any] = {b"payload": payload}
+    fields: dict[bytes, bytes | str] = {b"payload": payload}
     if headers:
         fields[b"headers"] = json.dumps(headers)
     if content_type:
@@ -121,6 +132,7 @@ class RedisReceivedMessage(ReceivedMessageT):
         "_channel",
         "_consumer_group",
         "_content_type",
+        "_dlq_maxlen",
         "_dlq_stream",
         "_headers",
         "_is_acted_on",
@@ -143,6 +155,7 @@ class RedisReceivedMessage(ReceivedMessageT):
         consumer_group: str,
         redis_client: Redis,
         dlq_stream: str | None,
+        dlq_maxlen: int | None = None,
         server: RedisServer,
     ) -> None:
         self._payload = payload
@@ -154,6 +167,7 @@ class RedisReceivedMessage(ReceivedMessageT):
         self._consumer_group = consumer_group
         self._redis = redis_client
         self._dlq_stream = dlq_stream
+        self._dlq_maxlen = dlq_maxlen
         self._server = server
         self._is_acted_on = False
 
@@ -196,27 +210,32 @@ class RedisReceivedMessage(ReceivedMessageT):
 
         async with self._redis.pipeline(transaction=True) as pipe:
             if self._dlq_stream is not None:
-                # Move message to DLQ stream with original metadata
                 fields = _build_message_fields(self._payload, self._headers, self._content_type)
                 fields[b"original_stream"] = self._stream_name
                 fields[b"original_id"] = self._message_id
-                pipe.xadd(self._dlq_stream, fields)
+                xadd_kwargs: dict[str, Any] = {}
+                if self._dlq_maxlen is not None:
+                    xadd_kwargs["maxlen"] = self._dlq_maxlen
+                    xadd_kwargs["approximate"] = True
+                pipe.xadd(self._dlq_stream, fields, **xadd_kwargs)  # type: ignore[arg-type]
 
-            # Acknowledge to remove from pending
             pipe.xack(self._stream_name, self._consumer_group, self._message_id)
             await pipe.execute()
 
     async def reject(self) -> None:
-        """Reject the message - re-add it to the stream for reprocessing."""
+        """Reject the message — re-add it to the stream for reprocessing.
+
+        Note: The re-added message receives a new stream ID and is appended to
+        the end of the stream. Delivery order relative to other messages is
+        not preserved.
+        """
         if self._is_acted_on:
             return
         self._is_acted_on = True
 
         async with self._redis.pipeline(transaction=True) as pipe:
-            # Re-add message to stream (at the end, will be processed again)
             fields = _build_message_fields(self._payload, self._headers, self._content_type)
-            pipe.xadd(self._stream_name, fields)
-            # Then acknowledge original to remove from pending
+            pipe.xadd(self._stream_name, fields)  # type: ignore[arg-type]
             pipe.xack(self._stream_name, self._consumer_group, self._message_id)
             await pipe.execute()
 
@@ -236,15 +255,11 @@ class RedisReceivedMessage(ReceivedMessageT):
 
         target_channel = channel or self._channel
 
-        # Use pipeline for atomicity
         async with self._redis.pipeline(transaction=True) as pipe:
-            # Ack original message
             pipe.xack(self._stream_name, self._consumer_group, self._message_id)
-
-            # Publish reply
-            reply_stream = self._server._stream_name_strategy(target_channel)
+            reply_stream = self._server.stream_name_for(target_channel)
             reply_fields = _build_message_fields(payload, headers, content_type)
-            pipe.xadd(reply_stream, reply_fields)
+            pipe.xadd(reply_stream, reply_fields)  # type: ignore[arg-type]
             await pipe.execute()
 
 
@@ -255,23 +270,27 @@ class RedisSubscriber(SubscriberT):
         self,
         *,
         redis_client: Redis,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        channels_to_streams: dict[str, str],
-        channels_to_groups: dict[str, str],
-        channels_to_dlq: dict[str, str | None],
+        channels: dict[str, ChannelConfig],
+        callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
         consumer_name: str,
         concurrency_limit: int | None,
         server: RedisServer,
         block_ms: int = 5000,
+        batch_size: int = 10,
+        retry_delay: float = 1.0,
+        claim_interval: float = 0.0,
+        min_idle_ms: int = 60_000,
     ) -> None:
         self._redis = redis_client
-        self._channels_to_callbacks = channels_to_callbacks
-        self._channels_to_streams = channels_to_streams
-        self._channels_to_groups = channels_to_groups
-        self._channels_to_dlq = channels_to_dlq
+        self._channels = channels
+        self._callbacks = callbacks
         self._consumer_name = consumer_name
         self._server = server
         self._block_ms = block_ms
+        self._batch_size = batch_size
+        self._retry_delay = retry_delay
+        self._claim_interval = claim_interval
+        self._min_idle_ms = min_idle_ms
 
         self._closed = False
         self._paused_event = asyncio.Event()
@@ -285,15 +304,31 @@ class RedisSubscriber(SubscriberT):
         self._callback_tasks: set[asyncio.Task[None]] = set()
         self._in_flight_messages: set[str] = set()
 
+        self._task: asyncio.Task[None] | None = None
+        self._claim_task: asyncio.Task[None] | None = None
+
+    def start(self) -> None:
+        """Schedule the consume loop. Must be called inside a running event loop."""
         self._task = asyncio.create_task(self._consume_loop())
+        if self._claim_interval > 0:
+            self._claim_task = asyncio.create_task(self._claim_loop())
 
     @property
     def is_active(self) -> bool:
-        return not self._closed and not self._task.done()
+        return not self._closed and self._task is not None and not self._task.done()
 
     @property
     def task(self) -> asyncio.Task[None]:
+        if self._task is None:
+            raise RuntimeError(  # pragma: no cover
+                "RedisSubscriber has not been started; call start() first.",
+            )
         return self._task
+
+    @property
+    def in_flight_count(self) -> int:
+        """Number of messages currently being processed by callbacks."""
+        return len(self._in_flight_messages)
 
     async def pause(self) -> None:
         """Pause message consumption."""
@@ -309,52 +344,67 @@ class RedisSubscriber(SubscriberT):
             return
         self._closed = True
 
-        # Cancel the main consume task
-        if not self._task.done():
+        if self._task is not None and not self._task.done():
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
 
-        # Wait for callback tasks to complete
+        if self._claim_task is not None and not self._claim_task.done():
+            self._claim_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._claim_task
+
         if self._callback_tasks:
             await asyncio.gather(*self._callback_tasks, return_exceptions=True)
 
     async def _consume_loop(self) -> None:
-        """Main consumption loop using XREADGROUP."""
-        # Build streams dict for XREADGROUP: {stream_name: ">"}
-        # ">" means only new messages not yet delivered to this consumer
-        streams_dict = dict.fromkeys(self._channels_to_streams.values(), ">")
+        """Main consumption loop — one concurrent task per unique consumer group."""
+        sorted_channels = sorted(self._channels.items(), key=lambda item: item[1].group)
+        groups: dict[str, dict[str, ChannelConfig]] = {}
+        for group_name, items in groupby(sorted_channels, key=lambda item: item[1].group):
+            groups[group_name] = dict(items)
 
-        # Reverse mapping: stream_name -> channel
-        stream_to_channel = {v: k for k, v in self._channels_to_streams.items()}
+        await asyncio.gather(
+            *(self._consume_group_loop(gn, gc) for gn, gc in groups.items()),
+            return_exceptions=True,
+        )
 
+    async def _consume_group_loop(
+        self,
+        group_name: str,
+        group_channels: dict[str, ChannelConfig],
+    ) -> None:
+        """Per-group consumption loop, runs concurrently alongside other groups."""
         while not self._closed:
             try:
-                await self._consume_batch(streams_dict, stream_to_channel)
+                await self._paused_event.wait()
+                await self._consume_batch(group_name, group_channels)
             except asyncio.CancelledError:
                 break
-            except ResponseError as exc:
+            except (ConnectionError, TimeoutError, ResponseError) as exc:
                 logger.exception("Redis error in consumer loop", exc_info=exc)
-                await asyncio.sleep(1)
+                await asyncio.sleep(self._retry_delay)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Unexpected error in consumer loop", exc_info=exc)
+                await asyncio.sleep(self._retry_delay)
 
     async def _consume_batch(
         self,
-        streams_dict: dict[str, str],
-        stream_to_channel: dict[str, str],
+        group_name: str,
+        group_channels: dict[str, ChannelConfig],
     ) -> None:
-        """Consume a single batch of messages."""
-        # Wait if paused
-        await self._paused_event.wait()
-
+        """Consume a single batch of messages for one consumer group."""
         if self._closed:
             return
 
-        # Read from all streams
+        streams_dict = {cfg.stream: ">" for cfg in group_channels.values()}
+        stream_to_channel = {cfg.stream: ch for ch, cfg in group_channels.items()}
+
         result = await self._redis.xreadgroup(
-            groupname=next(iter(self._channels_to_groups.values())),
+            groupname=group_name,
             consumername=self._consumer_name,
             streams=streams_dict,  # type: ignore[arg-type]
-            count=10,  # Batch size
+            count=self._batch_size,
             block=self._block_ms,
         )
 
@@ -371,7 +421,7 @@ class RedisSubscriber(SubscriberT):
             if channel is None:
                 continue
 
-            callback = self._channels_to_callbacks.get(channel)
+            callback = self._callbacks.get(channel)
             if callback is None:
                 continue
 
@@ -384,12 +434,13 @@ class RedisSubscriber(SubscriberT):
 
     async def _process_stream_messages(
         self,
-        messages: list[tuple[bytes, dict[bytes, bytes]]],
+        messages: list[tuple[bytes | str, dict[bytes | str, bytes | str]]],
         channel: str,
         stream_name: str,
         callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
     ) -> None:
         """Process messages from a single stream."""
+        cfg = self._channels[channel]
         for msg_id_raw, fields in messages:
             msg_id = msg_id_raw.decode() if isinstance(msg_id_raw, bytes) else msg_id_raw
             self._in_flight_messages.add(msg_id)
@@ -403,13 +454,13 @@ class RedisSubscriber(SubscriberT):
                 message_id=msg_id,
                 channel=channel,
                 stream_name=stream_name,
-                consumer_group=self._channels_to_groups[channel],
+                consumer_group=cfg.group,
                 redis_client=self._redis,
-                dlq_stream=self._channels_to_dlq.get(channel),
+                dlq_stream=cfg.dlq,
+                dlq_maxlen=cfg.dlq_maxlen,
                 server=self._server,
             )
 
-            # Schedule callback with optional concurrency limiting
             if self._semaphore is not None:
                 await self._semaphore.acquire()
 
@@ -428,19 +479,67 @@ class RedisSubscriber(SubscriberT):
         """Run a callback and handle cleanup."""
         try:
             await callback(message)
-        except ResponseError as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.exception(
                 "Error processing message {message_id}",
                 extra={"message_id": message_id},
                 exc_info=exc,
             )
-            # Auto-nack on unhandled exception if not already acted on
             if not message.is_acted_on:
                 await message.nack()
         finally:
             self._in_flight_messages.discard(message_id)
             if self._semaphore is not None:
                 self._semaphore.release()
+
+    async def _claim_loop(self) -> None:
+        """Periodically reclaim stale pending messages using XAUTOCLAIM."""
+        while not self._closed:
+            await asyncio.sleep(self._claim_interval)
+            if self._closed:
+                break
+            for channel, cfg in self._channels.items():
+                callback = self._callbacks.get(channel)
+                if callback is None:
+                    continue
+                try:
+                    await self._reclaim_pending(cfg, channel, callback)
+                except (ConnectionError, TimeoutError, ResponseError) as exc:
+                    logger.exception(
+                        "Redis error during pending message reclaim",
+                        exc_info=exc,
+                    )
+
+    async def _reclaim_pending(
+        self,
+        cfg: ChannelConfig,
+        channel: str,
+        callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+    ) -> None:
+        """Reclaim stale pending messages for one channel using XAUTOCLAIM.
+
+        Iterates through the entire PEL (Pending Entries List) in batches,
+        transferring ownership of idle messages to this consumer and dispatching
+        them to the callback for reprocessing.
+        """
+        start_id = "0-0"
+        while not self._closed:
+            result = await self._redis.xautoclaim(
+                cfg.stream,
+                cfg.group,
+                self._consumer_name,
+                min_idle_time=self._min_idle_ms,
+                start_id=start_id,
+                count=self._batch_size,
+            )
+            next_id = result[0]
+            messages = result[1]
+            if messages:
+                await self._process_stream_messages(messages, channel, cfg.stream, callback)
+            next_id_str = next_id.decode() if isinstance(next_id, bytes) else next_id
+            if next_id_str == "0-0":
+                break
+            start_id = next_id_str
 
 
 class RedisServer(ServerT):
@@ -459,6 +558,17 @@ class RedisServer(ServerT):
             If None, DLQ is disabled and nack() will just discard messages.
             Default: 'repid:{channel}:dlq'
         retry_attempts: Number of retry attempts for Redis operations.
+        block_ms: Milliseconds to block on XREADGROUP when no messages are available.
+        batch_size: Maximum number of messages to fetch per XREADGROUP call.
+        retry_delay: Seconds to wait after a recoverable error before retrying.
+        consumer_group_start_id: Stream ID from which new consumer groups begin reading.
+            Use '0' to replay all history (default) or '$' to consume only new messages.
+        dlq_maxlen: Maximum number of entries kept in each DLQ stream (approximate trim).
+            None (default) disables the limit.
+        claim_interval: Seconds between XAUTOCLAIM passes that recover pending messages
+            from crashed consumers. Set to 0.0 (default) to disable automatic reclaim.
+        min_idle_ms: Minimum milliseconds a pending entry must be idle before it is
+            eligible for reclaim. Only used when claim_interval > 0. Default: 60_000 (1 min).
         title: AsyncAPI server title.
         summary: AsyncAPI server summary.
         description: AsyncAPI server description.
@@ -476,7 +586,14 @@ class RedisServer(ServerT):
         stream_name_strategy: Callable[[str], str] | None = None,
         consumer_group_strategy: Callable[[str], str] | None = None,
         dlq_stream_strategy: Callable[[str], str] | None = _default_dlq_stream_strategy,
+        consumer_group_start_id: str = "0",
+        dlq_maxlen: int | None = None,
+        claim_interval: float = 0.0,
+        min_idle_ms: int = 60_000,
         retry_attempts: int = 3,
+        block_ms: int = 5000,
+        batch_size: int = 10,
+        retry_delay: float = 1.0,
         title: str | None = None,
         summary: str | None = None,
         description: str | None = None,
@@ -490,9 +607,15 @@ class RedisServer(ServerT):
         self._stream_name_strategy = stream_name_strategy or _default_stream_name_strategy
         self._consumer_group_strategy = consumer_group_strategy or _default_consumer_group_strategy
         self._dlq_stream_strategy = dlq_stream_strategy
+        self._consumer_group_start_id = consumer_group_start_id
+        self._dlq_maxlen = dlq_maxlen
+        self._claim_interval = claim_interval
+        self._min_idle_ms = min_idle_ms
         self._retry_attempts = retry_attempts
+        self._block_ms = block_ms
+        self._batch_size = batch_size
+        self._retry_delay = retry_delay
 
-        # AsyncAPI metadata
         self._title = title
         self._summary = summary
         self._description = description
@@ -502,18 +625,12 @@ class RedisServer(ServerT):
         self._external_docs = external_docs
         self._bindings = bindings
 
-        # Parse DSN for server info
         parsed = urlparse(dsn)
         self._host = f"{parsed.hostname}:{parsed.port}" if parsed.port else str(parsed.hostname)
         self._pathname = parsed.path if parsed.path and parsed.path != "/" else None
 
-        # Redis client (created on connect)
         self._redis: Redis | None = None
-
-        # Active subscribers
         self._active_subscribers: list[RedisSubscriber] = []
-
-    # ServerT properties
 
     @property
     def host(self) -> str:
@@ -541,7 +658,7 @@ class RedisServer(ServerT):
 
     @property
     def protocol_version(self) -> str | None:
-        return "6.2"  # Minimum Redis version supporting XAUTOCLAIM etc.
+        return "6.2"  # Minimum Redis version supporting Streams consumer groups
 
     @property
     def variables(self) -> Mapping[str, ServerVariable] | None:
@@ -572,7 +689,9 @@ class RedisServer(ServerT):
             "supports_lightweight_pause": True,
         }
 
-    # Connection lifecycle
+    def stream_name_for(self, channel: str) -> str:
+        """Return the Redis stream name for the given channel."""
+        return self._stream_name_strategy(channel)
 
     @property
     def is_connected(self) -> bool:
@@ -585,7 +704,6 @@ class RedisServer(ServerT):
 
         logger.info("Connecting to Redis server at '{host}'.", extra={"host": self._host})
 
-        # Create retry configuration
         retry = Retry(ExponentialBackoff(), self._retry_attempts)
 
         self._redis = Redis.from_url(
@@ -595,23 +713,20 @@ class RedisServer(ServerT):
             decode_responses=False,  # We handle decoding ourselves
         )
 
-        # Verify connection
         await self._redis.ping()  # type: ignore[misc]
 
     async def disconnect(self) -> None:
         """Disconnect from Redis server."""
         logger.info("Disconnecting from Redis server.")
 
-        # Close all subscribers
         for subscriber in self._active_subscribers:
             try:
                 await subscriber.close()
-            except ResponseError as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.exception("Error closing subscriber", exc_info=exc)
 
         self._active_subscribers.clear()
 
-        # Close Redis connection
         if self._redis is not None:
             await self._redis.aclose()
             self._redis = None
@@ -625,7 +740,6 @@ class RedisServer(ServerT):
         finally:
             await self.disconnect()
 
-    # Message publishing
     async def publish(
         self,
         *,
@@ -635,14 +749,11 @@ class RedisServer(ServerT):
     ) -> None:
         """Publish a message to a Redis Stream.
 
-        Args:
-            channel: Target channel name (will be mapped to stream via strategy)
-            message: Message to publish
-            server_specific_parameters: Optional Redis-specific parameters:
-                - maxlen: Maximum stream length (int)
-                - approximate: Use ~ for MAXLEN (bool, default True)
-                - nomkstream: Don't create stream if it doesn't exist (bool)
-                - stream_id: Custom stream entry ID (str, default "*")
+        server_specific_parameters keys:
+            maxlen (int): Maximum stream length.
+            approximate (bool): Use ~ for MAXLEN (default True).
+            nomkstream (bool): Don't create stream if it doesn't exist.
+            stream_id (str): Custom stream entry ID (default "*").
         """
         if self._redis is None:
             raise ConnectionError("Not connected to Redis server")
@@ -650,10 +761,8 @@ class RedisServer(ServerT):
         stream_name = self._stream_name_strategy(channel)
         params = server_specific_parameters or {}
 
-        # Build message fields
         fields = _build_message_fields(message.payload, message.headers, message.content_type)
 
-        # XADD parameters
         xadd_kwargs: dict[str, Any] = {}
         if "maxlen" in params:
             xadd_kwargs["maxlen"] = params["maxlen"]
@@ -668,9 +777,7 @@ class RedisServer(ServerT):
             extra={"stream": stream_name, "channel": channel},
         )
 
-        await self._redis.xadd(stream_name, fields, id=stream_id, **xadd_kwargs)
-
-    # Message subscription
+        await self._redis.xadd(stream_name, fields, id=stream_id, **xadd_kwargs)  # type: ignore[arg-type]
 
     async def subscribe(
         self,
@@ -678,15 +785,7 @@ class RedisServer(ServerT):
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
         concurrency_limit: int | None = None,
     ) -> SubscriberT:
-        """Subscribe to channels using Redis Streams consumer groups.
-
-        Args:
-            channels_to_callbacks: Mapping of channel names to callback coroutines
-            concurrency_limit: Maximum concurrent message processing (None = unlimited)
-
-        Returns:
-            A RedisSubscriber instance
-        """
+        """Subscribe to channels using Redis Streams consumer groups."""
         if self._redis is None:
             raise ConnectionError("Not connected to Redis server")
 
@@ -695,43 +794,39 @@ class RedisServer(ServerT):
             extra={"channels": list(channels_to_callbacks.keys())},
         )
 
-        # Map channels to stream/group names
-        channels_to_streams: dict[str, str] = {}
-        channels_to_groups: dict[str, str] = {}
-        channels_to_dlq: dict[str, str | None] = {}
-
+        channels: dict[str, ChannelConfig] = {}
         for channel in channels_to_callbacks:
             stream_name = self._stream_name_strategy(channel)
             group_name = self._consumer_group_strategy(channel)
+            dlq = self._dlq_stream_strategy(channel) if self._dlq_stream_strategy else None
 
-            channels_to_streams[channel] = stream_name
-            channels_to_groups[channel] = group_name
-
-            if self._dlq_stream_strategy is not None:
-                channels_to_dlq[channel] = self._dlq_stream_strategy(channel)
-            else:
-                channels_to_dlq[channel] = None
-
-            # Create consumer group if it doesn't exist
+            channels[channel] = ChannelConfig(
+                stream=stream_name,
+                group=group_name,
+                dlq=dlq,
+                dlq_maxlen=self._dlq_maxlen,
+            )
             await self._ensure_consumer_group(stream_name, group_name)
 
-        # Generate unique consumer name
         consumer_name = f"repid-{uuid.uuid4().hex[:8]}"
 
         subscriber = RedisSubscriber(
             redis_client=self._redis,
-            channels_to_callbacks=channels_to_callbacks,
-            channels_to_streams=channels_to_streams,
-            channels_to_groups=channels_to_groups,
-            channels_to_dlq=channels_to_dlq,
+            channels=channels,
+            callbacks=channels_to_callbacks,
             consumer_name=consumer_name,
             concurrency_limit=concurrency_limit,
             server=self,
+            block_ms=self._block_ms,
+            batch_size=self._batch_size,
+            retry_delay=self._retry_delay,
+            claim_interval=self._claim_interval,
+            min_idle_ms=self._min_idle_ms,
         )
+        subscriber.start()
 
         self._active_subscribers.append(subscriber)
 
-        # Remove from list when task finishes
         def _on_done(_task: asyncio.Task[None]) -> None:
             if subscriber in self._active_subscribers:
                 self._active_subscribers.remove(subscriber)
@@ -749,14 +844,14 @@ class RedisServer(ServerT):
             await self._redis.xgroup_create(
                 stream_name,
                 group_name,
-                id="0",  # Start from beginning
-                mkstream=True,  # Create stream if doesn't exist
+                id=self._consumer_group_start_id,
+                mkstream=True,
             )
             logger.debug(
                 "Created consumer group '{group}' for stream '{stream}'.",
                 extra={"group": group_name, "stream": stream_name},
             )
         except ResponseError as e:
-            # BUSYGROUP means group already exists - that's fine
+            # BUSYGROUP means the group already exists — that's fine
             if "BUSYGROUP" not in str(e):
                 raise

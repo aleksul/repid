@@ -12,11 +12,11 @@ if TYPE_CHECKING:
     from repid.asyncapi import AsyncAPI3Schema
 
 ASYNCAPI_JS_DEFAULT_URL = (
-    "https://unpkg.com/@asyncapi/react-component@2.6.5/browser/standalone/index.js"
+    "https://unpkg.com/@asyncapi/react-component@3.0.3/browser/standalone/index.js"
 )
 
 ASYNCAPI_CSS_DEFAULT_URL = (
-    "https://unpkg.com/@asyncapi/react-component@2.6.5/styles/default.min.css"
+    "https://unpkg.com/@asyncapi/react-component@3.0.3/styles/default.min.css"
 )
 
 

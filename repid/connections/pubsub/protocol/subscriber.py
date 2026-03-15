@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from typing import TYPE_CHECKING, cast
@@ -8,12 +9,12 @@ from typing import TYPE_CHECKING, cast
 import grpc
 import grpc.aio
 
-from repid.logger import logger
-
 from ._helpers import ChannelConfig, QueuedDelivery
 from .proto import ReceivedMessage, StreamingPullRequest, StreamingPullResponse
 from .received_message import PubsubReceivedMessage
 from .resilience import ResilienceState
+
+logger = logging.getLogger("repid.connections.pubsub.protocol")
 
 if TYPE_CHECKING:
     from repid.connections.pubsub.message_broker import PubsubServer
@@ -135,7 +136,7 @@ class PubsubSubscriber:
             except grpc.aio.AioRpcError as e:
                 if self._is_expected_stream_close(e):
                     logger.debug(
-                        "StreamingPull closed for expected reason (likely max stream duration), reconnecting immediately.",
+                        "streaming_pull.reconnect.expected_close",
                         extra={"subscription": subscription_path},
                     )
                     continue
@@ -144,7 +145,7 @@ class PubsubSubscriber:
 
                 if not self._resilience_state.is_retryable(e):
                     logger.exception(
-                        "Non-retryable error in StreamingPull.",
+                        "streaming_pull.error.non_retryable",
                         extra={"subscription": subscription_path},
                         exc_info=e,
                     )
@@ -152,30 +153,30 @@ class PubsubSubscriber:
 
                 if not self._resilience_state.should_retry():
                     logger.error(
-                        "Max reconnection attempts exhausted for StreamingPull.",
+                        "streaming_pull.reconnect.exhausted",
                         extra={"subscription": subscription_path},
                     )
                     raise
 
                 delay = self._resilience_state.calculate_delay()
                 logger.warning(
-                    "StreamingPull error, reconnecting in {delay:.2f}s.",
+                    "streaming_pull.reconnect.retry",
                     extra={"subscription": subscription_path, "delay": delay},
                     exc_info=e,
                 )
                 await asyncio.sleep(delay)
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.exception(
-                    "Unexpected error in StreamingPull.",
+                    "streaming_pull.error.unexpected",
                     extra={"subscription": subscription_path},
                     exc_info=exc,
                 )
                 await asyncio.sleep(self._error_retry_delay)
 
         logger.debug(
-            "Stopping StreamingPull.",
+            "streaming_pull.stop",
             extra={"subscription": subscription_path},
         )
 
@@ -228,7 +229,7 @@ class PubsubSubscriber:
             await asyncio.sleep(self._heartbeat_interval)
             if self._shutdown_event.is_set():
                 break
-            logger.debug("Sending heartbeat.")
+            logger.debug("heartbeat.send")
             write_queue.put_nowait(
                 StreamingPullRequest(
                     stream_ack_deadline_seconds=self._stream_ack_deadline_seconds,
@@ -316,7 +317,7 @@ class PubsubSubscriber:
         except asyncio.CancelledError:
             raise
         finally:
-            logger.debug("Stopping Pub/Sub dispatcher.")
+            logger.debug("dispatcher.stop")
 
     async def _execute_callback(self, delivery: QueuedDelivery) -> None:
         """Execute a single callback."""
@@ -324,9 +325,9 @@ class PubsubSubscriber:
             await delivery.callback(delivery.message)
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception(
-                "Error inside Pub/Sub channel callback.",
+                "message.callback.error",
                 exc_info=exc,
             )
         finally:
@@ -372,9 +373,7 @@ class PubsubSubscriber:
             timeout=timeout,
         )
         for task in unfinished:
-            logger.warning(
-                "Write queue not fully flushed before subscriber shutdown.",
-            )
+            logger.warning("write_queue.flush.timeout")
             task.cancel()
 
     def _cancel_callback_tasks(self) -> list[asyncio.Task[None]]:
@@ -382,8 +381,8 @@ class PubsubSubscriber:
         if not self._callback_tasks:
             return []
         logger.warning(
-            "There are still %d pending Pub/Sub callback tasks during subscriber shutdown.",
-            len(self._callback_tasks),
+            "subscriber.close.tasks_pending",
+            extra={"count": len(self._callback_tasks)},
         )
         callbacks = list(self._callback_tasks)
         self._callback_tasks.clear()

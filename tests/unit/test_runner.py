@@ -78,9 +78,7 @@ async def test_runner_actor_manual_mode_unacknowledged_warning(
     warning_log = caplog.get_records(when="call")[0]
     assert warning_log.name == "repid"
     assert warning_log.levelno == logging.WARNING
-    assert warning_log.message == (
-        "Actor 'manual_actor' is in 'manual' confirmation mode, but the message is not acknowledged."
-    )
+    assert warning_log.message == "actor.ack.manual.unacknowledged"
 
 
 async def test_runner_actor_auto_mode_nack_on_exception() -> None:
@@ -297,7 +295,7 @@ async def test_runner_no_matching_actor_rejects_message(
             None,
         )
         assert warning_log is not None
-        assert "No actor found for message" in warning_log.message
+        assert warning_log.message == "actor.route.not_found"
 
 
 async def test_runner_pause_and_resume_with_concurrency_limit() -> None:
@@ -443,7 +441,7 @@ async def test_runner_graceful_shutdown_with_timeout(
             (
                 r
                 for r in caplog.get_records(when="call")
-                if r.levelno == logging.ERROR and "timeouted" in r.message
+                if r.levelno == logging.ERROR and r.message == "runner.shutdown.tasks_timeout"
             ),
             None,
         )
@@ -500,7 +498,7 @@ async def test_runner_pause_exception_during_shutdown(
             (
                 r
                 for r in caplog.get_records(when="call")
-                if "Error while pausing subscriber" in r.message
+                if r.message == "runner.subscriber.pause.error"
             ),
             None,
         )
@@ -557,7 +555,7 @@ async def test_runner_close_exception_during_shutdown(
             (
                 r
                 for r in caplog.get_records(when="call")
-                if "Error while closing subscriber" in r.message
+                if r.message == "runner.subscriber.close.error"
             ),
             None,
         )
@@ -615,8 +613,7 @@ async def test_runner_tasks_not_finishing_after_cancellation(
             (
                 r
                 for r in caplog.get_records(when="call")
-                if r.levelno == logging.ERROR
-                and "did not finish even after cancellation" in r.message
+                if r.levelno == logging.ERROR and r.message == "runner.shutdown.tasks_unfinished"
             ),
             None,
         )

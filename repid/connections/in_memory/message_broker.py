@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
@@ -15,7 +16,8 @@ from repid.connections.abc import (
     SubscriberT,
 )
 from repid.connections.in_memory.utils import DummyQueue
-from repid.logger import logger
+
+logger = logging.getLogger("repid.connections.in_memory")
 
 if TYPE_CHECKING:
     from repid.asyncapi.models.common import ServerBindingsObject
@@ -232,6 +234,8 @@ class InMemorySubscriber(SubscriberT):
             async def _run_callback(rm: ReceivedMessageT = received_msg) -> None:
                 try:
                     await callback(rm)
+                except Exception:
+                    logger.exception("message.callback.error", extra={"channel": channel})
                 finally:
                     if self._semaphore is not None:
                         self._semaphore.release()
@@ -324,12 +328,12 @@ class InMemoryServer(ServerT):
         return self._connected
 
     async def connect(self) -> None:
-        logger.info("Connecting to in-memory server.")
+        logger.info("server.connect")
         self._connected = True
         await asyncio.sleep(0)
 
     async def disconnect(self) -> None:
-        logger.info("Disconnecting from in-memory server.")
+        logger.info("server.disconnect")
         self._connected = False
         await asyncio.sleep(0)
 

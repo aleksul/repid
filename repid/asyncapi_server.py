@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
-from repid.logger import logger
+logger = logging.getLogger("repid.asyncapi_server")
 
 if TYPE_CHECKING:
     from repid.asyncapi import AsyncAPI3Schema
@@ -59,13 +60,13 @@ class AsyncAPIServer:
                 reuse_port=True,
             )
             await self._server.start_serving()
-            logger.info("Started AsyncAPI server.", extra=asdict(self.server_settings))
+            logger.info("asyncapi_server.start", extra=asdict(self.server_settings))
 
     async def stop(self) -> None:
         if self._server is not None:
             self._server.close()
             await self._server.wait_closed()
-            logger.info("Stopped AsyncAPI server.")
+            logger.info("asyncapi_server.stop")
 
     async def __aenter__(self) -> AsyncAPIServer:  # noqa: PYI034
         await self.start()

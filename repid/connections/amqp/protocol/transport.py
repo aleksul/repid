@@ -31,7 +31,7 @@ from repid.connections.amqp._uamqp.performatives import Performative
 if TYPE_CHECKING:
     from .events import EventEmitter
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("repid.connections.amqp.protocol")
 
 # Protocol headers
 AMQP_HEADER = b"AMQP\x00\x01\x00\x00"
@@ -109,6 +109,10 @@ class FrameBuffer:
     def append(self, data: bytes) -> None:
         """Append data to the buffer."""
         if len(self._buffer) + len(data) > self._max_size:
+            logger.error(
+                "transport.frame.buffer_overflow",
+                extra={"current": len(self._buffer), "incoming": len(data), "max": self._max_size},
+            )
             raise FrameError(
                 f"Buffer overflow: {len(self._buffer) + len(data)} > {self._max_size}",
             )
@@ -149,6 +153,10 @@ class FrameBuffer:
             raise FrameError(f"Invalid frame size: {frame_size}")
 
         if frame_size > self._max_size:
+            logger.error(
+                "transport.frame.oversized",
+                extra={"size": frame_size, "max": self._max_size},
+            )
             raise FrameError(f"Frame too large: {frame_size} > {self._max_size}")
 
         if len(self._buffer) < frame_size:
@@ -268,10 +276,12 @@ class AmqpTransport:
 
         self._metrics.connect_time_ms = (time.monotonic() - start_time) * 1000
         logger.debug(
-            "Connected to %s:%d in %.2fms",
-            self._config.host,
-            self._config.port,
-            self._metrics.connect_time_ms,
+            "transport.connected",
+            extra={
+                "host": self._config.host,
+                "port": self._config.port,
+                "ms": self._metrics.connect_time_ms,
+            },
         )
 
     def _configure_keepalive(self) -> None:
@@ -316,10 +326,12 @@ class AmqpTransport:
         # Windows uses different socket options handled automatically
 
         logger.debug(
-            "TCP keepalive configured: idle=%ds, interval=%ds, count=%d",
-            self._config.tcp_keepalive_idle,
-            self._config.tcp_keepalive_interval,
-            self._config.tcp_keepalive_count,
+            "transport.keepalive.configured",
+            extra={
+                "idle": self._config.tcp_keepalive_idle,
+                "interval": self._config.tcp_keepalive_interval,
+                "count": self._config.tcp_keepalive_count,
+            },
         )
 
     async def close(self) -> None:
@@ -331,7 +343,7 @@ class AmqpTransport:
         self._reader = None
         self._writer = None
         self._buffer.clear()
-        logger.debug("Transport closed")
+        logger.debug("transport.closed")
 
     # -------------------------------------------------------------------------
     # Raw I/O

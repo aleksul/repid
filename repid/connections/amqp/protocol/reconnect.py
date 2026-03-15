@@ -14,7 +14,7 @@ import logging
 import random
 from dataclasses import dataclass
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("repid.connections.amqp.protocol")
 
 
 @dataclass(slots=True)
@@ -105,10 +105,8 @@ class ReconnectStrategy:
         delay = self.get_delay()
 
         logger.info(
-            "Reconnect attempt %d/%d in %.2fs",
-            self._attempts + 1,
-            self._config.max_attempts,
-            delay,
+            "connection.reconnect.wait",
+            extra={"attempt": self._attempts + 1, "max": self._config.max_attempts, "delay": delay},
         )
 
         await asyncio.sleep(delay)

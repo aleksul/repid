@@ -33,7 +33,7 @@ from .states import LinkState, LinkStateMachine
 if TYPE_CHECKING:
     from .session import Session
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("repid.connections.amqp.protocol")
 
 
 class LinkError(Exception):
@@ -177,15 +177,14 @@ class Link(ABC):
                 )
                 await self._state_machine.transition("send_detach")
             except (OSError, asyncio.TimeoutError):
-                logger.debug("Error sending DETACH frame", exc_info=True)
+                logger.warning("link.detach_frame.error", exc_info=True)
 
         # Remove from session
         self._session._remove_link(self)  # type: ignore[arg-type]
 
         logger.debug(
-            "Link %s on session %d: detached",
-            self._name,
-            self._session.channel,
+            "link.detached",
+            extra={"link": self._name, "session": self._session.channel},
         )
 
     def invalidate(self) -> None:
@@ -201,9 +200,8 @@ class Link(ABC):
         self._ready.set()
 
         logger.debug(
-            "Link %s on session %d: invalidated due to connection loss",
-            self._name,
-            self._session.channel,
+            "link.invalidated",
+            extra={"link": self._name, "session": self._session.channel},
         )
 
     # -------------------------------------------------------------------------
@@ -216,14 +214,16 @@ class Link(ABC):
         self._ready.set()
 
         logger.debug(
-            "Link %s: ATTACHED (remote_handle=%d)",
-            self._name,
-            self._remote_handle,
+            "link.attached",
+            extra={"link": self._name, "remote_handle": self._remote_handle},
         )
 
     async def _handle_detach(self, _detach: DetachFrame) -> None:
         """Handle DETACH from remote."""
-        logger.debug("Link %s: received DETACH", self._name)
+        logger.debug(
+            "link.detach.received",
+            extra={"link": self._name, "session": self._session.channel},
+        )
 
         with contextlib.suppress(ValueError):
             await self._state_machine.transition("recv_detach")
@@ -302,9 +302,8 @@ class SenderLink(Link):
         await self._state_machine.transition("send_attach")
 
         logger.debug(
-            "SenderLink %s: ATTACH sent to %s",
-            self._name,
-            self._address,
+            "sender_link.attach.sent",
+            extra={"link": self._name, "address": self._address},
         )
 
     async def send(
@@ -386,10 +385,8 @@ class SenderLink(Link):
         self._delivery_count = (self._delivery_count + 1) & 0xFFFFFFFF
 
         logger.debug(
-            "SenderLink %s: sent message (delivery=%d, frames=%d)",
-            self._name,
-            self._delivery_count - 1,
-            len(frames),
+            "sender_link.message.sent",
+            extra={"link": self._name, "delivery": self._delivery_count - 1, "frames": len(frames)},
         )
 
     async def _handle_flow(self, flow: FlowFrame) -> None:
@@ -406,10 +403,8 @@ class SenderLink(Link):
                 self._link_credit = flow.link_credit
 
             logger.debug(
-                "SenderLink %s: credit updated %d -> %d",
-                self._name,
-                old_credit,
-                self._link_credit,
+                "sender_link.credit.updated",
+                extra={"link": self._name, "old": old_credit, "new": self._link_credit},
             )
 
             if self._link_credit > 0:
@@ -479,9 +474,8 @@ class ReceiverLink(Link):
         await self._state_machine.transition("send_attach")
 
         logger.debug(
-            "ReceiverLink %s: ATTACH sent from %s",
-            self._name,
-            self._address,
+            "receiver_link.attach.sent",
+            extra={"link": self._name, "address": self._address},
         )
 
     async def _handle_attach(self, _attach: AttachFrame) -> None:
@@ -519,9 +513,8 @@ class ReceiverLink(Link):
         )
 
         logger.debug(
-            "ReceiverLink %s: FLOW sent (credit=%d)",
-            self._name,
-            self._link_credit,
+            "receiver_link.flow.sent",
+            extra={"link": self._name, "credit": self._link_credit},
         )
 
     async def _handle_transfer(self, transfer: TransferFrame) -> None:
@@ -574,7 +567,7 @@ class ReceiverLink(Link):
                     await self._send_flow()
 
         except Exception:
-            logger.exception("Error processing message on link %s", self._name)
+            logger.exception("receiver_link.message.error", extra={"link": self._name})
         finally:
             self._incoming_transfers.clear()
 

@@ -45,7 +45,7 @@ from .transport import (
 if TYPE_CHECKING:
     from .session import Session
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("repid.connections.amqp.protocol")
 
 
 # =============================================================================
@@ -306,7 +306,10 @@ class AmqpConnection:
                 return
 
             except Exception as exc:
-                logger.error("Connection failed: %s", exc)
+                if self._reconnect.should_retry():
+                    logger.warning("connection.failed", extra={"error": str(exc)})
+                else:
+                    logger.error("connection.failed", extra={"error": str(exc)})
                 await self._emit(
                     ConnectionEvent.ERROR,
                     {"error": str(exc), "error_type": type(exc).__name__},
@@ -356,6 +359,7 @@ class AmqpConnection:
     async def _do_sasl_auth(self) -> None:
         """Perform SASL authentication."""
         await self._emit(ConnectionEvent.SASL_START)
+        logger.debug("connection.sasl.start", extra={"host": self._config.host})
 
         # Send SASL header
         await self._transport.send_sasl_header()
@@ -374,7 +378,6 @@ class AmqpConnection:
 
         # Choose mechanism and authenticate
         await self._sasl_authenticate(performative.sasl_server_mechanisms)
-
         # Send AMQP header after SASL
         await self._transport.send_amqp_header()
 
@@ -407,6 +410,8 @@ class AmqpConnection:
         else:
             raise AuthenticationError(f"No supported SASL mechanism. Server offered: {mech_names}")
 
+        logger.debug("connection.sasl.mechanism", extra={"mechanism": chosen_mech})
+
         # Send SASL-INIT
         sasl_init = SASLInit(
             mechanism=chosen_mech,
@@ -429,6 +434,7 @@ class AmqpConnection:
                         f"SASL authentication failed with code {performative.code}",
                     )
                 await self._emit(ConnectionEvent.SASL_SUCCESS)
+                logger.info("connection.sasl.success")
                 return
 
             raise ProtocolError(f"Unexpected SASL frame: {type(performative)}")
@@ -473,9 +479,12 @@ class AmqpConnection:
         await self._state_machine.transition("recv_open")
 
         logger.info(
-            "Connection opened: container=%s, max_frame=%d",
-            self._remote_container_id,
-            self._remote_max_frame_size,
+            "connection.opened",
+            extra={
+                "container": self._remote_container_id,
+                "max_frame": self._remote_max_frame_size,
+                "connection_id": self._connection_id,
+            },
         )
 
     async def close(self, error: Exception | None = None) -> None:
@@ -503,7 +512,7 @@ class AmqpConnection:
                 await self._transport.send_performative(0, close_frame)
                 await self._state_machine.transition("send_close")
             except (OSError, asyncio.TimeoutError):
-                logger.debug("Error sending CLOSE frame", exc_info=True)
+                logger.debug("connection.close_frame.error", exc_info=True)
 
         # Cancel read task
         if self._read_task:
@@ -544,12 +553,12 @@ class AmqpConnection:
                     channel, performative = await self._transport.read_frame()
                     await self._handle_performative(channel, performative)
                 except ConnectionClosedError:
-                    logger.info("Connection closed by server")
+                    logger.info("connection.closed_by_server")
                     break
                 except asyncio.CancelledError:
                     raise
                 except Exception:
-                    logger.exception("Error in read loop")
+                    logger.exception("connection.read_loop.error")
                     break
 
         except asyncio.CancelledError:
@@ -586,9 +595,9 @@ class AmqpConnection:
 
                 try:
                     await self._transport.send_performative(0, EmptyFrame())
-                    logger.debug("Sent AMQP heartbeat frame")
+                    logger.debug("connection.heartbeat.sent")
                 except Exception as exc:  # noqa: BLE001
-                    logger.debug("Failed to send heartbeat: %s", exc)
+                    logger.debug("connection.heartbeat.failed", extra={"error": str(exc)})
                     break
         except asyncio.CancelledError:
             pass
@@ -613,13 +622,16 @@ class AmqpConnection:
                 await self.connect()
                 await self._emit(ConnectionEvent.RECONNECTED)
             except ConnectionError as e:
-                logger.error("Reconnection failed: %s", e)
+                logger.error("connection.reconnect.failed", extra={"error": str(e)})
             except Exception:
-                logger.exception("Unexpected error during reconnection")
+                logger.exception("connection.reconnect.unexpected_error")
 
     async def _handle_performative(self, channel: int, performative: Any) -> None:
         """Handle an incoming performative."""
-        logger.debug("Received on channel %d: %s", channel, type(performative).__name__)
+        logger.debug(
+            "connection.frame.received",
+            extra={"channel": channel, "type": type(performative).__name__},
+        )
 
         await self._emit(
             ConnectionEvent.FRAME_RECEIVED,
@@ -644,14 +656,14 @@ class AmqpConnection:
             # Dispatch to session
             await self._sessions[channel].handle_performative(performative)
         else:
-            logger.warning("No session for channel %d", channel)
+            logger.warning("session.not_found", extra={"channel": channel})
 
     async def _handle_close(self, close_frame: CloseFrame) -> None:
         """Handle CLOSE from server."""
         error = getattr(close_frame, "error", None)
         logger.info(
-            "Received CLOSE: %s",
-            error if error else "no error",
+            "connection.close.received",
+            extra={"error": error if error else None},
         )
 
         with contextlib.suppress(ValueError):

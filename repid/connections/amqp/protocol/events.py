@@ -19,7 +19,7 @@ from typing import Any
 
 from .states import ConnectionState
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("repid.connections.amqp.protocol")
 
 
 # =============================================================================
@@ -184,10 +184,7 @@ class EventEmitter:
                 if asyncio.iscoroutine(result):
                     await result
             except Exception:
-                logger.exception(
-                    "Error in event handler for %s",
-                    event_data.event.name,
-                )
+                logger.exception("event.handler.error", extra={"event": event_data.event.name})
 
     def emit_sync(self, event_data: EventData) -> None:
         """
@@ -207,8 +204,8 @@ class EventEmitter:
                 if asyncio.iscoroutine(result):
                     # Can't await in sync context, log warning
                     logger.warning(
-                        "Async handler skipped in sync emit: %s",
-                        event_data.event.name,
+                        "event.handler.async_skipped",
+                        extra={"event": event_data.event.name},
                     )
                     # Create task if running in async context
                     try:
@@ -220,10 +217,7 @@ class EventEmitter:
                         # No running loop, just close the coroutine
                         result.close()
             except Exception:
-                logger.exception(
-                    "Error in event handler for %s",
-                    event_data.event.name,
-                )
+                logger.exception("event.handler.error", extra={"event": event_data.event.name})
 
     def clear(self) -> None:
         """Remove all handlers."""
@@ -365,7 +359,7 @@ class LoggingEventHandler:
 
     def __init__(
         self,
-        logger_name: str = "amqp.events",
+        logger_name: str = "repid.connections.amqp.protocol",
         level: int = logging.DEBUG,
     ) -> None:
         self._logger = logging.getLogger(logger_name)

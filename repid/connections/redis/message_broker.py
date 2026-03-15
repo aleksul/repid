@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import uuid
 from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -23,7 +24,8 @@ from repid.connections.abc import (
     ServerT,
     SubscriberT,
 )
-from repid.logger import logger
+
+logger = logging.getLogger("repid.connections.redis")
 
 if TYPE_CHECKING:
     from repid.asyncapi.models.common import ServerBindingsObject
@@ -382,10 +384,10 @@ class RedisSubscriber(SubscriberT):
             except asyncio.CancelledError:
                 break
             except (ConnectionError, TimeoutError, ResponseError) as exc:
-                logger.exception("Redis error in consumer loop", exc_info=exc)
+                logger.exception("consumer.error.redis", exc_info=exc)
                 await asyncio.sleep(self._retry_delay)
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("Unexpected error in consumer loop", exc_info=exc)
+            except Exception as exc:
+                logger.exception("consumer.error.unexpected", exc_info=exc)
                 await asyncio.sleep(self._retry_delay)
 
     async def _consume_batch(
@@ -479,9 +481,9 @@ class RedisSubscriber(SubscriberT):
         """Run a callback and handle cleanup."""
         try:
             await callback(message)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception(
-                "Error processing message {message_id}",
+                "message.callback.error",
                 extra={"message_id": message_id},
                 exc_info=exc,
             )
@@ -506,7 +508,7 @@ class RedisSubscriber(SubscriberT):
                     await self._reclaim_pending(cfg, channel, callback)
                 except (ConnectionError, TimeoutError, ResponseError) as exc:
                     logger.exception(
-                        "Redis error during pending message reclaim",
+                        "consumer.reclaim.error",
                         exc_info=exc,
                     )
 
@@ -702,7 +704,7 @@ class RedisServer(ServerT):
         if self._redis is not None:
             return
 
-        logger.info("Connecting to Redis server at '{host}'.", extra={"host": self._host})
+        logger.info("server.connect", extra={"host": self._host})
 
         retry = Retry(ExponentialBackoff(), self._retry_attempts)
 
@@ -717,13 +719,13 @@ class RedisServer(ServerT):
 
     async def disconnect(self) -> None:
         """Disconnect from Redis server."""
-        logger.info("Disconnecting from Redis server.")
+        logger.info("server.disconnect")
 
         for subscriber in self._active_subscribers:
             try:
                 await subscriber.close()
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("Error closing subscriber", exc_info=exc)
+            except Exception as exc:
+                logger.exception("subscriber.close.error", exc_info=exc)
 
         self._active_subscribers.clear()
 
@@ -773,7 +775,7 @@ class RedisServer(ServerT):
         stream_id = params.get("stream_id", "*")
 
         logger.debug(
-            "Publishing message to stream '{stream}'.",
+            "channel.publish",
             extra={"stream": stream_name, "channel": channel},
         )
 
@@ -790,7 +792,7 @@ class RedisServer(ServerT):
             raise ConnectionError("Not connected to Redis server")
 
         logger.debug(
-            "Subscribing to channels '{channels}'.",
+            "channel.subscribe",
             extra={"channels": list(channels_to_callbacks.keys())},
         )
 
@@ -848,7 +850,7 @@ class RedisServer(ServerT):
                 mkstream=True,
             )
             logger.debug(
-                "Created consumer group '{group}' for stream '{stream}'.",
+                "consumer_group.create",
                 extra={"group": group_name, "stream": stream_name},
             )
         except ResponseError as e:

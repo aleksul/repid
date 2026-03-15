@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
@@ -9,7 +10,6 @@ from typing import TYPE_CHECKING, Any
 import grpc.aio
 
 from repid.connections.abc import CapabilitiesT, ReceivedMessageT, SentMessageT, SubscriberT
-from repid.logger import logger
 
 from .helpers import ChannelOverride
 from .protocol import (
@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from repid.asyncapi.models.servers import ServerVariable
     from repid.data import ExternalDocs, Tag
 
+logger = logging.getLogger("repid.connections.pubsub")
 
 # gRPC method paths
 PUBLISH_METHOD = "/google.pubsub.v1.Publisher/Publish"
@@ -262,7 +263,7 @@ class PubsubServer:
             credentials_provider=self._credentials_provider,
             options=self._channel_options,
         )
-        logger.debug("Connected to Pub/Sub via gRPC.")
+        logger.debug("server.connect")
 
     async def disconnect(self) -> None:
         """Close connection and clean up resources."""
@@ -277,7 +278,7 @@ class PubsubServer:
             await self._channel.close()
             self._channel = None
 
-        logger.debug("Disconnected from Pub/Sub.")
+        logger.debug("server.disconnect")
 
     @asynccontextmanager
     async def connection(self) -> AsyncGenerator[PubsubServer, None]:
@@ -332,7 +333,7 @@ class PubsubServer:
         )
 
         logger.debug(
-            "Publishing message to PubSub topic '{topic}'.",
+            "channel.publish",
             extra={"topic": topic_path, "channel": channel},
         )
 
@@ -377,7 +378,7 @@ class PubsubServer:
             raise ConnectionError("PubSub server is not connected.")
 
         logger.debug(
-            "Subscribing to PubSub channels '{channels}'.",
+            "channel.subscribe",
             extra={"channels": list(channels_to_callbacks.keys())},
         )
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import signal
 import sys
 from collections.abc import Iterable
@@ -9,9 +10,10 @@ from typing import TYPE_CHECKING
 from repid._runner import _Runner
 from repid.asyncapi_server import AsyncAPIServer
 from repid.health_check_server import HealthCheckServer
-from repid.logger import logger
 from repid.router import Router
 from repid.serializer import default_serializer as repid_default_serializer
+
+logger = logging.getLogger("repid")
 
 if TYPE_CHECKING:
     from repid.asyncapi import AsyncAPI3Schema
@@ -67,7 +69,14 @@ class _Worker:
         self.default_serializer = default_serializer or repid_default_serializer
 
     async def run(self) -> _Runner:
-        logger.info("Starting to run worker.")
+        logger.info(
+            "worker.run.start",
+            extra={
+                "tasks_limit": self.tasks_limit,
+                "messages_limit": self.messages_limit,
+                "graceful_shutdown_time": self.graceful_shutdown_time,
+            },
+        )
 
         if self.health_check_server is not None:
             await self.health_check_server.start()
@@ -84,7 +93,7 @@ class _Worker:
         )
 
         if not self.centralized_router.actors:
-            logger.info("Exiting worker, as there are no actors to run.")
+            logger.info("worker.run.exit.no_actors")
             if self.health_check_server is not None:  # pragma: no cover
                 await self.health_check_server.stop()
             if self.asyncapi_server is not None:  # pragma: no cover
@@ -94,7 +103,7 @@ class _Worker:
         loop = asyncio.get_running_loop()
         self._register_signals(loop, runner)
 
-        logger.debug("Starting consumer.")
+        logger.info("worker.consumer.start")
 
         try:
             await runner.run(
@@ -102,7 +111,7 @@ class _Worker:
                 graceful_termination_timeout=self.graceful_shutdown_time,
             )
         except asyncio.CancelledError as exc:
-            logger.critical("Worker was cancelled.", exc_info=exc)
+            logger.critical("worker.cancelled", exc_info=exc)
             raise
 
         if self.health_check_server is not None:
@@ -119,21 +128,18 @@ class _Worker:
 
         self._unregister_signals(loop)
 
-        logger.info("Exiting worker run.")
+        logger.info("worker.run.exit")
 
         return runner
 
     def _register_signals(self, loop: asyncio.AbstractEventLoop, runner: _Runner) -> None:
         def signal_handler() -> None:
-            logger.info("Received signal, stopping runner.")
+            logger.info("worker.signal.stop")
             runner.stop_consume_event.set()
             self._unregister_signals(loop)
 
         if self.register_signals:
-            logger.debug(
-                "Registering signal ({signals}) handlers.",
-                extra={"signals": self.register_signals},
-            )
+            logger.debug("worker.signal.register", extra={"signals": self.register_signals})
         for sig in self.register_signals:
             loop.add_signal_handler(sig, signal_handler)
 

@@ -1462,7 +1462,7 @@ async def test_connection_heartbeat_loop_sends_frame() -> None:
 
         with patch("repid.connections.amqp.protocol.connection.logger.debug") as mock_logger:
             await conn._heartbeat_loop()
-            mock_logger.assert_called_once_with("Sent AMQP heartbeat frame")
+            mock_logger.assert_called_once_with("connection.heartbeat.sent")
 
         mock_send.assert_called_once()
         mock_sleep.assert_not_called()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
@@ -12,7 +13,8 @@ from repid.connections.amqp.protocol import (
     ManagedSession,
 )
 from repid.connections.amqp.subscriber import AmqpSubscriber
-from repid.logger import logger
+
+logger = logging.getLogger("repid.connections.amqp")
 
 if TYPE_CHECKING:
     from repid.asyncapi.models.common import ServerBindingsObject
@@ -165,14 +167,16 @@ class AmqpServer:
             await self._connection.connect()
             # Create managed session that handles reconnection automatically
             self._managed_session = ManagedSession(self._connection)
+            logger.info("server.connect", extra={"host": self._conn_host, "port": self._conn_port})
 
     async def disconnect(self) -> None:
+        logger.info("server.disconnect")
         # Close all active subscribers
         for subscriber in self._active_subscribers:
             try:
                 await subscriber.close()
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("Error closing subscriber", exc_info=exc)
+            except Exception as exc:
+                logger.exception("subscriber.close.error", exc_info=exc)
 
         self._active_subscribers.clear()
 
@@ -219,7 +223,7 @@ class AmqpServer:
                 - to: str - override address
                 - routing_key: str - specify routing key for naming strategy
         """
-        logger.debug("Publishing message to channel '{channel}'.", extra={"channel": channel})
+        logger.debug("channel.publish", extra={"channel": channel})
 
         if self._managed_session is None:
             raise ConnectionError("Not connected to AMQP server")
@@ -231,6 +235,8 @@ class AmqpServer:
             address = params["to"]
         else:
             address = self._publish_naming_strategy(channel, params.get("routing_key"))
+
+        logger.debug("channel.publish.address", extra={"channel": channel, "address": address})
 
         # Prepare server-specific parameters for uAMQP
         header = params.get("header")
@@ -259,10 +265,7 @@ class AmqpServer:
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
         concurrency_limit: int | None = None,
     ) -> SubscriberT:
-        logger.debug(
-            "Subscribing to channels '{channels}'.",
-            extra={"channels": list(channels_to_callbacks.keys())},
-        )
+        logger.debug("channel.subscribe", extra={"channels": list(channels_to_callbacks.keys())})
 
         if not self.is_connected or self._managed_session is None:
             raise ConnectionError("Not connected to AMQP server")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 from collections.abc import Awaitable, Callable
 from functools import partial
@@ -8,7 +9,8 @@ from typing import TYPE_CHECKING, Any
 
 from repid.connections.abc import ServerT, SubscriberT
 from repid.health_check_server import HealthCheckStatus
-from repid.logger import logger
+
+logger = logging.getLogger("repid")
 
 if TYPE_CHECKING:
     from repid.connections.abc import ReceivedMessageT
@@ -75,16 +77,9 @@ async def _actor_run(
 
     except Exception as exc:  # noqa: BLE001
         exception = exc
-        logger.debug(
-            "Error inside of an actor '{actor_name}' on message {message_id}.",
-            extra=logger_extra,
-            exc_info=exc,
-        )
+        logger.debug("actor.run.error", extra=logger_extra, exc_info=exc)
     else:
-        logger.debug(
-            "Actor '{actor_name}' finished successfully on message {message_id}.",
-            extra=logger_extra,
-        )
+        logger.debug("actor.run.success", extra=logger_extra)
 
     if not message.is_acted_on:
         if actor.confirmation_mode == "auto":
@@ -95,11 +90,7 @@ async def _actor_run(
         elif actor.confirmation_mode == "always_ack":
             await message.ack()
         elif actor.confirmation_mode == "manual":
-            logger.warning(
-                "Actor '{actor_name}' is in 'manual' confirmation mode, "
-                "but the message is not acknowledged.",
-                extra=logger_extra,
-            )
+            logger.warning("actor.ack.manual.unacknowledged", extra=logger_extra)
 
     return exception if exception is not None else result
 
@@ -239,10 +230,7 @@ class _Runner:
         actor = next(filter(lambda actor: actor.routing_strategy(message), actors), None)
         if actor is None:
             # TODO: after the same message is seen multiple times - nack it instead of reject
-            logger.warning(
-                "No actor found for message on channel '{channel}'.",
-                extra={"channel": message.channel},
-            )
+            logger.warning("actor.route.not_found", extra={"channel": message.channel})
             await message.reject()
             return
 
@@ -296,18 +284,15 @@ class _Runner:
             and not subscriber_task.cancelled()
             and (exc := subscriber_task.exception()) is not None
         ):
-            logger.critical("Error while running consumer.", exc_info=exc)
+            logger.critical("runner.consumer.error", exc_info=exc)
             if self._health_check_server is not None:
                 self._health_check_server.health_status = HealthCheckStatus.UNHEALTHY
 
-        logger.debug("Gracefully finishing runner.")
+        logger.debug("runner.shutdown.start")
         try:
             await self._server_subscriber.pause()
-        except Exception as exc:  # noqa: BLE001
-            logger.exception(
-                "Error while pausing subscriber during graceful shutdown.",
-                exc_info=exc,
-            )
+        except Exception as exc:
+            logger.exception("runner.subscriber.pause.error", exc_info=exc)
 
         self.stop_consume_event.set()
         if self._tasks:
@@ -317,26 +302,23 @@ class _Runner:
                 timeout=graceful_termination_timeout,
             )
             if pending:
-                logger.error("Some tasks timeouted when gracefully finishing runner.")
+                logger.error("runner.shutdown.tasks_timeout")
         self.cancel_event.set()
 
         # Give cancelled tasks a moment to clean up (reject messages, etc.)
         if self._tasks:
-            logger.debug("Some tasks are still running even after cancellation, waiting for them.")
+            logger.debug("runner.shutdown.tasks_pending")
             await asyncio.wait(
                 self._tasks,
                 return_when=asyncio.ALL_COMPLETED,
                 timeout=cancellation_timeout,
             )
             if self._tasks:
-                logger.error("Some tasks did not finish even after cancellation and timeout.")
+                logger.error("runner.shutdown.tasks_unfinished")
 
         try:
             await self._server_subscriber.close()
-        except Exception as exc:  # noqa: BLE001
-            logger.exception(
-                "Error while closing subscriber during graceful shutdown.",
-                exc_info=exc,
-            )
+        except Exception as exc:
+            logger.exception("runner.subscriber.close.error", exc_info=exc)
 
-        logger.debug("Runner finished gracefully.")
+        logger.debug("runner.shutdown.complete")

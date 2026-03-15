@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from .connection import AmqpConnection
     from .session import Session
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("repid.connections.amqp.protocol")
 
 
 class ManagedSessionError(Exception):
@@ -117,9 +117,7 @@ class ManagedSession:
 
     async def _on_reconnected(self, _data: Any = None) -> None:
         """Handle reconnection event."""
-        logger.debug(
-            "ManagedSession: connection reconnected, session will be recreated on next use",
-        )
+        logger.debug("managed_session.reconnected")
         # Session will be recreated on next get_session() call
         # Pools will recreate links on next get() call
 
@@ -233,10 +231,8 @@ class SenderPool:
 
             except LinkError as e:
                 logger.warning(
-                    "SenderPool: link error during send (attempt %d/%d): %s",
-                    attempt + 1,
-                    max_retries,
-                    e,
+                    "sender_pool.send.link_error",
+                    extra={"attempt": attempt + 1, "max": max_retries, "error": str(e)},
                 )
                 # Invalidate the stale link
                 if address in self._links:
@@ -357,8 +353,8 @@ class ReceiverPool:
 
         async with self._lock:
             logger.debug(
-                "ReceiverPool: reconnected, re-subscribing %d receivers",
-                len(self._callbacks),
+                "receiver_pool.reconnected",
+                extra={"count": len(self._callbacks)},
             )
 
             # Clear old links
@@ -371,9 +367,9 @@ class ReceiverPool:
                     base_name = self._link_names.get(address, f"receiver-{address}")
                     link_name = f"{base_name}-{self._link_counter}"
                     await self._create_link(address, callback, link_name)
-                    logger.debug("ReceiverPool: re-subscribed to %s", address)
+                    logger.debug("receiver_pool.resubscribed", extra={"address": address})
                 except Exception:
-                    logger.exception("ReceiverPool: failed to re-subscribe to %s", address)
+                    logger.exception("receiver_pool.resubscribe.error", extra={"address": address})
 
     def invalidate(self) -> None:
         """Invalidate all links in the pool."""

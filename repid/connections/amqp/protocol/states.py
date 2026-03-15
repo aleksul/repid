@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import ClassVar, Generic, TypeVar
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("repid.connections.amqp.protocol")
 
 # Type variable for state enums
 S = TypeVar("S", bound=Enum)
@@ -237,6 +237,10 @@ class StateMachine(Generic[S]):
         """Perform transition without lock."""
         key = (self._state, trigger)
         if key not in self._transitions:
+            logger.debug(
+                "state_machine.transition.invalid",
+                extra={"state": self._state.name, "trigger": trigger},
+            )
             raise InvalidStateTransitionError(
                 self._state,
                 trigger,
@@ -255,13 +259,11 @@ class StateMachine(Generic[S]):
             try:
                 listener(transition)
             except Exception:
-                logger.exception("Error in state transition listener")
+                logger.exception("state_machine.listener.error")
 
         logger.debug(
-            "State transition: %s -> %s (trigger: %s)",
-            old_state.name,
-            new_state.name,
-            trigger,
+            "state_machine.transition",
+            extra={"from": old_state.name, "to": new_state.name, "trigger": trigger},
         )
 
         return new_state

@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from .connection import AmqpConnection
     from .links import ReceiverLink, SenderLink
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("repid.connections.amqp.protocol")
 
 
 class SessionError(Exception):
@@ -132,7 +132,7 @@ class Session:
         await self._connection.send_performative(self._channel, begin_frame)
         await self._state_machine.transition("send_begin")
 
-        logger.debug("Session %d: BEGIN sent", self._channel)
+        logger.debug("session.begin.sent", extra={"channel": self._channel})
 
     async def wait_ready(self, timeout: float = 10.0) -> None:
         """
@@ -161,7 +161,7 @@ class Session:
         for link in self._links.values():
             link.invalidate()
 
-        logger.debug("Session %d: invalidated due to connection loss", self._channel)
+        logger.debug("session.invalidated", extra={"channel": self._channel})
 
     async def end(self, _error: Exception | None = None) -> None:
         """
@@ -178,7 +178,11 @@ class Session:
             try:
                 await link.detach()
             except (OSError, asyncio.TimeoutError):
-                logger.debug("Error detaching link %s", link.name, exc_info=True)
+                logger.warning(
+                    "session.link.detach_error",
+                    extra={"link": link.name},
+                    exc_info=True,
+                )
 
         # Send END if possible
         if self._state_machine.is_usable():
@@ -187,12 +191,12 @@ class Session:
                 await self._connection.send_performative(self._channel, end_frame)
                 await self._state_machine.transition("send_end")
             except (OSError, asyncio.TimeoutError):
-                logger.debug("Error sending END frame", exc_info=True)
+                logger.debug("session.end_frame.error", exc_info=True)
 
         # Remove from connection
         self._connection._remove_session(self._channel)
 
-        logger.debug("Session %d: ended", self._channel)
+        logger.debug("session.ended", extra={"channel": self._channel})
 
     # -------------------------------------------------------------------------
     # Frame Handling
@@ -206,9 +210,8 @@ class Session:
             performative: The performative to handle
         """
         logger.debug(
-            "Session %d handling: %s",
-            self._channel,
-            type(performative).__name__,
+            "session.performative.received",
+            extra={"channel": self._channel, "type": type(performative).__name__},
         )
 
         if isinstance(performative, BeginFrame):
@@ -227,9 +230,8 @@ class Session:
             await self._handle_disposition(performative)
         else:
             logger.warning(
-                "Session %d: unhandled performative %s",
-                self._channel,
-                type(performative).__name__,
+                "session.performative.unhandled",
+                extra={"channel": self._channel, "type": type(performative).__name__},
             )
 
     async def _handle_begin(self, begin: BeginFrame) -> None:
@@ -242,15 +244,17 @@ class Session:
         self._ready.set()
 
         logger.debug(
-            "Session %d: MAPPED (remote_incoming=%d, remote_outgoing=%d)",
-            self._channel,
-            self._remote_incoming_window,
-            self._remote_outgoing_window,
+            "session.mapped",
+            extra={
+                "channel": self._channel,
+                "remote_incoming": self._remote_incoming_window,
+                "remote_outgoing": self._remote_outgoing_window,
+            },
         )
 
     async def _handle_end(self, _end: EndFrame) -> None:
         """Handle END frame."""
-        logger.debug("Session %d: received END", self._channel)
+        logger.debug("session.end.received", extra={"channel": self._channel})
 
         with contextlib.suppress(ValueError):
             await self._state_machine.transition("recv_end")
@@ -271,7 +275,7 @@ class Session:
 
         remote_handle = attach.handle
         if remote_handle is None:
-            logger.error("Session %d: ATTACH missing handle", self._channel)
+            logger.error("session.attach.missing_handle", extra={"channel": self._channel})
             return
 
         if name in self._links:
@@ -281,9 +285,8 @@ class Session:
             await link._handle_attach(attach)
         else:
             logger.warning(
-                "Session %d: ATTACH for unknown link %s",
-                self._channel,
-                name,
+                "session.attach.unknown_link",
+                extra={"channel": self._channel, "link": name},
             )
 
     async def _handle_detach(self, detach: DetachFrame) -> None:
@@ -297,9 +300,8 @@ class Session:
             await link._handle_detach(detach)
         else:
             logger.warning(
-                "Session %d: DETACH for unknown handle %d",
-                self._channel,
-                handle,
+                "session.detach.unknown_handle",
+                extra={"channel": self._channel, "handle": handle},
             )
 
     async def _handle_flow(self, flow: FlowFrame) -> None:
@@ -324,7 +326,7 @@ class Session:
         self._next_incoming_id = (self._next_incoming_id + 1) & 0xFFFFFFFF
         handle = transfer.handle
         if handle is None:
-            logger.error("Session %d: TRANSFER missing handle", self._channel)
+            logger.error("session.transfer.missing_handle", extra={"channel": self._channel})
             return
 
         if handle in self._links_by_remote_handle:
@@ -336,27 +338,30 @@ class Session:
                 await link._handle_transfer(transfer)
             else:
                 logger.warning(
-                    "Session %d: TRANSFER on sender link %d",
-                    self._channel,
-                    handle,
+                    "session.transfer.sender_link",
+                    extra={"channel": self._channel, "handle": handle},
                 )
         else:
             logger.warning(
-                "Session %d: TRANSFER for unknown handle %d. Known handles: %s",
-                self._channel,
-                handle,
-                list(self._links_by_remote_handle.keys()),
+                "session.transfer.unknown_handle",
+                extra={
+                    "channel": self._channel,
+                    "handle": handle,
+                    "known": list(self._links_by_remote_handle.keys()),
+                },
             )
 
     async def _handle_disposition(self, disposition: DispositionFrame) -> None:
         """Handle DISPOSITION frame."""
         # For now, just log
         logger.debug(
-            "Session %d: DISPOSITION first=%s last=%s settled=%s",
-            self._channel,
-            disposition.first,
-            disposition.last,
-            disposition.settled,
+            "session.disposition.received",
+            extra={
+                "channel": self._channel,
+                "first": disposition.first,
+                "last": disposition.last,
+                "settled": disposition.settled,
+            },
         )
 
     # -------------------------------------------------------------------------

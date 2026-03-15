@@ -6,7 +6,7 @@ from typing import Annotated
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from repid import Header
+from repid import Header, Root
 from repid.converter import BasicConverter, ConverterT, PydanticConverter
 from repid.data import MessageData
 from repid.dependencies import Depends
@@ -771,3 +771,113 @@ async def test_pydantic_converter_matching_header_in_multiple_depends_not_duplic
         "title": "X-Shared",
         "type": "string",
     }
+
+
+async def test_pydantic_converter_root_model_parse() -> None:
+    class MyModel(BaseModel):
+        a: int
+        b: float
+
+    async def fn(model: Annotated[MyModel, Root()]) -> None: ...
+
+    conv = PydanticConverter(fn, fn_locals=locals(), correlation_id=None)
+    args, kwargs = await conv.convert_inputs(
+        message=MessageData(  # type: ignore[arg-type]
+            payload=b'{"a": 1, "b": 2.5}',
+            headers=None,
+            content_type="application/json",
+        ),
+        actor=None,  # type: ignore[arg-type]
+        server=None,  # type: ignore[arg-type]
+        default_serializer=None,  # type: ignore[arg-type]
+    )
+    assert args == []
+    assert kwargs == {"model": MyModel(a=1, b=2.5)}
+
+
+async def test_pydantic_converter_root_model_schema() -> None:
+    class MyModel(BaseModel):
+        a: int
+        b: float
+
+    async def fn(model: Annotated[MyModel, Root()]) -> None: ...
+
+    conv = PydanticConverter(fn, fn_locals=locals(), correlation_id=None)
+    schema = conv.get_input_schema()
+    # Schema must be the model's own schema, not wrapped in "fn_payload"
+    assert schema.payload_schema == {
+        "properties": {
+            "a": {"title": "A", "type": "integer"},
+            "b": {"title": "B", "type": "number"},
+        },
+        "required": ["a", "b"],
+        "title": "MyModel",
+        "type": "object",
+    }
+    assert schema.content_type == "application/json"
+
+
+async def test_pydantic_converter_root_model_with_extra_kwargs() -> None:
+    class MyModel(BaseModel):
+        a: int
+        b: float
+
+    async def fn(model: Annotated[MyModel, Root()], extra: str = "default") -> None: ...
+
+    conv = PydanticConverter(fn, fn_locals=locals(), correlation_id=None)
+    args, kwargs = await conv.convert_inputs(
+        message=MessageData(  # type: ignore[arg-type]
+            payload=b'{"a": 1, "b": 2.5, "extra": "hello"}',
+            headers=None,
+            content_type="application/json",
+        ),
+        actor=None,  # type: ignore[arg-type]
+        server=None,  # type: ignore[arg-type]
+        default_serializer=None,  # type: ignore[arg-type]
+    )
+    assert args == []
+    assert kwargs["extra"] == "hello"
+    # model arg receives the full validated instance (which IS-A MyModel)
+    assert kwargs["model"].a == 1
+    assert kwargs["model"].b == 2.5
+
+
+async def test_pydantic_converter_root_model_with_extra_kwargs_schema() -> None:
+    class MyModel(BaseModel):
+        a: int
+
+    async def fn(model: Annotated[MyModel, Root()], extra: str = "default") -> None: ...
+
+    conv = PydanticConverter(fn, fn_locals=locals(), correlation_id=None)
+    schema = conv.get_input_schema()
+    assert schema.payload_schema is not None
+    # Extended model merges root fields + extra fields at the top level
+    props = schema.payload_schema["properties"]
+    assert "a" in props
+    assert "extra" in props
+
+
+def test_pydantic_converter_root_model_multiple_raises() -> None:
+    class M1(BaseModel):
+        a: int
+
+    class M2(BaseModel):
+        b: int
+
+    async def fn(
+        m1: Annotated[M1, Root()],
+        m2: Annotated[M2, Root()],
+    ) -> None: ...
+
+    with pytest.raises(ValueError, match="Only one Root\\(\\) marker is allowed per actor"):
+        PydanticConverter(fn, fn_locals=locals(), correlation_id=None)
+
+
+def test_basic_converter_root_model_raises() -> None:
+    class MyModel(BaseModel):
+        a: int
+
+    async def fn(model: Annotated[MyModel, Root()]) -> None: ...
+
+    with pytest.raises(ValueError, match="Root\\(\\) requires PydanticConverter"):
+        BasicConverter(fn, fn_locals=locals(), correlation_id=None)

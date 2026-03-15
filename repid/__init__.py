@@ -10,6 +10,7 @@ from .dependencies import Depends as Depends
 from .dependencies import Header as Header
 from .dependencies import Message as Message
 from .dependencies import MessageDependency as MessageDependency
+from .dependencies import Root as Root
 from .health_check_server import HealthCheckServer as HealthCheckServer
 from .health_check_server import HealthCheckServerSettings as HealthCheckServerSettings
 from .health_check_server import HealthCheckStatus as HealthCheckStatus

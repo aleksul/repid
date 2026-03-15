@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Protocol, get_origin, runtime_
 
 from repid.dependencies.header_dependency import Header
 from repid.dependencies.message_dependency import MessageDependency
+from repid.dependencies.root import Root
 
 if TYPE_CHECKING:
     from repid.connections.abc import ReceivedMessageT, ServerT
@@ -40,6 +41,16 @@ def get_dependency(t: Any) -> DependencyT | None:
         if inspect.isclass(metadata) and issubclass(metadata, (Header, MessageDependency)):
             continue
         if isinstance(metadata, DependencyT):
+            return metadata
+    return None
+
+
+def get_root_marker(t: Any) -> Root | None:
+    """Return the `Root` instance from a type annotation if present."""
+    if get_origin(t) is not Annotated:
+        return None
+    for metadata in t.__metadata__:
+        if isinstance(metadata, Root):
             return metadata
     return None
 

@@ -5,11 +5,11 @@ import inspect
 import itertools
 import json
 from collections.abc import Callable, Coroutine, Iterable
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast, get_args
 
 from repid._utils import is_installed
 from repid.data import ConverterInputSchema
-from repid.dependencies._utils import DependencyContext, get_dependency
+from repid.dependencies._utils import DependencyContext, get_dependency, get_root_marker
 from repid.dependencies.depends import Depends as DependsClass
 from repid.dependencies.header_dependency import Header
 
@@ -154,6 +154,8 @@ class BasicConverter:
                 inspect.Parameter.POSITIONAL_OR_KEYWORD,
                 inspect.Parameter.KEYWORD_ONLY,
             ):
+                if get_root_marker(p.annotation) is not None:
+                    raise ValueError("Root() requires PydanticConverter.")
                 if (dep := get_dependency(p.annotation)) is not None:
                     self.dependency_kwargs[p.name] = dep
                     continue
@@ -268,12 +270,15 @@ class PydanticConverter:
             globals=fn.__globals__,
         )
 
-        self.args, self.kwargs, self.dependency_kwargs = self._parse_signature(signature)
+        self.args, self.kwargs, self.dependency_kwargs, self.root_arg = self._parse_signature(
+            signature,
+        )
 
         self.payload_pydantic_model = self._build_payload_model(
             f"{fn.__name__}_payload",
             signature,
             self.dependency_kwargs,
+            self.root_arg,
         )
         self.headers_pydantic_model = self._build_headers_model(
             f"{fn.__name__}_headers",
@@ -285,10 +290,11 @@ class PydanticConverter:
     @staticmethod
     def _parse_signature(
         signature: inspect.Signature,
-    ) -> tuple[list[str], list[str], dict[str, DependencyT]]:
+    ) -> tuple[list[str], list[str], dict[str, DependencyT], tuple[str, type] | None]:
         args: list[str] = []
         kwargs: list[str] = []
         dependency_kwargs: dict[str, DependencyT] = {}
+        root_arg: tuple[str, type] | None = None
         for p in signature.parameters.values():
             if p.kind == inspect.Parameter.POSITIONAL_ONLY:
                 if get_dependency(p.annotation) is not None:
@@ -300,23 +306,29 @@ class PydanticConverter:
             if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY):
                 if (dep := get_dependency(p.annotation)) is not None:
                     dependency_kwargs[p.name] = dep
+                elif get_root_marker(p.annotation) is not None:
+                    if root_arg is not None:
+                        raise ValueError("Only one Root() marker is allowed per actor.")
+                    root_arg = (p.name, get_args(p.annotation)[0])
                 else:
                     kwargs.append(p.name)
-        return args, kwargs, dependency_kwargs
+        return args, kwargs, dependency_kwargs, root_arg
 
     @staticmethod
     def _build_payload_model(
         model_name: str,
         signature: inspect.Signature,
         dependency_kwargs: dict[str, DependencyT],
+        root_arg: tuple[str, type] | None = None,
     ) -> type[BaseModel] | None:
+        root_arg_name = root_arg[0] if root_arg is not None else None
         fields: dict[str, tuple[Any, Any]] = {
             p.name: (
                 p.annotation if p.annotation is not inspect.Parameter.empty else Any,
                 p.default if p.default is not inspect.Parameter.empty else Field(),
             )
             for p in signature.parameters.values()
-            if p.name not in dependency_kwargs
+            if p.name not in dependency_kwargs and p.name != root_arg_name
         }
 
         dependencies: Iterable[DependsClass] = filter(
@@ -357,6 +369,12 @@ class PydanticConverter:
                 param.annotation if param.annotation is not inspect.Parameter.empty else Any,
                 param.default if param.default is not inspect.Parameter.empty else Field(),
             )
+
+        if root_arg is not None:
+            root_type = root_arg[1]
+            if not fields:
+                return root_type
+            return create_model(model_name, __base__=root_type, **fields)  # type: ignore[call-overload, no-any-return]
 
         if not fields:
             return None
@@ -486,18 +504,6 @@ class PydanticConverter:
         default_serializer: SerializerT,
     ) -> FnParams:
         validated_payload = self._parse_payload(message)
-        loaded = (
-            {
-                name: getattr(validated_payload, name)
-                for name in self.payload_pydantic_model.model_fields
-            }
-            if validated_payload is not None and self.payload_pydantic_model is not None
-            else {}
-        )
-        if self.args:  # if there are positional args - pop them from loaded
-            args: list[Any] = [loaded.pop(arg, None) for arg in self.args]
-        else:
-            args = []
         validated_headers = self._parse_headers(message)
         parsed_headers = (
             {
@@ -507,6 +513,38 @@ class PydanticConverter:
             if validated_headers is not None and self.headers_pydantic_model is not None
             else {}
         )
+
+        if self.root_arg is not None:
+            root_arg_name = self.root_arg[0]
+            fn_kwargs: dict[str, Any] = {root_arg_name: validated_payload}
+            for name in self.kwargs:
+                fn_kwargs[name] = getattr(validated_payload, name)
+            args: list[Any] = (
+                [getattr(validated_payload, name) for name in self.args] if self.args else []
+            )
+            resolved = await _resolve_dependencies(
+                message=message,
+                actor=actor,
+                server=server,
+                default_serializer=default_serializer,
+                parsed_args=args,
+                parsed_kwargs=fn_kwargs,
+                parsed_headers=parsed_headers,
+                headers_id_to_name=self.headers_id_to_name,
+                dependencies=self.dependency_kwargs,
+            )
+            return (args, {**fn_kwargs, **resolved})
+
+        loaded = (
+            {
+                name: getattr(validated_payload, name)
+                for name in self.payload_pydantic_model.model_fields
+            }
+            if validated_payload is not None and self.payload_pydantic_model is not None
+            else {}
+        )
+        # if there are positional args - pop them from loaded
+        args = [loaded.pop(arg, None) for arg in self.args] if self.args else []
         resolved = await _resolve_dependencies(
             message=message,
             actor=actor,

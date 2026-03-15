@@ -1,8 +1,9 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
 import pytest
 
 from repid import Header, Message, Repid, Router
+from repid.connections.abc import MessageAction
 from repid.test_client import TestClient
 
 
@@ -414,6 +415,43 @@ async def test_test_client_message_properties() -> None:
         assert msg.is_acted_on is True
         assert msg.success is True
         assert msg.result == "result"
+
+
+@pytest.mark.parametrize(
+    ("confirmation_mode", "action_method", "expected_action"),
+    [
+        pytest.param("manual", "ack", MessageAction.acked, id="acked"),
+        pytest.param("manual", "nack", MessageAction.nacked, id="nacked"),
+        pytest.param("manual", "reject", MessageAction.rejected, id="rejected"),
+        pytest.param("manual", "reply", MessageAction.replied, id="replied"),
+    ],
+)
+async def test_test_message_action_property(
+    confirmation_mode: Literal["manual", "auto", "always_ack"],
+    action_method: str,
+    expected_action: MessageAction,
+) -> None:
+    app = Repid()
+    router = Router()
+
+    @router.actor(confirmation_mode=confirmation_mode)
+    async def myactor(m: Message) -> None:
+        if action_method == "reply":
+            await m.reply(payload=b"response")
+        else:
+            await getattr(m, action_method)()
+
+    app.include_router(router)
+
+    async with TestClient(app) as client:
+        await client.send_message_json(
+            channel="default",
+            payload={},
+            headers={"topic": "myactor"},
+        )
+
+        processed = client.get_processed_messages()
+        assert processed[0].action == expected_action
 
 
 async def test_test_client_get_filtered_messages() -> None:

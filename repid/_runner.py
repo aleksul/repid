@@ -37,6 +37,35 @@ async def _actor_execution(
     return await actor.fn(*args, **kwargs)
 
 
+async def _actor_execution_with_confirmation(
+    message: ReceivedMessageT,
+    actor: ActorData,
+    server: ServerT,
+    default_serializer: SerializerT,
+) -> ActorResultT:
+    """Wraps `_actor_execution` to ack/nack the message immediately after the actor fn runs,
+    so middlewares unwinding above this leaf can observe `message.action`."""
+    try:
+        if actor.timeout is None or actor.timeout <= 0 or actor.timeout == float("inf"):
+            result = await _actor_execution(message, actor, server, default_serializer)
+        else:
+            result = await asyncio.wait_for(
+                _actor_execution(message, actor, server, default_serializer),
+                timeout=actor.timeout,
+            )
+    except Exception:
+        if not message.is_acted_on:
+            if actor.confirmation_mode == "auto":
+                await message.nack()
+            elif actor.confirmation_mode == "always_ack":
+                await message.ack()
+        raise
+    else:
+        if not message.is_acted_on and actor.confirmation_mode in ("auto", "always_ack"):
+            await message.ack()
+        return result
+
+
 async def _actor_run(
     actor: ActorData,
     message: ReceivedMessageT,
@@ -58,39 +87,22 @@ async def _actor_run(
     exception = None
     result = None
 
-    try:
-        if actor.timeout is None or actor.timeout <= 0 or actor.timeout == float("inf"):
-            result = await actor.middleware_pipeline(
-                partial(_actor_execution, server=server, default_serializer=default_serializer),
-                message,
-                actor,
-            )
-        else:
-            result = await asyncio.wait_for(
-                actor.middleware_pipeline(
-                    partial(_actor_execution, server=server, default_serializer=default_serializer),
-                    message,
-                    actor,
-                ),
-                timeout=actor.timeout,
-            )
+    leaf = partial(
+        _actor_execution_with_confirmation,
+        server=server,
+        default_serializer=default_serializer,
+    )
 
+    try:
+        result = await actor.middleware_pipeline(leaf, message, actor)
     except Exception as exc:  # noqa: BLE001
         exception = exc
         logger.debug("actor.run.error", extra=logger_extra, exc_info=exc)
     else:
         logger.debug("actor.run.success", extra=logger_extra)
 
-    if not message.is_acted_on:
-        if actor.confirmation_mode == "auto":
-            if exception is None:
-                await message.ack()
-            else:
-                await message.nack()
-        elif actor.confirmation_mode == "always_ack":
-            await message.ack()
-        elif actor.confirmation_mode == "manual":
-            logger.warning("actor.ack.manual.unacknowledged", extra=logger_extra)
+    if not message.is_acted_on and actor.confirmation_mode == "manual":
+        logger.warning("actor.ack.manual.unacknowledged", extra=logger_extra)
 
     return exception if exception is not None else result
 

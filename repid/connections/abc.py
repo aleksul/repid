@@ -3,12 +3,20 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
 if TYPE_CHECKING:
     from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
     from repid.data import ExternalDocs, Tag
+
+
+class MessageAction(str, Enum):
+    acked = "acked"
+    nacked = "nacked"
+    rejected = "rejected"
+    replied = "replied"
 
 
 class BaseMessageT(Protocol):
@@ -29,6 +37,9 @@ class SentMessageT(BaseMessageT, Protocol):
 class ReceivedMessageT(BaseMessageT, Protocol):
     @property
     def channel(self) -> str: ...
+
+    @property
+    def action(self) -> MessageAction | None: ...
 
     @property
     def is_acted_on(self) -> bool: ...

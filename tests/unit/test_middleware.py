@@ -8,11 +8,12 @@ from typing import Any, TypeVar
 import pytest
 
 from repid import ActorData, MessageData, Repid, Router
-from repid.connections.abc import ReceivedMessageT
+from repid.connections.abc import MessageAction, ReceivedMessageT
 from repid.middlewares import (
     _compile_actor_middleware_pipeline,
     _compile_producer_middleware_pipeline,
 )
+from repid.test_client import TestClient
 
 T = TypeVar("T")
 
@@ -442,3 +443,38 @@ async def test_producer_middleware_mutation() -> None:
     pipeline_fn = pipeline(mock_leaf)
     res = await pipeline_fn("default", MessageData(payload=b"original"), None)
     assert res == "mutated"
+
+
+async def test_actor_middleware_sees_message_action() -> None:
+    action_before: MessageAction | None = None
+    action_after: MessageAction | None = None
+
+    async def middleware(
+        call_next: Callable[[ReceivedMessageT, ActorData], Coroutine[None, None, T]],
+        message: ReceivedMessageT,
+        actor: ActorData,
+    ) -> T:
+        nonlocal action_before, action_after
+        action_before = message.action
+        result = await call_next(message, actor)
+        action_after = message.action
+        return result
+
+    app = Repid(actor_middlewares=[middleware])
+    router = Router()
+
+    @router.actor
+    async def myactor() -> None:
+        pass
+
+    app.include_router(router)
+
+    async with TestClient(app) as client:
+        await client.send_message_json(
+            channel="default",
+            payload={},
+            headers={"topic": "myactor"},
+        )
+
+    assert action_before is None
+    assert action_after == MessageAction.acked

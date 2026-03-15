@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from redis.exceptions import ResponseError
 
-from repid.connections.abc import ReceivedMessageT
+from repid.connections.abc import MessageAction, ReceivedMessageT
 from repid.connections.redis.message_broker import (
     ChannelConfig,
     RedisReceivedMessage,
@@ -561,7 +561,7 @@ async def test_redis_received_message_reply(
     pipe.reset_mock()
     pipe.xadd.reset_mock()
     pipe.xack.reset_mock()
-    msg._is_acted_on = False
+    msg._action = None
     await msg.reply(payload=b"resp")
     args, _ = pipe.xadd.call_args
     assert args[0] == "repid:chan"
@@ -616,7 +616,7 @@ async def test_redis_received_message_properties_and_ack_acted_on(
     assert msg.headers == {"h": "v"}
     assert msg.content_type == "c"
 
-    msg._is_acted_on = True
+    msg._action = MessageAction.acked
     await msg.ack()
     redis_client.xack.assert_not_called()
 
@@ -637,7 +637,7 @@ async def test_redis_received_message_already_acted_guard(
 ) -> None:
     redis_client, _ = pipeline_mock
     msg = make_received_message()
-    msg._is_acted_on = True
+    msg._action = MessageAction.acked
     await getattr(msg, action)(**action_kwargs)
     redis_client.pipeline.assert_not_called()
 

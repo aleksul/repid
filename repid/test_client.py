@@ -10,7 +10,7 @@ from uuid import uuid4
 from typing_extensions import Self
 
 from repid._runner import _actor_run
-from repid.connections.abc import ServerT
+from repid.connections.abc import MessageAction, ServerT
 from repid.data import MessageData
 from repid.message_registry import MessageRegistry
 
@@ -57,13 +57,11 @@ class TestMessage:
     __test__ = False  # prevent pytest from collecting this class
 
     __slots__ = (
+        "_action",
         "_channel",
         "_content_type",
         "_exception",
         "_headers",
-        "_is_acked",
-        "_is_nacked",
-        "_is_rejected",
         "_message_id",
         "_operation_id",
         "_payload",
@@ -88,9 +86,7 @@ class TestMessage:
         self._channel = channel
         self._message_id = str(uuid4())
         self._timestamp = datetime.now()
-        self._is_acked = False
-        self._is_nacked = False
-        self._is_rejected = False
+        self._action: MessageAction | None = None
         self._reply_messages: list[tuple[str, MessageData]] = []
         self._exception: Exception | None = None
         self._result: Any = None
@@ -134,17 +130,17 @@ class TestMessage:
     @property
     def acked(self) -> bool:
         """Whether the message was acknowledged."""
-        return self._is_acked
+        return self._action == MessageAction.acked
 
     @property
     def nacked(self) -> bool:
         """Whether the message was negatively acknowledged."""
-        return self._is_nacked
+        return self._action == MessageAction.nacked
 
     @property
     def rejected(self) -> bool:
         """Whether the message was rejected."""
-        return self._is_rejected
+        return self._action == MessageAction.rejected
 
     @property
     def success(self) -> bool:
@@ -163,20 +159,25 @@ class TestMessage:
 
     @property
     def is_acted_on(self) -> bool:
-        """Check if message has been acknowledged, nacked, or rejected."""
-        return self._is_acked or self._is_nacked or self._is_rejected
+        """Check if message has been acknowledged, nacked, rejected, or replied to."""
+        return self._action is not None
+
+    @property
+    def action(self) -> MessageAction | None:
+        """The specific action taken on this message."""
+        return self._action
 
     async def ack(self) -> None:
         """Acknowledge the message."""
-        self._is_acked = True
+        self._action = MessageAction.acked
 
     async def nack(self) -> None:
         """Negative acknowledge the message."""
-        self._is_nacked = True
+        self._action = MessageAction.nacked
 
     async def reject(self) -> None:
         """Reject the message."""
-        self._is_rejected = True
+        self._action = MessageAction.rejected
 
     async def reply(
         self,
@@ -188,7 +189,7 @@ class TestMessage:
         server_specific_parameters: dict[str, Any] | None = None,  # noqa: ARG002
     ) -> None:
         """Reply to the message with a new message."""
-        await self.ack()
+        self._action = MessageAction.replied
         reply_channel = channel if channel is not None else self._channel
         message = MessageData(
             payload=payload,

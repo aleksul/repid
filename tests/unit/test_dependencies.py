@@ -7,6 +7,7 @@ from annotated_types import Gt
 from pydantic import ValidationError
 
 from repid import Header, Message, Repid, Router
+from repid.connections.abc import MessageAction
 from repid.converter import BasicConverter, DefaultConverter
 from repid.data import MessageData
 from repid.dependencies import Depends, MessageDependency
@@ -572,6 +573,33 @@ async def test_message_properties() -> None:
         "channel": "default",
         "is_acted_on": False,
     }
+
+
+async def test_message_action_property() -> None:
+    app = Repid()
+    router = Router()
+
+    captured_action_before: MessageAction | None = None
+    captured_action_after: MessageAction | None = None
+
+    @router.actor(confirmation_mode="manual")
+    async def myactor(m: Message) -> None:
+        nonlocal captured_action_before, captured_action_after
+        captured_action_before = m.action
+        await m.nack()
+        captured_action_after = m.action
+
+    app.include_router(router)
+
+    async with TestClient(app) as client:
+        await client.send_message_json(
+            channel="default",
+            payload={},
+            headers={"topic": "myactor"},
+        )
+
+    assert captured_action_before is None
+    assert captured_action_after == MessageAction.nacked
 
 
 async def test_message_send_message_raw() -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
+from repid.connections.abc import MessageAction
 from repid.data import MessageData
 
 from .proto import PubsubMessage, StreamingPullRequest
@@ -38,7 +39,7 @@ class PubsubReceivedMessage:
         self._channel_name = channel_name
         self._write_queue = write_queue
         self._server = server
-        self._is_acted_on = False
+        self._action: MessageAction | None = None
 
     @property
     def payload(self) -> bytes:
@@ -60,7 +61,11 @@ class PubsubReceivedMessage:
 
     @property
     def is_acted_on(self) -> bool:
-        return self._is_acted_on
+        return self._action is not None
+
+    @property
+    def action(self) -> MessageAction | None:
+        return self._action
 
     @property
     def message_id(self) -> str | None:
@@ -70,40 +75,40 @@ class PubsubReceivedMessage:
     def delivery_attempt(self) -> int:
         return self._delivery_attempt
 
-    async def ack(self) -> None:
-        """Acknowledge the message."""
-        if self._is_acted_on:
-            return
-
+    async def _send_ack_request(self) -> None:
+        """Send the ack request to the write queue without updating `_action`."""
         request = StreamingPullRequest(ack_ids=[self._ack_id])
         await self._write_queue.put(request)
-        self._is_acted_on = True
+
+    async def ack(self) -> None:
+        """Acknowledge the message."""
+        if self._action is not None:
+            return
+        await self._send_ack_request()
+        self._action = MessageAction.acked
 
     async def nack(self) -> None:
         """Negative acknowledge the message."""
-        if self._is_acted_on:
+        if self._action is not None:
             return
-
-        # Set ack deadline to 0 to nack
         request = StreamingPullRequest(
             modify_deadline_seconds=[0],
             modify_deadline_ack_ids=[self._ack_id],
         )
         await self._write_queue.put(request)
-        self._is_acted_on = True
+        self._action = MessageAction.nacked
 
     async def reject(self) -> None:
         """Reject the message."""
-        if self._is_acted_on:
+        if self._action is not None:
             return
-
         # Set a short ack to reject message asap (pubsub doesn't have explicit reject)
         request = StreamingPullRequest(
             modify_deadline_seconds=[1],
             modify_deadline_ack_ids=[self._ack_id],
         )
         await self._write_queue.put(request)
-        self._is_acted_on = True
+        self._action = MessageAction.rejected
 
     async def extend_deadline(self, seconds: int) -> None:
         """Extend the ack deadline for this message.
@@ -111,7 +116,7 @@ class PubsubReceivedMessage:
         Args:
             seconds: New deadline in seconds (10-600).
         """
-        if self._is_acted_on:
+        if self._action is not None:
             return
 
         seconds = max(10, min(600, seconds))
@@ -131,7 +136,10 @@ class PubsubReceivedMessage:
         server_specific_parameters: dict[str, Any] | None = None,
     ) -> None:
         """Reply by publishing a message and acknowledging this one."""
-        await self.ack()
+        if self._action is not None:
+            return
+        await self._send_ack_request()
+        self._action = MessageAction.replied
         reply_channel = channel or self._channel_name
         await self._server.publish(
             channel=reply_channel,

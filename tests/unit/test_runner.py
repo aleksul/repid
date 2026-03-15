@@ -147,6 +147,28 @@ async def test_runner_actor_timeout_exceeded() -> None:
         assert isinstance(msg.exception, asyncio.TimeoutError)
 
 
+async def test_runner_actor_always_ack_mode_with_timeout() -> None:
+    app = Repid()
+    router = Router()
+
+    @router.actor(confirmation_mode="always_ack", timeout=0.01)
+    async def slow_always_ack_actor() -> None:
+        await asyncio.sleep(1)
+
+    app.include_router(router)
+
+    async with TestClient(app, raise_on_actor_error=False) as client:
+        await client.send_message_json(
+            channel="default",
+            payload={},
+            headers={"topic": "slow_always_ack_actor"},
+        )
+
+        msg = client.get_processed_messages()[0]
+        assert msg.acked
+        assert isinstance(msg.exception, asyncio.TimeoutError)
+
+
 @pytest.mark.parametrize("supports_lightweight_pause", [True, False])
 async def test_runner_max_tasks_hit(supports_lightweight_pause: bool) -> None:
     server = InMemoryServer()

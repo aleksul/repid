@@ -6,6 +6,7 @@ from typing import Any, cast
 
 import pytest
 
+from repid.connections.abc import MessageAction
 from repid.connections.amqp.helpers import AmqpReceivedMessage
 from repid.connections.amqp.message_broker import AmqpServer
 from repid.connections.amqp.protocol import ManagedSession
@@ -200,8 +201,9 @@ async def test_amqp_received_message_headers_and_ack_nack_reply() -> None:
     await msg.reply(payload=b"reply")
 
     assert msg.is_acted_on is True
+    assert msg.action == MessageAction.acked
     assert len(connection.sent) == 1
-    assert published == [("queue", MessageData(payload=b"reply", headers=None, content_type=None))]
+    assert published == []  # reply is no-op after ack
 
 
 async def test_amqp_received_message_nack() -> None:
@@ -226,7 +228,7 @@ async def test_amqp_received_message_nack() -> None:
     await msg.nack()
     # Second nack should be no-op
     await msg.nack()
-    assert msg._is_acted_on
+    assert msg._action == MessageAction.nacked
 
 
 async def test_amqp_received_message_reject() -> None:
@@ -251,7 +253,7 @@ async def test_amqp_received_message_reject() -> None:
     await msg.reject()
     # Second reject should be no-op
     await msg.reject()
-    assert msg._is_acted_on
+    assert msg._action == MessageAction.rejected
 
 
 async def test_amqp_received_message_properties() -> None:

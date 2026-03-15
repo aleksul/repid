@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from repid.connections.abc import MessageAction
 from repid.connections.pubsub.protocol import proto, received_message
 
 
@@ -102,7 +103,7 @@ async def test_received_message_extend_deadline(
     assert req.modify_deadline_seconds == [600]
 
     # If acted on, should do nothing
-    msg_fixture._is_acted_on = True
+    msg_fixture._action = MessageAction.acked
     await msg_fixture.extend_deadline(30)
     assert msg_fixture._write_queue.empty()
 

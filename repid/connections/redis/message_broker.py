@@ -19,6 +19,7 @@ from redis.retry import Retry
 
 from repid.connections.abc import (
     CapabilitiesT,
+    MessageAction,
     ReceivedMessageT,
     SentMessageT,
     ServerT,
@@ -131,13 +132,13 @@ class RedisReceivedMessage(ReceivedMessageT):
     """A message received from Redis Streams."""
 
     __slots__ = (
+        "_action",
         "_channel",
         "_consumer_group",
         "_content_type",
         "_dlq_maxlen",
         "_dlq_stream",
         "_headers",
-        "_is_acted_on",
         "_message_id",
         "_payload",
         "_redis",
@@ -171,7 +172,7 @@ class RedisReceivedMessage(ReceivedMessageT):
         self._dlq_stream = dlq_stream
         self._dlq_maxlen = dlq_maxlen
         self._server = server
-        self._is_acted_on = False
+        self._action: MessageAction | None = None
 
     @property
     def payload(self) -> bytes:
@@ -195,20 +196,24 @@ class RedisReceivedMessage(ReceivedMessageT):
 
     @property
     def is_acted_on(self) -> bool:
-        return self._is_acted_on
+        return self._action is not None
+
+    @property
+    def action(self) -> MessageAction | None:
+        return self._action
 
     async def ack(self) -> None:
         """Acknowledge the message - removes it from the pending entries list."""
-        if self._is_acted_on:
+        if self._action is not None:
             return
-        self._is_acted_on = True
+        self._action = MessageAction.acked
         await self._redis.xack(self._stream_name, self._consumer_group, self._message_id)
 
     async def nack(self) -> None:
         """Negative acknowledge - move to DLQ if configured, otherwise just ack and discard."""
-        if self._is_acted_on:
+        if self._action is not None:
             return
-        self._is_acted_on = True
+        self._action = MessageAction.nacked
 
         async with self._redis.pipeline(transaction=True) as pipe:
             if self._dlq_stream is not None:
@@ -231,9 +236,9 @@ class RedisReceivedMessage(ReceivedMessageT):
         the end of the stream. Delivery order relative to other messages is
         not preserved.
         """
-        if self._is_acted_on:
+        if self._action is not None:
             return
-        self._is_acted_on = True
+        self._action = MessageAction.rejected
 
         async with self._redis.pipeline(transaction=True) as pipe:
             fields = _build_message_fields(self._payload, self._headers, self._content_type)
@@ -251,9 +256,9 @@ class RedisReceivedMessage(ReceivedMessageT):
         server_specific_parameters: dict[str, Any] | None = None,  # noqa: ARG002
     ) -> None:
         """Acknowledge and reply to the message atomically."""
-        if self._is_acted_on:
+        if self._action is not None:
             return
-        self._is_acted_on = True
+        self._action = MessageAction.replied
 
         target_channel = channel or self._channel
 

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 from repid.data import MessageData
 
 if TYPE_CHECKING:
-    from repid.connections.abc import ReceivedMessageT, ServerT
+    from repid.connections.abc import MessageAction, ReceivedMessageT, ServerT
     from repid.dependencies._utils import DependencyContext
     from repid.serializer import SerializerT
 
@@ -40,6 +40,10 @@ class EnhancedReceivedMessage:
     @property
     def is_acted_on(self) -> bool:
         return self._message.is_acted_on
+
+    @property
+    def action(self) -> MessageAction | None:
+        return self._message.action
 
     @property
     def message_id(self) -> str | None:

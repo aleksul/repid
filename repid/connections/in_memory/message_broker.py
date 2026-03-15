@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from repid.connections.abc import (
     CapabilitiesT,
+    MessageAction,
     ReceivedMessageT,
     SentMessageT,
     ServerT,
@@ -67,7 +68,7 @@ class InMemoryReceivedMessage(ReceivedMessageT):
         self._message = message
         self._queue = queue
         self._channel = channel
-        self._acted_on = False
+        self._action: MessageAction | None = None
 
     @property
     def payload(self) -> bytes:
@@ -90,25 +91,29 @@ class InMemoryReceivedMessage(ReceivedMessageT):
         return self._channel
 
     @property
+    def action(self) -> MessageAction | None:
+        return self._action
+
+    @property
     def is_acted_on(self) -> bool:
-        return self._acted_on
+        return self._action is not None
 
     async def ack(self) -> None:
-        if self._acted_on:
+        if self._action is not None:
             return
-        self._acted_on = True
+        self._action = MessageAction.acked
         self._queue.processing.remove(self._message)
 
     async def nack(self) -> None:
-        if self._acted_on:
+        if self._action is not None:
             return
-        self._acted_on = True
+        self._action = MessageAction.nacked
         self._queue.processing.remove(self._message)
 
     async def reject(self) -> None:
-        if self._acted_on:
+        if self._action is not None:
             return
-        self._acted_on = True
+        self._action = MessageAction.rejected
         self._queue.processing.remove(self._message)
         self._queue.queue.put_nowait(self._message)
 
@@ -121,9 +126,9 @@ class InMemoryReceivedMessage(ReceivedMessageT):
         channel: str | None = None,
         server_specific_parameters: dict[str, Any] | None = None,  # noqa: ARG002
     ) -> None:
-        if self._acted_on:
+        if self._action is not None:
             return
-        self._acted_on = True
+        self._action = MessageAction.replied
         # if channel specified, send there; otherwise to original channel
         target_channel = channel or self._channel
         self._queue.queue.put_nowait(

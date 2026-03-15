@@ -53,10 +53,16 @@ async def _actor_execution_with_confirmation(
                 _actor_execution(message, actor, server, default_serializer),
                 timeout=actor.timeout,
             )
-    except Exception:
+    except Exception as exc:
         if not message.is_acted_on:
             if actor.confirmation_mode == "auto":
-                await message.nack()
+                error_action = (
+                    actor.on_error if isinstance(actor.on_error, str) else actor.on_error(exc)
+                )
+                if error_action == "reject":
+                    await message.reject()
+                else:
+                    await message.nack()
             elif actor.confirmation_mode == "always_ack":
                 await message.ack()
         raise

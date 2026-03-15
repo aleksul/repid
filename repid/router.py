@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, overload
 
 from repid._utils import NotSet, asyncify
 from repid.converter import DefaultConverter
-from repid.data import ActorData, Channel, CorrelationId
+from repid.data import ActorData, Channel, CorrelationId, OnErrorT
 from repid.dependencies._utils import validate_dependency
 from repid.middlewares import ActorMiddlewareT, _compile_actor_middleware_pipeline
 
@@ -65,6 +65,7 @@ class _ActorDefinition:
     external_docs: ExternalDocs | None
     bindings: OperationBindingsObject | None
     deprecated: bool
+    on_error: OnErrorT
     correlation_id: CorrelationId | None
     fn_locals: dict[str, Any] | None
 
@@ -194,6 +195,7 @@ class Router:
             external_docs = definition.external_docs
             bindings = definition.bindings
             deprecated = definition.deprecated
+            on_error = definition.on_error
             correlation_id = definition.correlation_id
             fn_locals = definition.fn_locals
 
@@ -279,6 +281,7 @@ class Router:
                 external_docs=external_docs,
                 bindings=bindings,
                 deprecated=deprecated,
+                on_error=on_error,
             )
             actors.append(actor_data)
         return actors
@@ -306,6 +309,7 @@ class Router:
         external_docs: ExternalDocs | None = None,
         bindings: OperationBindingsObject | None = None,
         deprecated: bool = False,
+        on_error: OnErrorT = "nack",
         correlation_id: CorrelationId | None = None,
     ) -> Callable[[YourFunc], YourFunc]: ...
 
@@ -332,6 +336,7 @@ class Router:
         external_docs: ExternalDocs | None = None,
         bindings: OperationBindingsObject | None = None,
         deprecated: bool = False,
+        on_error: OnErrorT = "nack",
         correlation_id: CorrelationId | None = None,
     ) -> YourFunc: ...
 
@@ -357,6 +362,7 @@ class Router:
         external_docs: ExternalDocs | None = None,
         bindings: OperationBindingsObject | None = None,
         deprecated: bool = False,
+        on_error: OnErrorT = "nack",
         correlation_id: CorrelationId | None = None,
     ) -> YourFunc | Callable[[YourFunc], YourFunc]:
         """Actor decorator.
@@ -424,6 +430,13 @@ class Router:
                 Operation bindings for the actor, used to specify protocol-specific details.
             deprecated (bool, optional):
                 Whether the actor is deprecated. Defaults to False.
+            on_error (OnErrorT, optional):
+                Controls what happens to the message when the actor raises an exception and
+                `confirmation_mode="auto"`. Can be ``"nack"`` (discard / dead-letter, the default),
+                ``"reject"`` (place back into the queue), or a callable that receives the
+                exception instance and returns one of those two literals - enabling
+                per-exception-type routing (e.g. nack ``ValidationError``, reject transient
+                errors). Has no effect when `confirmation_mode` is anything but ``"auto"``.
             correlation_id (CorrelationId | None, optional):
                 Correlation ID location descriptor for messages handled by the actor.
 
@@ -450,6 +463,7 @@ class Router:
                 external_docs=external_docs,
                 bindings=bindings,
                 deprecated=deprecated,
+                on_error=on_error,
                 correlation_id=correlation_id,
             )
 
@@ -491,6 +505,7 @@ class Router:
                 external_docs=external_docs,
                 bindings=bindings,
                 deprecated=deprecated,
+                on_error=on_error,
                 correlation_id=correlation_id,
                 fn_locals=fn_locals,
             ),

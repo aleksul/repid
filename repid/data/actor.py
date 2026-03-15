@@ -12,6 +12,8 @@ if TYPE_CHECKING:
 
 FnReturnT = TypeVar("FnReturnT")
 
+OnErrorT = Literal["nack", "reject"] | Callable[[BaseException], Literal["nack", "reject"]]
+
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ActorData:
@@ -29,6 +31,7 @@ class ActorData:
     ]
     channel_address: str
     converter: ConverterT
+    on_error: OnErrorT = "nack"
     timeout: float = 300.0
     title: str | None = None
     summary: str | None = None

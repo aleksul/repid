@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Literal
 from unittest.mock import Mock
 
 import pytest
@@ -640,3 +641,95 @@ async def test_runner_tasks_not_finishing_after_cancellation(
             None,
         )
         assert error_log is not None
+
+
+async def test_runner_on_error_reject_rejects_message() -> None:
+    app = Repid()
+    router = Router()
+
+    @router.actor(on_error="reject")
+    async def reject_on_error_actor() -> None:
+        raise ValueError("Intentional error")
+
+    app.include_router(router)
+
+    async with TestClient(app, raise_on_actor_error=False) as client:
+        await client.send_message_json(
+            channel="default",
+            payload={},
+            headers={"topic": "reject_on_error_actor"},
+        )
+        assert client.get_processed_messages()[0].rejected
+
+
+async def test_runner_on_error_nack_nacks_message() -> None:
+    app = Repid()
+    router = Router()
+
+    @router.actor(on_error="nack")
+    async def nack_on_error_actor() -> None:
+        raise ValueError("Intentional error")
+
+    app.include_router(router)
+
+    async with TestClient(app, raise_on_actor_error=False) as client:
+        await client.send_message_json(
+            channel="default",
+            payload={},
+            headers={"topic": "nack_on_error_actor"},
+        )
+        assert client.get_processed_messages()[0].nacked
+
+
+@pytest.mark.parametrize(
+    ("exc_type", "expected_rejected"),
+    [
+        pytest.param(ValueError, True, id="value_error_is_rejected"),
+        pytest.param(RuntimeError, False, id="runtime_error_is_nacked"),
+    ],
+)
+async def test_runner_on_error_callable_routes_by_exception_type(
+    exc_type: type[Exception],
+    expected_rejected: bool,
+) -> None:
+    app = Repid()
+    router = Router()
+
+    def on_error_fn(exc: BaseException) -> Literal["nack", "reject"]:
+        return "reject" if isinstance(exc, ValueError) else "nack"
+
+    @router.actor(on_error=on_error_fn)
+    async def callable_on_error_actor() -> None:
+        raise exc_type("Intentional error")
+
+    app.include_router(router)
+
+    async with TestClient(app, raise_on_actor_error=False) as client:
+        await client.send_message_json(
+            channel="default",
+            payload={},
+            headers={"topic": "callable_on_error_actor"},
+        )
+        msg = client.get_processed_messages()[0]
+        assert msg.rejected == expected_rejected
+        assert msg.nacked == (not expected_rejected)
+
+
+async def test_runner_on_error_ignored_for_always_ack() -> None:
+    app = Repid()
+    router = Router()
+
+    @router.actor(confirmation_mode="always_ack", on_error="reject")
+    async def always_ack_reject_actor() -> None:
+        raise ValueError("Intentional error")
+
+    app.include_router(router)
+
+    async with TestClient(app, raise_on_actor_error=False) as client:
+        await client.send_message_json(
+            channel="default",
+            payload={},
+            headers={"topic": "always_ack_reject_actor"},
+        )
+        # always_ack overrides on_error — message is acked, not rejected
+        assert client.get_processed_messages()[0].acked

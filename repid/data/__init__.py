@@ -1,4 +1,5 @@
 from .actor import ActorData as ActorData
+from .actor import OnErrorT as OnErrorT
 from .channel import Channel as Channel
 from .contact import Contact as Contact
 from .converter_input_schema import ConverterInputSchema as ConverterInputSchema

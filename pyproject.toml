@@ -45,7 +45,7 @@ dependencies = [
   "typing-extensions>=4.3.0,<5.0.0; python_version < \"3.11\"",
   "packaging>=22.0"
 ]
-description = "Repid framework: simple to use, fast to run and extensible to adopt job scheduler"
+description = "Repid is a simple, fast, and extensible async task queue framework, with built-in AsyncAPI 3.0 schema generation."
 dynamic = ["version"]
 license = {text = "MIT"}
 name = "repid"

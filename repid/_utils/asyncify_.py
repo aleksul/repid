@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import multiprocessing
 import sys
 from collections.abc import Callable, Coroutine
 from concurrent.futures import Executor, ThreadPoolExecutor
@@ -18,8 +19,17 @@ FnR = TypeVar("FnR")
 
 
 @cache
-def process_pool_executor() -> Executor:
-    return ProcessPoolExecutor()
+def process_pool_executor() -> Executor:  # pragma: no cover
+    # Avoid fork() in a multi-threaded process (can cause deadlocks). Use forkserver on Linux
+    # (more efficient than spawn; the server forks from a clean single-threaded process),
+    # spawn elsewhere. Python 3.14 made forkserver the default on Linux for the same reason.
+    if sys.platform == "emscripten":
+        mp_context = None
+    elif sys.platform == "linux":
+        mp_context = multiprocessing.get_context("forkserver")
+    else:
+        mp_context = multiprocessing.get_context("spawn")
+    return ProcessPoolExecutor(mp_context=mp_context)
 
 
 @cache

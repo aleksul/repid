@@ -4,17 +4,37 @@ import struct
 import uuid
 from collections.abc import Callable
 from dataclasses import fields
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, Literal, TypeVar
 
 from . import performatives
 from .message import Header, Message, Properties
 
-_COMPOSITES = {
-    35: "received",
-    36: "accepted",
-    37: "rejected",
-    38: "released",
-    39: "modified",
+# Maps fixed-width constructor bytes to the number of data bytes to skip.
+# Used to advance past the descriptor in a described type without allocating a Python object.
+_DESCRIPTOR_SKIP_SIZES: dict[int, int] = {
+    0x40: 0,
+    0x41: 0,
+    0x42: 0,
+    0x43: 0,
+    0x44: 0,
+    0x45: 0,
+    0x50: 1,
+    0x51: 1,
+    0x52: 1,
+    0x53: 1,
+    0x54: 1,
+    0x55: 1,
+    0x56: 1,
+    0x60: 2,
+    0x61: 2,
+    0x70: 4,
+    0x71: 4,
+    0x72: 4,
+    0x80: 8,
+    0x81: 8,
+    0x82: 8,
+    0x83: 8,
+    0x98: 16,
 }
 
 c_unsigned_char = struct.Struct(">B")
@@ -193,16 +213,15 @@ def _decode_array_large(buffer: memoryview) -> tuple[memoryview, list[Any]]:
 
 
 def _decode_described(buffer: memoryview) -> tuple[memoryview, object]:
-    # TODO: to move the cursor of the buffer to the described value based on size of the
-    #  descriptor without decoding descriptor value
-    composite_type = buffer[0]
-    buffer, descriptor = _DECODE_MAP[composite_type](buffer[1:])
-    buffer, value = _DECODE_MAP[buffer[0]](buffer[1:])
-    try:
-        composite_type = cast(int, _COMPOSITES[descriptor])
-        return buffer, {composite_type: value}
-    except KeyError:
-        return buffer, value
+    constructor = buffer[0]
+    skip = _DESCRIPTOR_SKIP_SIZES.get(constructor)
+    if skip is not None:
+        buffer = buffer[1 + skip :]
+    else:
+        # Variable-length or nested described type: decode and discard the descriptor.
+        buffer, _ = _DECODE_MAP[constructor](buffer[1:])
+    result: tuple[memoryview, object] = _DECODE_MAP[buffer[0]](buffer[1:])
+    return result
 
 
 def _decode_string_small(buffer: memoryview) -> tuple[memoryview, str]:

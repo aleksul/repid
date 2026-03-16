@@ -284,27 +284,22 @@ def test_construct_message_coverage() -> None:
     assert msg.footer == {}
 
 
-def test_decode_described_composite() -> None:
-    # Test _decode_described (0x00) logic
-    # Helper to decode
+def test_decode_described_returns_value() -> None:
     def decode(code: int, payload: bytes) -> Any:
         decoder = _DECODE_MAP[code]
         buffer = memoryview(payload)
         _, value = decoder(buffer)
         return value
 
-    # Case 1: Descriptor NOT in _COMPOSITES (unknown) -> returns value
-    # Descriptor: ulong small (0x53) value 100 (0x64)
-    # Value: Null (0x40)
-    # Payload: 0x53 \x64 0x40
-    res = decode(0x00, b"\x53\x64\x40")
-    assert res is None
+    # Fixed-size descriptor (ulong small, 0x53), value is null (0x40).
+    assert decode(0x00, b"\x53\x64\x40") is None
 
-    # Case 2: Descriptor IN _COMPOSITES (known) -> returns {name: value}
-    # Descriptor: 36 (accepted) -> 0x24. ulong small (0x53) \x24
-    # Value: Null (0x40)
-    res = decode(0x00, b"\x53\x24\x40")
-    assert res == {"accepted": None}
+    # Fixed-size descriptor (ulong zero, 0x44), value is ubyte 7 (0x50 0x07).
+    assert decode(0x00, b"\x44\x50\x07") == 7
+
+    # Variable-length descriptor (symbol small, 0xA3): fall back to decode-and-discard.
+    # Symbol "x" (0xA3 0x01 0x78), value is null (0x40).
+    assert decode(0x00, b"\xa3\x01\x78\x40") is None
 
 
 def test_transfer_frames_to_message_coverage() -> None:

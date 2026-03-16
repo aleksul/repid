@@ -42,6 +42,7 @@ async def test_received_message_ack(msg_fixture: received_message.PubsubReceived
     await msg_fixture.ack()
 
     assert msg_fixture.is_acted_on
+    assert msg_fixture.action == MessageAction.acked
 
     req = msg_fixture._write_queue.get_nowait()
     assert isinstance(req, proto.StreamingPullRequest)
@@ -131,3 +132,14 @@ def test_received_message_no_attributes(
     msg_fixture._raw_message.attributes = {}
     assert msg_fixture.headers is None
     assert msg_fixture.content_type is None
+
+
+async def test_received_message_reply_after_ack_is_noop(
+    msg_fixture: received_message.PubsubReceivedMessage,
+) -> None:
+    with patch.object(msg_fixture._server, "publish", new=AsyncMock()) as mock_publish:
+        await msg_fixture.ack()
+        await msg_fixture.reply(payload=b"ignored")
+
+    mock_publish.assert_not_called()
+    assert msg_fixture._write_queue.qsize() == 1  # Only the ack request

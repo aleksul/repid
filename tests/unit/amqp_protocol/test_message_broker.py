@@ -441,3 +441,70 @@ async def test_subscriber_task_property() -> None:
     subscriber.task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await subscriber.task
+
+
+async def test_amqp_received_message_ack_double_call_is_noop() -> None:
+    connection = FakeConnection()
+    fake_session = FakeSession(connection=connection, channel=2)
+
+    class FakeReceiverLinkWithSession:
+        handle: int = 7
+        session: FakeSession = fake_session
+
+    link = FakeReceiverLinkWithSession()
+    msg = AmqpReceivedMessage(
+        payload=b"test",
+        headers=None,
+        link=cast(Any, link),
+        delivery_id=5,
+        delivery_tag=b"tag",
+        channel_name="q",
+        managed_session=cast(ManagedSession, object()),
+        publish_fn=lambda: asyncio.sleep(0),
+    )
+
+    await msg.ack()
+    assert len(connection.sent) == 1
+
+    await msg.ack()
+    assert len(connection.sent) == 1  # Second ack is a no-op
+
+
+async def test_amqp_received_message_reply_first() -> None:
+    connection = FakeConnection()
+    fake_session = FakeSession(connection=connection, channel=2)
+
+    class FakeReceiverLinkWithSession:
+        handle: int = 7
+        session: FakeSession = fake_session
+
+    link = FakeReceiverLinkWithSession()
+    published: list[tuple[str, MessageData]] = []
+
+    async def publish_fn(*, channel: str, message: MessageData, **_kwargs: Any) -> None:
+        published.append((channel, message))
+
+    msg = AmqpReceivedMessage(
+        payload=b"original",
+        headers=None,
+        link=cast(Any, link),
+        delivery_id=6,
+        delivery_tag=b"tag",
+        channel_name="q",
+        managed_session=cast(ManagedSession, object()),
+        publish_fn=publish_fn,
+    )
+
+    await msg.reply(payload=b"response", headers={"x": "1"})
+
+    assert msg.action == MessageAction.replied
+    assert len(connection.sent) == 1  # Ack was sent
+    assert len(published) == 1
+    assert published[0] == (
+        "q",
+        MessageData(payload=b"response", headers={"x": "1"}, content_type=None),
+    )
+
+    # Second reply is a no-op
+    await msg.reply(payload=b"ignored")
+    assert len(published) == 1

@@ -446,6 +446,7 @@ async def test_redis_received_message_ack(
     await msg.ack()
 
     assert msg.is_acted_on
+    assert msg.action == MessageAction.acked
     redis_client.xack.assert_awaited_once_with("s", "g", "1-0")
 
     redis_client.xack.reset_mock()

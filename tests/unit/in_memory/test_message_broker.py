@@ -5,7 +5,7 @@ from typing import cast
 
 import pytest
 
-from repid.connections.abc import ReceivedMessageT
+from repid.connections.abc import MessageAction, ReceivedMessageT
 from repid.connections.in_memory.message_broker import (
     InMemoryReceivedMessage,
     InMemorySentMessage,
@@ -45,6 +45,7 @@ async def test_received_message_ack() -> None:
 
     await msg.ack()
     assert msg.is_acted_on
+    assert msg.action == MessageAction.acked
     assert d_msg not in queue.processing
 
     # Second call does nothing
@@ -225,6 +226,41 @@ async def test_server_subscribe_and_consume() -> None:
 
     await subscriber.close()
     assert not subscriber.is_active
+
+
+async def test_server_subscribe_callback_exception_releases_semaphore() -> None:
+    server = InMemoryServer()
+    await server.connect()
+
+    error_event = asyncio.Event()
+
+    async def failing_callback(msg: InMemoryReceivedMessage) -> None:
+        await msg.ack()
+        error_event.set()
+        raise RuntimeError("boom")
+
+    subscriber = cast(
+        InMemorySubscriber,
+        await server.subscribe(
+            channels_to_callbacks={
+                "chan1": cast(
+                    Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+                    failing_callback,
+                ),
+            },
+            concurrency_limit=2,
+        ),
+    )
+
+    await server.publish(channel="chan1", message=InMemorySentMessage(payload=b"1"))
+    await asyncio.wait_for(error_event.wait(), timeout=1.0)
+    await asyncio.sleep(0.05)  # Let the finally block complete
+
+    # Semaphore should have been released despite the exception
+    assert subscriber._semaphore is not None
+    assert subscriber._semaphore._value == 2  # Back to full capacity
+
+    await subscriber.close()
 
 
 async def test_server_subscribe_concurrency_limit() -> None:

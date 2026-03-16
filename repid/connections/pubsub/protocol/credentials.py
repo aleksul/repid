@@ -64,7 +64,7 @@ class GoogleDefaultCredentials:
 
     def _get_default(self) -> google.auth.credentials.Credentials:
         creds, _ = google.auth.default(scopes=self._scopes)
-        return creds  # type: ignore[no-any-return]
+        return creds
 
     async def _ensure_initialized(self) -> None:
         """Initialize credentials if not already done."""

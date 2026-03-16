@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Literal
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -733,3 +733,66 @@ async def test_runner_on_error_ignored_for_always_ack() -> None:
         )
         # always_ack overrides on_error — message is acked, not rejected
         assert client.get_processed_messages()[0].acked
+
+
+def _make_unrouted_message(message_id: str | None) -> Mock:
+    msg = Mock()
+    msg.message_id = message_id
+    msg.channel = "default"
+    msg.nack = AsyncMock()
+    msg.reject = AsyncMock()
+    return msg
+
+
+async def test_runner_unrouted_message_reject_below_threshold() -> None:
+    server = InMemoryServer()
+    runner = _Runner(server=server, default_serializer=default_serializer, max_unrouted_retries=3)
+
+    for _ in range(2):
+        msg = _make_unrouted_message("msg-poison")
+        await runner._message_handler([], msg)
+        msg.reject.assert_called_once()
+        msg.nack.assert_not_called()
+
+
+async def test_runner_unrouted_message_nack_at_threshold(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    server = InMemoryServer()
+    runner = _Runner(server=server, default_serializer=default_serializer, max_unrouted_retries=3)
+
+    for _ in range(2):
+        await runner._message_handler([], _make_unrouted_message("msg-poison"))
+
+    msg = _make_unrouted_message("msg-poison")
+    await runner._message_handler([], msg)
+    msg.nack.assert_called_once()
+    msg.reject.assert_not_called()
+
+    error_log = next(
+        (r for r in caplog.get_records(when="call") if r.levelno == logging.ERROR),
+        None,
+    )
+    assert error_log is not None
+    assert error_log.message == "actor.route.poison_message"
+
+
+async def test_runner_unrouted_message_counter_cleared_after_nack() -> None:
+    server = InMemoryServer()
+    runner = _Runner(server=server, default_serializer=default_serializer, max_unrouted_retries=2)
+
+    for _ in range(2):
+        await runner._message_handler([], _make_unrouted_message("msg-poison"))
+
+    assert "msg-poison" not in runner._unrouted_seen_counts
+
+
+async def test_runner_unrouted_message_no_id_always_reject() -> None:
+    server = InMemoryServer()
+    runner = _Runner(server=server, default_serializer=default_serializer, max_unrouted_retries=1)
+
+    for _ in range(3):
+        msg = _make_unrouted_message(None)
+        await runner._message_handler([], msg)
+        msg.reject.assert_called_once()
+        msg.nack.assert_not_called()

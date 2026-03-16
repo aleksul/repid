@@ -155,9 +155,11 @@ class _Runner:
         "_stop_consume_event_task",
         "_tasks",
         "_tasks_concurrency_limit",
+        "_unrouted_seen_counts",
         "cancel_event",
         "default_serializer",
         "max_tasks",
+        "max_unrouted_retries",
         "server",
         "stop_consume_event",
     )
@@ -171,6 +173,7 @@ class _Runner:
         concurrency_unpause_percent: float = 0.1,  # 10 percent
         health_check_server: HealthCheckServer | None = None,
         default_serializer: SerializerT,
+        max_unrouted_retries: int = 10,
     ):
         self.server = server
         self._server_subscriber: SubscriberT | None = None
@@ -186,6 +189,8 @@ class _Runner:
         self._server_subscriber_pause_lock = asyncio.Lock()
 
         self._processed = 0
+        self.max_unrouted_retries = max_unrouted_retries
+        self._unrouted_seen_counts: dict[str, int] = {}
 
         self._tasks: set[asyncio.Task] = set()
 
@@ -247,9 +252,22 @@ class _Runner:
     async def _message_handler(self, actors: list[ActorData], message: ReceivedMessageT) -> None:
         actor = next(filter(lambda actor: actor.routing_strategy(message), actors), None)
         if actor is None:
-            # TODO: after the same message is seen multiple times - nack it instead of reject
             logger.warning("actor.route.not_found", extra={"channel": message.channel})
-            await message.reject()
+            msg_id = message.message_id
+            if msg_id is not None:
+                count = self._unrouted_seen_counts.get(msg_id, 0) + 1
+                if count >= self.max_unrouted_retries:
+                    del self._unrouted_seen_counts[msg_id]
+                    logger.error(
+                        "actor.route.poison_message",
+                        extra={"channel": message.channel, "message_id": msg_id},
+                    )
+                    await message.nack()
+                else:
+                    self._unrouted_seen_counts[msg_id] = count
+                    await message.reject()
+            else:
+                await message.reject()
             return
 
         if (

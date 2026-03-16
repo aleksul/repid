@@ -40,7 +40,7 @@ class EventLogModifier:
 
     def consumer_class_wrapper(self, class_: type[ConsumerT]) -> type[ConsumerT]:
         class ConsumerWrapper(class_):  # type: ignore[valid-type,misc]
-            def __new__(cls, *args: Any, **kwargs: Any) -> Any:  # noqa: ARG003
+            def __new__(cls, *args: Any, **kwargs: Any) -> Any:
                 inst = super().__new__(cls)
 
                 for method in inst.__WRAPPED_METHODS__:

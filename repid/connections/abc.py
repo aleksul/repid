@@ -10,6 +10,8 @@ from typing import (
     TypeVar,
 )
 
+from typing_extensions import Self
+
 from repid.config import Config
 from repid.message import MessageCategory
 from repid.middlewares import middleware_wrapper
@@ -26,10 +28,10 @@ class _WrappedABC(ABC):  # noqa: B024
     __WRAPPED_METHODS__: tuple[str, ...] = ()
 
     def __new__(
-        cls: type[WrappedABCSelf],
-        *args: Any,  # noqa: ARG003
-        **kwargs: Any,  # noqa: ARG003
-    ) -> WrappedABCSelf:
+        cls,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Self:
         inst = super().__new__(cls)
 
         for method in inst.__WRAPPED_METHODS__:
@@ -184,7 +186,7 @@ class MessageBrokerT(_WrappedABC):
 
     def __new__(  # noqa: PYI034
         cls: type[MessageBrokerT],
-        *args: Any,  # noqa: ARG003
+        *args: Any,
         **kwargs: Any,  # noqa: ARG003s
     ) -> MessageBrokerT:
         cls.ROUTING_KEY_CLASS = deepcopy(Config.ROUTING_KEY)
@@ -222,8 +224,8 @@ class BucketBrokerT(_WrappedABC):
 
     def __new__(  # noqa: PYI034
         cls: type[BucketBrokerT],
-        *args: Any,  # noqa: ARG003
-        **kwargs: Any,  # noqa: ARG003
+        *args: Any,
+        **kwargs: Any,
     ) -> BucketBrokerT:
         cls.BUCKET_CLASS = deepcopy(Config.BUCKET)
 

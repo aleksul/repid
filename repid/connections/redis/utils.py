@@ -103,7 +103,7 @@ def full_message_name_from_short(short_name: str, full_queue_name: str) -> str:
 
 
 def get_queue_marker(full_queue_name: str) -> str:
-    return full_queue_name.split(":")[-1]
+    return full_queue_name.rsplit(":", maxsplit=1)[-1]
 
 
 def parse_short_message_name(short_name: str) -> tuple[str, str]:

@@ -9,7 +9,12 @@ from repid import Contact, ExternalDocs, Header, License, Repid, Router, Tag
 from repid.connections.amqp import AmqpServer
 from repid.connections.in_memory import InMemoryServer
 from repid.data.channel import Channel as ChannelData
-from repid.data.message_schema import CorrelationId, MessageExample, MessageSchema
+from repid.data.message_schema import (
+    ActorMessageMetadata,
+    CorrelationId,
+    MessageExample,
+    MessageSchema,
+)
 
 
 def test_message_example_raises_error_when_neither_headers_nor_payload_provided() -> None:
@@ -214,7 +219,6 @@ def test_asyncapi_generator_payload_references_model() -> None:
             "messages": {
                 "test_actor": {
                     "name": "test_actor",
-                    "summary": "Test Actor",
                     "payload": {
                         "properties": {"a": {"$ref": "#/components/schemas/OtherModel"}},
                         "required": ["a"],
@@ -307,7 +311,7 @@ def test_asyncapi_generator_external_docs_with_weird_names() -> None:
         },
         "components": {
             "messages": {
-                "test_actor": {"name": "test_actor", "summary": "Test Actor", "contentType": ""},
+                "test_actor": {"name": "test_actor", "contentType": ""},
             },
             "externalDocs": {
                 "external_docs": {"url": "~<><>__"},
@@ -365,8 +369,6 @@ def test_asyncapi_generator_tags_with_weird_names() -> None:
             "messages": {
                 "test_actor": {
                     "name": "test_actor",
-                    "summary": "Test Actor",
-                    "tags": [{"$ref": "#/components/tags/~<><>__"}],
                     "contentType": "",
                 },
             },
@@ -680,9 +682,6 @@ def test_asyncapi_generator_actor_metadata() -> None:
             "messages": {
                 "detailed_actor": {
                     "name": "detailed_actor",
-                    "title": "My Actor Title",
-                    "summary": "My actor summary",
-                    "description": "My actor description",
                     "payload": {
                         "properties": {"x": {"title": "X", "type": "integer"}},
                         "required": ["x"],
@@ -691,10 +690,6 @@ def test_asyncapi_generator_actor_metadata() -> None:
                     },
                     "contentType": "application/json",
                     "deprecated": True,
-                    "tags": [{"$ref": "#/components/tags/actor-tag"}],
-                    "externalDocs": {
-                        "$ref": "#/components/externalDocs/external_docs_https_example_com_actor_docs",
-                    },
                 },
             },
             "tags": {"actor-tag": {"name": "actor-tag", "description": "Actor tag desc"}},
@@ -768,7 +763,6 @@ def test_asyncapi_generator_channel_bindings() -> None:
             "messages": {
                 "actor_on_channel": {
                     "name": "actor_on_channel",
-                    "summary": "Actor On Channel",
                     "contentType": "",
                 },
             },
@@ -875,8 +869,8 @@ def test_asyncapi_generator_channel_merge_actor_and_actor() -> None:
         },
         "components": {
             "messages": {
-                "actor1": {"name": "actor1", "summary": "Actor1", "contentType": ""},
-                "actor2": {"name": "actor2", "summary": "Actor2", "contentType": ""},
+                "actor1": {"name": "actor1", "contentType": ""},
+                "actor2": {"name": "actor2", "contentType": ""},
             },
             "channelBindings": {
                 "shared-channel_bindings": {"amqp": {"queue": {"name": "test-queue"}}},
@@ -947,7 +941,7 @@ def test_asyncapi_generator_channel_merge_actor_and_operation() -> None:
         },
         "components": {
             "messages": {
-                "actor1": {"name": "actor1", "summary": "Actor1", "contentType": ""},
+                "actor1": {"name": "actor1", "contentType": ""},
                 "op_message": {
                     "name": "op_message",
                     "payload": {"type": "object"},
@@ -1009,15 +1003,11 @@ def test_asyncapi_generator_tag_deduplication() -> None:
             "messages": {
                 "actor1": {
                     "name": "actor1",
-                    "summary": "Actor1",
                     "contentType": "",
-                    "tags": [{"$ref": "#/components/tags/common-tag"}],
                 },
                 "actor2": {
                     "name": "actor2",
-                    "summary": "Actor2",
                     "contentType": "",
-                    "tags": [{"$ref": "#/components/tags/common-tag"}],
                 },
             },
             "tags": {"common-tag": {"name": "common-tag"}},
@@ -1083,19 +1073,11 @@ def test_asyncapi_generator_external_docs_deduplication() -> None:
             "messages": {
                 "actor1": {
                     "name": "actor1",
-                    "summary": "Actor1",
                     "contentType": "",
-                    "externalDocs": {
-                        "$ref": "#/components/externalDocs/external_docs_https_example_com_docs",
-                    },
                 },
                 "actor2": {
                     "name": "actor2",
-                    "summary": "Actor2",
                     "contentType": "",
-                    "externalDocs": {
-                        "$ref": "#/components/externalDocs/external_docs_https_example_com_docs",
-                    },
                 },
             },
             "externalDocs": {
@@ -1147,7 +1129,6 @@ def test_asyncapi_generator_actor_correlation_id(correlation_id: CorrelationId) 
 
     assert schema["components"]["messages"]["actor_with_correlation"] == {
         "name": "actor_with_correlation",
-        "summary": "Actor With Correlation",
         "payload": {
             "properties": {"x": {"title": "X", "type": "integer"}},
             "required": ["x"],
@@ -1270,7 +1251,6 @@ def test_asyncapi_generator_actor_header() -> None:
             "messages": {
                 "actor_with_header": {
                     "name": "actor_with_header",
-                    "summary": "Actor With Header",
                     "payload": {
                         "properties": {"arg1": {"title": "Arg1", "type": "string"}},
                         "required": ["arg1"],
@@ -1507,7 +1487,6 @@ def test_asyncapi_generator_message_name_collision() -> None:
             "messages": {
                 "my_actor": {
                     "name": "my_actor",
-                    "summary": "My Actor",
                     "payload": {
                         "properties": {"payload1": {"title": "Payload1", "type": "string"}},
                         "required": ["payload1"],
@@ -1565,8 +1544,8 @@ def test_asyncapi_generator_multiple_actors_on_same_channel() -> None:
         },
         "components": {
             "messages": {
-                "actor1": {"name": "actor1", "summary": "Actor1", "contentType": ""},
-                "actor2": {"name": "actor2", "summary": "Actor2", "contentType": ""},
+                "actor1": {"name": "actor1", "contentType": ""},
+                "actor2": {"name": "actor2", "contentType": ""},
             },
         },
     }
@@ -1603,7 +1582,99 @@ def test_asyncapi_generator_nested_router() -> None:
         },
         "components": {
             "messages": {
-                "child_actor": {"name": "child_actor", "summary": "Child Actor", "contentType": ""},
+                "child_actor": {"name": "child_actor", "contentType": ""},
+            },
+        },
+    }
+
+
+def test_asyncapi_generator_actor_message_schema() -> None:
+    app = Repid()
+    router = Router()
+
+    @router.actor(
+        title="My Operation Title",
+        summary="My operation summary",
+        tags=[Tag(name="op-tag")],
+        message_schema=ActorMessageMetadata(
+            title="My Message Title",
+            summary="My message summary",
+            description="My message description",
+            tags=(Tag(name="msg-tag", description="Message-level tag"),),
+            external_docs=ExternalDocs(
+                url="https://example.com/msg-docs",
+                description="Message docs",
+            ),
+            examples=(
+                MessageExample(
+                    name="ex1",
+                    summary="Example 1",
+                    payload={"x": 42},
+                ),
+            ),
+            bindings={"amqp": {"messageType": "my.actor"}},
+        ),
+    )
+    async def my_actor(x: int) -> None:
+        pass
+
+    app.include_router(router)
+
+    schema = app.generate_asyncapi_schema()
+
+    assert schema == {
+        "asyncapi": "3.0.0",
+        "info": {"title": "Repid AsyncAPI", "version": "0.0.1"},
+        "servers": {},
+        "channels": {
+            "default": {
+                "messages": {"my_actor": {"$ref": "#/components/messages/my_actor"}},
+            },
+        },
+        "operations": {
+            "receive_my_actor": {
+                "action": "receive",
+                "channel": {"$ref": "#/channels/default"},
+                "title": "My Operation Title",
+                "summary": "My operation summary",
+                "messages": [{"$ref": "#/channels/default/messages/my_actor"}],
+                "tags": [{"$ref": "#/components/tags/op-tag"}],
+            },
+        },
+        "components": {
+            "messages": {
+                "my_actor": {
+                    "name": "my_actor",
+                    "title": "My Message Title",
+                    "summary": "My message summary",
+                    "description": "My message description",
+                    "tags": [{"$ref": "#/components/tags/msg-tag"}],
+                    "externalDocs": {
+                        "$ref": "#/components/externalDocs/external_docs_https_example_com_msg_docs",
+                    },
+                    "payload": {
+                        "properties": {"x": {"title": "X", "type": "integer"}},
+                        "required": ["x"],
+                        "title": "my_actor_payload",
+                        "type": "object",
+                    },
+                    "contentType": "application/json",
+                    "examples": [{"name": "ex1", "summary": "Example 1", "payload": {"x": 42}}],
+                    "bindings": {"$ref": "#/components/messageBindings/my_actor-message_bindings"},
+                },
+            },
+            "tags": {
+                "msg-tag": {"name": "msg-tag", "description": "Message-level tag"},
+                "op-tag": {"name": "op-tag"},
+            },
+            "externalDocs": {
+                "external_docs_https_example_com_msg_docs": {
+                    "url": "https://example.com/msg-docs",
+                    "description": "Message docs",
+                },
+            },
+            "messageBindings": {
+                "my_actor-message_bindings": {"amqp": {"messageType": "my.actor"}},
             },
         },
     }

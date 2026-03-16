@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from repid.connections.abc import BaseMessageT, ReceivedMessageT
     from repid.converter import ConverterT
     from repid.data import ExternalDocs, Tag
+    from repid.data.message_schema import ActorMessageMetadata
 
 FnReturnT = TypeVar("FnReturnT")
 
@@ -41,3 +42,4 @@ class ActorData:
     external_docs: ExternalDocs | None = None
     bindings: OperationBindingsObject | None = None
     deprecated: bool = False
+    message_schema: ActorMessageMetadata | None = None

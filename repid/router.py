@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from repid.connections.abc import BaseMessageT, ReceivedMessageT
     from repid.converter import ConverterT
     from repid.data import Channel, ExternalDocs, Tag
+    from repid.data.message_schema import ActorMessageMetadata
 
 
 class RoutingStrategyT(Protocol):
@@ -68,6 +69,7 @@ class _ActorDefinition:
     on_error: OnErrorT
     correlation_id: CorrelationId | None
     fn_locals: dict[str, Any] | None
+    message_schema: ActorMessageMetadata | None
 
 
 class Router:
@@ -198,6 +200,7 @@ class Router:
             on_error = definition.on_error
             correlation_id = definition.correlation_id
             fn_locals = definition.fn_locals
+            message_schema = definition.message_schema
 
             if converter is None:
                 converter = (
@@ -282,6 +285,7 @@ class Router:
                 bindings=bindings,
                 deprecated=deprecated,
                 on_error=on_error,
+                message_schema=message_schema,
             )
             actors.append(actor_data)
         return actors
@@ -311,6 +315,7 @@ class Router:
         deprecated: bool = False,
         on_error: OnErrorT = "nack",
         correlation_id: CorrelationId | None = None,
+        message_schema: ActorMessageMetadata | None = None,
     ) -> Callable[[YourFunc], YourFunc]: ...
 
     @overload
@@ -338,6 +343,7 @@ class Router:
         deprecated: bool = False,
         on_error: OnErrorT = "nack",
         correlation_id: CorrelationId | None = None,
+        message_schema: ActorMessageMetadata | None = None,
     ) -> YourFunc: ...
 
     def actor(
@@ -364,6 +370,7 @@ class Router:
         deprecated: bool = False,
         on_error: OnErrorT = "nack",
         correlation_id: CorrelationId | None = None,
+        message_schema: ActorMessageMetadata | None = None,
     ) -> YourFunc | Callable[[YourFunc], YourFunc]:
         """Actor decorator.
 
@@ -465,6 +472,7 @@ class Router:
                 deprecated=deprecated,
                 on_error=on_error,
                 correlation_id=correlation_id,
+                message_schema=message_schema,
             )
 
         fn_locals: dict[str, Any] | None = None
@@ -508,6 +516,7 @@ class Router:
                 on_error=on_error,
                 correlation_id=correlation_id,
                 fn_locals=fn_locals,
+                message_schema=message_schema,
             ),
         )
         return fn

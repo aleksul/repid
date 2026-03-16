@@ -6,6 +6,7 @@ from .converter_input_schema import ConverterInputSchema as ConverterInputSchema
 from .external_docs import ExternalDocs as ExternalDocs
 from .license import License as License
 from .message import MessageData as MessageData
+from .message_schema import ActorMessageMetadata as ActorMessageMetadata
 from .message_schema import CorrelationId as CorrelationId
 from .message_schema import MessageExample as MessageExample
 from .message_schema import MessageSchema as MessageSchema

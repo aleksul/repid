@@ -29,7 +29,7 @@ from repid.asyncapi.models.info import Contact, License
 from repid.connections.abc import ServerT
 from repid.data.actor import ActorData
 from repid.data.channel import Channel as ChannelDataModel
-from repid.data.message_schema import MessageSchema
+from repid.data.message_schema import ActorMessageMetadata, MessageSchema
 from repid.data.operation import SendOperation
 
 if TYPE_CHECKING:
@@ -167,7 +167,12 @@ class DataExtractor:
 
     def extract_common(
         self,
-        source: ActorData | ChannelDataModel | MessageSchema | ServerT | SendOperation,
+        source: ActorData
+        | ActorMessageMetadata
+        | ChannelDataModel
+        | MessageSchema
+        | ServerT
+        | SendOperation,
         target: Channel | Operation | MessageObject | Server,
     ) -> None:
         if source.title is not None:
@@ -221,7 +226,14 @@ class DataExtractor:
 
     def message_from_actor(self, actor: ActorData) -> MessageObject:
         msg: MessageObject = {"name": actor.name}
-        self.extract_common(actor, msg)
+
+        if actor.message_schema is not None:
+            self.extract_common(actor.message_schema, msg)
+            if isinstance(actor.message_schema.bindings, dict) and actor.message_schema.bindings:
+                binding_name = f"{actor.name}-message_bindings"
+                msg["bindings"] = {"$ref": f"#/components/messageBindings/{binding_name}"}
+                self.components.add_message_binding(binding_name, actor.message_schema.bindings)
+            self._attach_examples_from_schema(msg, actor.message_schema)
 
         input_schema = actor.converter.get_input_schema()
         self._apply_input_schema(msg, input_schema)
@@ -271,7 +283,11 @@ class DataExtractor:
                 out.append(ex_dict)
         return out
 
-    def _attach_examples_from_schema(self, msg: MessageObject, obj: MessageSchema) -> None:
+    def _attach_examples_from_schema(
+        self,
+        msg: MessageObject,
+        obj: MessageSchema | ActorMessageMetadata,
+    ) -> None:
         examples_list = self._build_examples_list(obj.examples)
         if examples_list:
             msg["examples"] = examples_list

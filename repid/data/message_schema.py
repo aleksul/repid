@@ -47,3 +47,14 @@ class MessageSchema:
     deprecated: bool = False
     examples: tuple[MessageExample, ...] | None = None
     bindings: MessageBindingsObject | None = None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ActorMessageMetadata:
+    title: str | None = None
+    summary: str | None = None
+    description: str | None = None
+    tags: tuple[Tag, ...] | None = None
+    external_docs: ExternalDocs | None = None
+    examples: tuple[MessageExample, ...] | None = None
+    bindings: MessageBindingsObject | None = None

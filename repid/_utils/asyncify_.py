@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import sys
 from collections.abc import Callable, Coroutine
 from concurrent.futures import Executor, ThreadPoolExecutor
@@ -50,7 +51,7 @@ def asyncify(
     run_in_process: bool = False,
     executor: Executor | None = None,
 ) -> Callable[FnP, Coroutine[Any, Any, FnR]]:
-    if asyncio.iscoroutinefunction(fn):
+    if inspect.iscoroutinefunction(fn):
         return fn
 
     executor = (

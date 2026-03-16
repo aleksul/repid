@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 import logging
 from abc import ABC, abstractmethod
@@ -555,7 +556,7 @@ class ReceiverLink(Link):
 
             # Call the callback
             result = self._callback(body, headers, delivery_id, delivery_tag, self, msg.properties)
-            if asyncio.iscoroutine(result):
+            if inspect.iscoroutine(result):
                 await result
 
             # Update delivery count

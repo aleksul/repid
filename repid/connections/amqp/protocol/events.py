@@ -10,6 +10,7 @@ This module provides:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -181,7 +182,7 @@ class EventEmitter:
         for handler in handlers:
             try:
                 result = handler(event_data)
-                if asyncio.iscoroutine(result):
+                if inspect.iscoroutine(result):
                     await result
             except Exception:
                 logger.exception("event.handler.error", extra={"event": event_data.event.name})
@@ -201,7 +202,7 @@ class EventEmitter:
         for handler in handlers:
             try:
                 result = handler(event_data)
-                if asyncio.iscoroutine(result):
+                if inspect.iscoroutine(result):
                     # Can't await in sync context, log warning
                     logger.warning(
                         "event.handler.async_skipped",

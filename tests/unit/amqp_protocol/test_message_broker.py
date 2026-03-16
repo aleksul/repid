@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import pytest
 
-from repid.connections.abc import MessageAction
+from repid.connections.abc import MessageAction, SentMessageT
+from repid.connections.amqp._uamqp.message import Properties
 from repid.connections.amqp.helpers import AmqpReceivedMessage
 from repid.connections.amqp.message_broker import AmqpServer
 from repid.connections.amqp.protocol import ManagedSession
@@ -283,6 +284,76 @@ async def test_amqp_received_message_properties() -> None:
 
     await msg.ack()
     assert msg.is_acted_on is True
+
+
+async def test_amqp_received_message_bytes_message_id() -> None:
+    connection = FakeConnection()
+    fake_session = FakeSession(connection=connection, channel=2)
+
+    class FakeReceiverLinkWithSession:
+        handle: int = 7
+        session: FakeSession = fake_session
+
+    link = FakeReceiverLinkWithSession()
+
+    def make_msg(props: Properties) -> AmqpReceivedMessage:
+        return AmqpReceivedMessage(
+            payload=b"test",
+            headers=None,
+            link=cast(Any, link),
+            delivery_id=1,
+            delivery_tag=b"tag",
+            channel_name="q",
+            managed_session=cast(ManagedSession, object()),
+            publish_fn=lambda: asyncio.sleep(0),
+            properties=props,
+        )
+
+    assert make_msg(Properties(message_id=b"my-bytes-id")).message_id == "my-bytes-id"
+    assert make_msg(Properties(message_id=42)).message_id == "42"
+
+
+async def test_amqp_publish_fills_missing_message_id_on_existing_properties(
+    monkeypatch: Any,
+) -> None:
+    sent_properties: list[Properties] = []
+
+    class FakeSenderPool:
+        async def send(
+            self,
+            address: str,  # noqa: ARG002
+            body: bytes,  # noqa: ARG002
+            *,
+            headers: Any = None,  # noqa: ARG002
+            message_properties: Properties | None = None,
+            **kwargs: Any,  # noqa: ARG002
+        ) -> None:
+            if message_properties is not None:
+                sent_properties.append(message_properties)
+
+    class FakeManagedSessionWithSender:
+        sender_pool = FakeSenderPool()
+        is_connected = True
+
+        async def get_session(self) -> None:
+            pass
+
+    broker = AmqpServer("amqp://guest:guest@localhost:5672/")
+    monkeypatch.setattr(broker, "_managed_session", FakeManagedSessionWithSender())
+
+    class FakeMessage:
+        payload = b"hello"
+        headers: ClassVar[dict] = {}
+
+    # Provide Properties with message_id=None — should be auto-filled
+    await broker.publish(
+        channel="queue",
+        message=cast(SentMessageT, FakeMessage()),
+        server_specific_parameters={"properties": Properties(message_id=None)},
+    )
+
+    assert len(sent_properties) == 1
+    assert sent_properties[0].message_id is not None
 
 
 async def test_message_broker_properties() -> None:

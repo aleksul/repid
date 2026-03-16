@@ -28,6 +28,8 @@ from repid.connections.amqp._uamqp.performatives import (
 from .states import SessionState, SessionStateMachine
 
 if TYPE_CHECKING:
+    from repid.connections.amqp._uamqp.message import Properties
+
     from .connection import AmqpConnection
     from .links import ReceiverLink, SenderLink
 
@@ -416,7 +418,10 @@ class Session:
     async def create_receiver(
         self,
         address: str,
-        callback: Callable[[bytes, dict[str, Any] | None, int, bytes, ReceiverLink], Any],
+        callback: Callable[
+            [bytes, dict[str, Any] | None, int, bytes, ReceiverLink, Properties | None],
+            Any,
+        ],
         name: str | None = None,
     ) -> ReceiverLink:
         """
@@ -467,7 +472,10 @@ class Session:
         self,
         address: str,
         name: str,
-        callback: Callable[[bytes, dict[str, Any] | None, int, bytes, ReceiverLink], Any],
+        callback: Callable[
+            [bytes, dict[str, Any] | None, int, bytes, ReceiverLink, Properties | None],
+            Any,
+        ],
     ) -> ReceiverLink:
         """Create a receiver link (alias for create_receiver)."""
         return await self.create_receiver(address, callback, name)

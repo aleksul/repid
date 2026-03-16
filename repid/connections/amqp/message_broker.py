@@ -5,8 +5,10 @@ from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequen
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlparse
+from uuid import uuid4
 
 from repid.connections.abc import CapabilitiesT, SentMessageT, SubscriberT
+from repid.connections.amqp._uamqp.message import Properties
 from repid.connections.amqp.protocol import (
     AmqpConnection,
     ConnectionConfig,
@@ -241,6 +243,10 @@ class AmqpServer:
         # Prepare server-specific parameters for uAMQP
         header = params.get("header")
         properties = params.get("properties")
+        if properties is None:
+            properties = Properties(message_id=str(uuid4()))
+        elif properties.message_id is None:
+            properties.message_id = str(uuid4())
         delivery_annotations = params.get("delivery_annotations")
         message_annotations = params.get("message_annotations")
         footers = params.get("footers")

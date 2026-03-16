@@ -5,6 +5,7 @@ import contextlib
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
+from repid.connections.amqp._uamqp.message import Properties
 from repid.connections.amqp._uamqp.performatives import DetachFrame
 from repid.connections.amqp.helpers import AmqpReceivedMessage
 from repid.connections.amqp.protocol import ManagedSession, ReceiverLink
@@ -106,6 +107,7 @@ class AmqpSubscriber:
                 delivery_id: int,
                 delivery_tag: bytes,
                 link_ref: ReceiverLink,
+                properties: Properties | None = None,
                 queue: str = queue,
                 callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]] = callback,
                 paused_event: asyncio.Event = paused_event,
@@ -121,6 +123,7 @@ class AmqpSubscriber:
                     channel_name=queue,
                     managed_session=managed_session,
                     publish_fn=publish_fn,
+                    properties=properties,
                 )
                 await callback(msg)
 

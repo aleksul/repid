@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
+from repid.connections.amqp._uamqp.message import Properties
 from repid.connections.amqp.protocol import ManagedSession
 from repid.connections.amqp.protocol.connection import (
     AmqpConnection,
@@ -345,6 +346,7 @@ async def test_receiver_pool_on_reconnected_re_subscribe() -> None:
         _delivery_id: int,
         _tag: bytes,
         _link: ReceiverLink,
+        _properties: Properties | None,
     ) -> None:
         pass
 

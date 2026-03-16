@@ -22,6 +22,8 @@ from .events import ConnectionEvent
 from .links import LinkError, ReceiverLink, SenderLink
 
 if TYPE_CHECKING:
+    from repid.connections.amqp._uamqp.message import Properties
+
     from .connection import AmqpConnection
     from .session import Session
 
@@ -294,7 +296,10 @@ class ReceiverPool:
         self._links: dict[str, ReceiverLink] = {}
         self._callbacks: dict[
             str,
-            Callable[[bytes, dict[str, Any] | None, int, bytes, ReceiverLink], Any],
+            Callable[
+                [bytes, dict[str, Any] | None, int, bytes, ReceiverLink, Properties | None],
+                Any,
+            ],
         ] = {}
         self._link_names: dict[str, str] = {}  # address -> link name
         self._link_counter = 0
@@ -310,7 +315,10 @@ class ReceiverPool:
     async def subscribe(
         self,
         address: str,
-        callback: Callable[[bytes, dict[str, Any] | None, int, bytes, ReceiverLink], Any],
+        callback: Callable[
+            [bytes, dict[str, Any] | None, int, bytes, ReceiverLink, Properties | None],
+            Any,
+        ],
         name: str | None = None,
     ) -> ReceiverLink:
         """
@@ -337,7 +345,10 @@ class ReceiverPool:
     async def _create_link(
         self,
         address: str,
-        callback: Callable[[bytes, dict[str, Any] | None, int, bytes, ReceiverLink], Any],
+        callback: Callable[
+            [bytes, dict[str, Any] | None, int, bytes, ReceiverLink, Properties | None],
+            Any,
+        ],
         name: str,
     ) -> ReceiverLink:
         """Create a new receiver link."""

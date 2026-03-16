@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from repid.connections.amqp._uamqp.message import Properties
 from repid.connections.amqp._uamqp.performatives import (
     AttachFrame,
     BeginFrame,
@@ -161,6 +162,7 @@ async def test_session_create_receiver_link_alias(monkeypatch: Any) -> None:
         _delivery_id: int,
         _tag: bytes,
         _link: ReceiverLink,
+        _properties: Properties | None,
     ) -> None:
         pass
 
@@ -336,6 +338,7 @@ async def test_session_create_receiver_not_mapped(monkeypatch: Any) -> None:
         _delivery_id: int,
         _tag: bytes,
         _link: ReceiverLink,
+        _properties: Properties | None,
     ) -> None:
         pass
 
@@ -428,6 +431,7 @@ async def test_session_create_receiver_default_name(monkeypatch: Any) -> None:
         _delivery_id: int,
         _tag: bytes,
         _link: ReceiverLink,
+        _properties: Properties | None,
     ) -> None:
         pass
 
@@ -477,6 +481,7 @@ async def test_session_create_receiver_not_usable_race() -> None:
         _delivery_id: int,
         _tag: bytes,
         _link: ReceiverLink,
+        _properties: Properties | None,
     ) -> None:
         pass
 

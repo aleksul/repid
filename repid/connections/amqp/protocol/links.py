@@ -435,7 +435,10 @@ class ReceiverLink(Link):
         name: str,
         address: str,
         handle: int,
-        callback: Callable[[bytes, dict[str, Any] | None, int, bytes, ReceiverLink], Any],
+        callback: Callable[
+            [bytes, dict[str, Any] | None, int, bytes, ReceiverLink, Properties | None],
+            Any,
+        ],
     ) -> None:
         super().__init__(session, name, address, handle, role=True)
 
@@ -551,7 +554,7 @@ class ReceiverLink(Link):
                 headers = dict(headers)
 
             # Call the callback
-            result = self._callback(body, headers, delivery_id, delivery_tag, self)
+            result = self._callback(body, headers, delivery_id, delivery_tag, self, msg.properties)
             if asyncio.iscoroutine(result):
                 await result
 

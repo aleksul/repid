@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from repid.connections.amqp._uamqp._encode import message_to_transfer_frames
-from repid.connections.amqp._uamqp.message import Message
+from repid.connections.amqp._uamqp.message import Message, Properties
 from repid.connections.amqp._uamqp.performatives import (
     AttachFrame,
     DetachFrame,
@@ -101,14 +101,14 @@ async def test_receiver_process_message_types() -> None:
         mock_conv.return_value = msg_str
         link._incoming_transfers = [TransferFrame(handle=0, delivery_id=1, delivery_tag=b"1")]
         await link._process_message()
-        link._callback.assert_called_with(b"hello", None, 1, b"1", link)
+        link._callback.assert_called_with(b"hello", None, 1, b"1", link, None)
 
         # Body is Object/Dict
         msg_obj = Message(value={"k": "v"})
         mock_conv.return_value = msg_obj
         link._incoming_transfers = [TransferFrame(handle=0, delivery_id=2, delivery_tag=b"2")]
         await link._process_message()
-        link._callback.assert_called_with(b'{"k": "v"}', None, 2, b"2", link)
+        link._callback.assert_called_with(b'{"k": "v"}', None, 2, b"2", link, None)
 
         # Headers
         msg_head = Message(value=b"b", application_properties={"h": "v"})
@@ -341,6 +341,7 @@ async def test_receiver_link_receive_message(receiver: ReceiverLink) -> None:
         _delivery_id: int,
         _delivery_tag: bytes,
         _link: ReceiverLink,
+        _properties: Properties | None,
     ) -> None:
         received.append((body, headers))
 

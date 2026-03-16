@@ -4,6 +4,7 @@ from collections.abc import Callable, Coroutine
 from typing import Any
 
 from repid.connections.abc import MessageAction
+from repid.connections.amqp._uamqp.message import Properties
 from repid.connections.amqp._uamqp.outcomes import Accepted, Rejected, Released
 from repid.connections.amqp._uamqp.performatives import DispositionFrame
 from repid.connections.amqp.protocol import ManagedSession, ReceiverLink
@@ -28,6 +29,7 @@ class AmqpReceivedMessage:
         channel_name: str,
         managed_session: ManagedSession,
         publish_fn: Callable[..., Coroutine[Any, Any, None]],
+        properties: Properties | None = None,
     ) -> None:
         self._payload = payload
         self._headers = headers
@@ -37,6 +39,7 @@ class AmqpReceivedMessage:
         self._channel_name = channel_name
         self._managed_session = managed_session
         self._publish_fn = publish_fn
+        self._properties = properties
         self._action: MessageAction | None = None
 
     @property
@@ -72,7 +75,12 @@ class AmqpReceivedMessage:
 
     @property
     def message_id(self) -> str | None:
-        return None
+        if self._properties is None or self._properties.message_id is None:
+            return None
+        mid = self._properties.message_id
+        if isinstance(mid, bytes):
+            return mid.decode()
+        return str(mid)
 
     async def _do_ack(self) -> None:
         """Send the AMQP accepted disposition on the wire (does not update `_action`)."""

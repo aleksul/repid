@@ -73,7 +73,8 @@ tracker = "https://github.com/aleksul/repid/issues"
 exclude_lines = [
   '\.\.\.',
   'if TYPE_CHECKING:',
-  'pragma: no cover'
+  'pragma: no cover',
+  'if sys.version_info'
 ]
 fail_under = 100
 

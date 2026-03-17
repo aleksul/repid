@@ -5,6 +5,7 @@ from repid.connections.amqp.protocol.events import (
     EventData,
     MetricsCollector,
 )
+from repid.connections.amqp.protocol.states import ConnectionState
 
 
 async def test_metrics_collector() -> None:
@@ -50,3 +51,22 @@ async def test_metrics_collector_disconnected() -> None:
 
     await collector.handle_event(EventData(ConnectionEvent.DISCONNECTED))
     assert collector.metrics.connected_at is None
+
+
+async def test_metrics_collector_state_changed() -> None:
+    collector = MetricsCollector()
+
+    await collector.handle_event(
+        EventData(ConnectionEvent.STATE_CHANGED).with_details(state=ConnectionState.OPENED),
+    )
+    assert collector.metrics.connection_state == ConnectionState.OPENED
+
+
+async def test_metrics_collector_state_changed_invalid_state() -> None:
+    collector = MetricsCollector()
+
+    # Non-ConnectionState value should not update the metric
+    await collector.handle_event(
+        EventData(ConnectionEvent.STATE_CHANGED).with_details(state="not-a-state"),
+    )
+    assert collector.metrics.connection_state == ConnectionState.START

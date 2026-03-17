@@ -2,7 +2,7 @@ repid[amqp]==1.5.4
 uvloop==0.21.0
 redis==5.2.1
 dramatiq[rabbitmq]==1.17.1
-celery==5.4.0
+celery==5.6.2
 amqp==5.3.1
 gevent==23.9.1
 eventlet==0.38.2

@@ -9,6 +9,8 @@ MESSAGES_AMOUNT = 80000
 USE_GREEN_THREADS = False
 GEVENTS = 750
 PROCESSES = 8
+SLEEP_TIME = 1.0  # Try: 0.01, 0.1, 0.5, 1.0, 5.0
+RUNS = 3
 
 myredis = Redis.from_url("redis://:testtest@localhost:6379/0")
 
@@ -18,7 +20,7 @@ dramatiq.set_broker(broker)
 
 @dramatiq.actor
 def benchmark_task() -> None:
-    time.sleep(1.0)
+    time.sleep(SLEEP_TIME)
     myredis.incr("tasks_done", 1)
 
 
@@ -44,44 +46,60 @@ def report(start: float) -> None:
 
 
 if __name__ == "__main__":
-    print("Enqueueing messages...")
-    prepare()
-    print("Done enqueueing.")
+    rates: list[float] = []
 
-    print("Starting benchmark.")
+    for run in range(1, RUNS + 1):
+        print(f"Run {run}/{RUNS}: Enqueueing messages...")
+        prepare()
+        print("Done enqueueing.")
 
-    start_time = time.perf_counter()
+        print(f"Run {run}/{RUNS}: Benchmark started.")
 
-    if USE_GREEN_THREADS:
-        subprocess_args = [
-            "dramatiq-gevent",
-            "benchmark_dramatiq",
-            "-p",
-            str(PROCESSES),
-            "-t",
-            str(GEVENTS),
-        ]
-    else:
-        subprocess_args = [
-            "dramatiq",
-            "benchmark_dramatiq",
-            "-p",
-            str(PROCESSES),
-        ]
+        start_time = time.perf_counter()
 
-    proc = subprocess.Popen(subprocess_args)
+        if USE_GREEN_THREADS:
+            subprocess_args = [
+                "dramatiq-gevent",
+                "benchmark_dramatiq",
+                "-p",
+                str(PROCESSES),
+                "-t",
+                str(GEVENTS),
+            ]
+        else:
+            subprocess_args = [
+                "dramatiq",
+                "benchmark_dramatiq",
+                "-p",
+                str(PROCESSES),
+            ]
 
-    report(start_time)
+        proc = subprocess.Popen(subprocess_args)
 
-    duration = time.perf_counter() - start_time
+        report(start_time)
 
-    print(
-        "",
-        "Benchmark ended.",
-        f"Took {duration:.2f} sec.",
-        f"Rate {MESSAGES_AMOUNT / (duration):.2f} msg/sec.",
-        sep="\n",
-    )
+        duration = time.perf_counter() - start_time
 
-    proc.terminate()
-    proc.wait()
+        proc.terminate()
+        proc.wait()
+
+        rate = MESSAGES_AMOUNT / duration
+        rates.append(rate)
+
+        print(
+            "",
+            f"Run {run}/{RUNS} ended.",
+            f"Took {duration:.2f} sec.",
+            f"Rate {rate:.2f} msg/sec.",
+            sep="\n",
+        )
+
+    if RUNS > 1:
+        print(
+            "",
+            "All runs complete.",
+            f"Average rate: {sum(rates) / len(rates):.2f} msg/sec.",
+            f"Min rate: {min(rates):.2f} msg/sec.",
+            f"Max rate: {max(rates):.2f} msg/sec.",
+            sep="\n",
+        )

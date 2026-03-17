@@ -1,48 +1,37 @@
 from __future__ import annotations
 
 import asyncio
-from multiprocessing import Process
+import subprocess
 from time import perf_counter
 
 import uvloop
 from redis.asyncio import Redis
+from taskiq_aio_pika import AioPikaBroker
 
-from repid import Connection, Job, Queue, RabbitMessageBroker, Repid, Router, Worker
-
-MESSAGES_AMOUNT = 80000
+MESSAGES_AMOUNT = 8000
 PROCESSES = 8
 SLEEP_TIME = 1.0  # Try: 0.01, 0.1, 0.5, 1.0, 5.0
 RUNS = 3
 
-app = Repid(Connection(RabbitMessageBroker("amqp://user:testtest@localhost:5672")))
+AMQP_URL = "amqp://user:testtest@localhost:5672"
 
 myredis = Redis.from_url("redis://:testtest@localhost:6379/0")
+broker = AioPikaBroker(AMQP_URL)
 
-r = Router()
 
-
-@r.actor
+@broker.task
 async def benchmark_task() -> None:
     await asyncio.sleep(SLEEP_TIME)
     await myredis.incr("tasks_done", 1)
 
 
 async def prepare() -> None:
-    async with app.magic(auto_disconnect=True):
-        q = Queue()
-        await q.declare()
-        await q.flush()
-        j = Job("benchmark_task")
-        await asyncio.gather(*[j.enqueue() for _ in range(MESSAGES_AMOUNT)])
+    await broker.startup()
+    for i in range(MESSAGES_AMOUNT):
+        await benchmark_task.kiq()
+        print(f"Enqueued: {i}", end="\r", flush=True)
+    await broker.shutdown()
     await myredis.set("tasks_done", 0)
-
-
-async def run_worker() -> None:
-    async with app.magic(auto_disconnect=True):
-        await Worker(
-            routers=[r],
-            graceful_shutdown_time=0,
-        ).run()
 
 
 async def report(start: float) -> None:
@@ -71,17 +60,20 @@ if __name__ == "__main__":
         loop.run_until_complete(prepare())
         print("Done enqueueing.")
 
-        processes: list[Process] = []
+        processes: list[subprocess.Popen] = []
 
         for _ in range(PROCESSES):
-            processes.append(Process(target=lambda: asyncio.run(run_worker())))
+            processes.append(
+                subprocess.Popen(
+                    ["taskiq", "worker", "benchmark_taskiq:broker"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                ),
+            )
 
         print(f"Run {run}/{RUNS}: Benchmark started.")
 
         start = perf_counter()
-
-        for process in processes:
-            process.start()
 
         loop.run_until_complete(report(start))
 
@@ -89,7 +81,7 @@ if __name__ == "__main__":
 
         for process in processes:
             process.terminate()
-            process.join()
+            process.wait()
 
         rate = MESSAGES_AMOUNT / (end - start)
         rates.append(rate)

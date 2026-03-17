@@ -16,12 +16,15 @@ docker compose up -d
 
 ## Running benchmarks
 
-Each benchmark has a set of constants after the import. Feel free to tweak those.
+Each benchmark has a set of constants after the import. Feel free to tweak those,
+including `SLEEP_TIME` (try: 0.01, 0.1, 0.5, 1.0, 5.0) and `RUNS` for repeated measurements.
 
 ```bash
 python benchmark_repid.py
 
-python benchmark_arq.py
+python benchmark_faststream.py
+
+python benchmark_taskiq.py
 
 python benchmark_dramatiq.py
 

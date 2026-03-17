@@ -20,10 +20,12 @@
 ## Considerations
 
 The benchmark tests rate of processing I/O limited tasks.
-The task sleeps for 1 second (imitating I/O bound behavior, e.g. a very long running DB call)
-and then increments a Redis field, which is also used to monitor amount of processed tasks.
+The task sleeps for a configurable amount of time (default: 1 second, imitating I/O bound behavior,
+e.g. a very long running DB call) and then increments a Redis field, which is also used to monitor
+amount of processed tasks.
 
-Every library has been benchmarked 3 times and the results have been averaged.
+Every library has been benchmarked multiple times (configurable via `RUNS`) and the results have
+been averaged.
 
 Due to very huge difference in speed between tested libraries, amount of messages was adjusted so
 that processing takes > 10 seconds & < 3 minutes.
@@ -33,13 +35,11 @@ For celery & dramatiq both "green threads" (eventlet & gevent respectively) & no
 been tested. One has to keep in mind that green threads in Python are doing monkey-patching,
 so one can face all sorts of weird behavior.
 
-Repid and arq are the only 2 libraries, which are able to take advantage of Python's asyncio.
+Repid, faststream, and taskiq are able to take advantage of Python's asyncio.
 
-Every library uses RabbitMQ as a message broker, except arq, which only supports Redis.
+Every library uses RabbitMQ as a message broker.
 
 Repid uses [uvloop](https://github.com/MagicStack/uvloop) to gain a bit more performance.
-I have tried using uvloop with arq as well, but faced inconsistent behavior,
-so I ended up disabling it.
 
 ### Credits
 
@@ -47,7 +47,8 @@ Links to other tested libraries:
 
 - [dramatiq](https://github.com/Bogdanp/dramatiq)
 - [celery](https://github.com/celery/celery)
-- [arq](https://github.com/samuelcolvin/arq)
+- [faststream](https://github.com/airtai/faststream)
+- [taskiq](https://github.com/taskiq-python/taskiq)
 
 ## The charts
 

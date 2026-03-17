@@ -1,0 +1,16 @@
+version: 2
+updates:
+- package-ecosystem: uv
+  directory: /
+  schedule:
+    interval: weekly
+  ignore:
+  - dependency-name: google-auth
+  - dependency-name: grpcio
+  - dependency-name: pydantic
+  - dependency-name: redis
+
+- package-ecosystem: github-actions
+  directory: /
+  schedule:
+    interval: weekly

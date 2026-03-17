@@ -1,0 +1,10 @@
+from .bindings import ChannelBindingsObject as ChannelBindingsObject
+from .bindings import MessageBindingsObject as MessageBindingsObject
+from .bindings import OperationBindingsObject as OperationBindingsObject
+from .bindings import ServerBindingsObject as ServerBindingsObject
+from .correlation_id import CorrelationId as CorrelationId
+from .external_docs import ExternalDocs as ExternalDocs
+from .message import MessageObject as MessageObject
+from .message import MessageTrait as MessageTrait
+from .reference import ReferenceModel as ReferenceModel
+from .tag import Tag as Tag

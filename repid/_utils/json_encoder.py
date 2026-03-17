@@ -1,4 +1,6 @@
+import decimal
 import json
+import uuid
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime, time, timedelta
 from typing import Any
@@ -10,11 +12,15 @@ if is_installed("pydantic"):
 
 
 class _RepidJSONEncoder(json.JSONEncoder):
-    def default(self, obj: Any) -> Any:
+    def default(self, obj: Any) -> Any:  # noqa: PLR0911
         if isinstance(obj, datetime | date | time):
             return obj.isoformat()
         if isinstance(obj, timedelta):
             return obj.total_seconds()
+        if isinstance(obj, uuid.UUID):
+            return str(obj)
+        if isinstance(obj, decimal.Decimal):
+            return str(obj)
         if is_dataclass(obj) and not isinstance(obj, type):
             return asdict(obj)
         if is_installed("pydantic") and isinstance(obj, BaseModel):

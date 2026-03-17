@@ -1,9 +1,5 @@
-from .bucket_broker import DummyBucketBroker, InMemoryBucketBroker
-from .message_broker import DummyMessageBroker, InMemoryMessageBroker
+from .message_broker import InMemoryServer
 
 __all__ = [
-    "DummyBucketBroker",
-    "DummyMessageBroker",
-    "InMemoryBucketBroker",
-    "InMemoryMessageBroker",
+    "InMemoryServer",
 ]

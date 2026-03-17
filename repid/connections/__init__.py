@@ -1,28 +1,32 @@
 from repid._utils import is_installed
-from repid.connections.abc import BucketBrokerT, ConsumerT, MessageBrokerT
-from repid.connections.in_memory import (
-    DummyBucketBroker,
-    DummyMessageBroker,
-    InMemoryBucketBroker,
-    InMemoryMessageBroker,
-)
+from repid.connections.abc import MessageAction, ServerT
+from repid.connections.amqp import AmqpServer
+from repid.connections.in_memory import InMemoryServer
 
 __all__ = [
-    "BucketBrokerT",
-    "ConsumerT",
-    "DummyBucketBroker",
-    "DummyMessageBroker",
-    "InMemoryBucketBroker",
-    "InMemoryMessageBroker",
-    "MessageBrokerT",
+    "AmqpServer",
+    "InMemoryServer",
+    "MessageAction",
+    "ServerT",
 ]
 
-if is_installed("aiormq"):
-    from repid.connections.rabbitmq import RabbitMessageBroker
-
-    __all__ += ["RabbitMessageBroker"]
 
 if is_installed("redis"):
-    from repid.connections.redis import RedisBucketBroker, RedisMessageBroker
+    from repid.connections.redis import RedisServer
 
-    __all__ += ["RedisBucketBroker", "RedisMessageBroker"]
+    __all__ += ["RedisServer"]
+
+# check via try-import because pubsub is a sub-package of gcloud.aio
+imported_pubsub = False
+try:
+    import google.auth
+    import grpc.aio
+except ImportError:  # pragma: no cover
+    imported_pubsub = False
+else:
+    imported_pubsub = True
+
+if imported_pubsub:
+    from repid.connections.pubsub import PubsubServer
+
+    __all__ += ["PubsubServer"]

@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import asdict, dataclass
 from enum import IntEnum
 from wsgiref.handlers import format_date_time
 
-from repid._utils import FROZEN_DATACLASS, SLOTS_DATACLASS
-from repid.logger import logger
+logger = logging.getLogger("repid.health_check_server")
 
 
-@dataclass(**FROZEN_DATACLASS, **SLOTS_DATACLASS)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class HealthCheckServerSettings:
     address: str = "0.0.0.0"  # noqa: S104
     port: int = 8080
@@ -44,13 +44,13 @@ class HealthCheckServer:
                 reuse_port=True,
             )
             await self._server.start_serving()
-            logger.info("Started health check server.", extra=asdict(self.server_settings))
+            logger.info("health_check_server.start", extra=asdict(self.server_settings))
 
     async def stop(self) -> None:
         if self._server is not None:
             self._server.close()
             await self._server.wait_closed()
-            logger.info("Stopped health check server.")
+            logger.info("health_check_server.stop")
 
     @property
     def health_status(self) -> HealthCheckStatus:

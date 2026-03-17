@@ -2,30 +2,40 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from datetime import datetime
-
-    from repid.data.protocols import ParametersT, RoutingKeyT
-
-
-@dataclass(frozen=True)
-class Message:
-    key: RoutingKeyT
-    payload: str
-    parameters: ParametersT
 
 
 @dataclass
 class DummyQueue:
-    simple: asyncio.Queue[Message] = field(default_factory=asyncio.Queue)
-    delayed: dict[datetime, list[Message]] = field(default_factory=dict)
-    dead: list[Message] = field(default_factory=list)
+    """A simple in-memory queue implementation."""
+
+    queue: asyncio.Queue[Message] = field(default_factory=asyncio.Queue)
     processing: set[Message] = field(default_factory=set)
 
+    @dataclass
+    class Message:
+        """A message in the queue that implements BaseMessageT protocol."""
 
-def wait_until(params: ParametersT | None = None) -> datetime | None:
-    if params is None or params.delay is None:
-        return None
-    return params.delay.next_execution_time or params.compute_next_execution_time
+        payload: bytes
+        headers: dict[str, str] | None = None
+        content_type: str | None = None
+        message_id: str | None = None
+
+        def __hash__(self) -> int:
+            return hash(
+                (
+                    self.payload,
+                    self.content_type,
+                    tuple(sorted(self.headers.items())) if self.headers else None,
+                    self.message_id,
+                ),
+            )
+
+        def __eq__(self, other: object) -> bool:
+            if not isinstance(other, DummyQueue.Message):
+                return False
+            return (
+                self.payload == other.payload
+                and self.headers == other.headers
+                and self.content_type == other.content_type
+                and self.message_id == other.message_id
+            )

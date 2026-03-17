@@ -1,203 +1,156 @@
 from __future__ import annotations
 
-import time
-from collections.abc import Awaitable, Callable
-from datetime import datetime, timedelta
-from functools import partial
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Annotated, Any
 
-from repid._asyncify import asyncify
-from repid._utils import _NoAction
-from repid.dependencies.protocols import DependencyKind
-from repid.message import Message
+from repid.data import MessageData
 
 if TYPE_CHECKING:
-    from repid.actor import ActorData
-    from repid.connection import Connection
-    from repid.data.protocols import ParametersT, RoutingKeyT
-    from repid.dependencies.resolver_context import ResolverContext
+    from repid.connections.abc import MessageAction, ReceivedMessageT, ServerT
+    from repid.dependencies._utils import DependencyContext
+    from repid.serializer import SerializerT
 
 
-class MessageDependency(Message):
-    __repid_dependency__ = DependencyKind.DIRECT
-
-    __slots__ = (
-        "__lazy_result_callback",
-        "__result_data",
-        "__result_exception",
-        "__result_success",
-        "_actor_data",
-        "_actor_processing_started_when",
-        "_callbacks",
-    )
-
+class EnhancedReceivedMessage:
     def __init__(
         self,
-        *,
-        key: RoutingKeyT,
-        raw_payload: str,
-        parameters: ParametersT,
-        _connection: Connection,
+        server: ServerT,
+        message: ReceivedMessageT,
+        default_serializer: SerializerT,
     ) -> None:
-        super().__init__(
-            key=key,
-            raw_payload=raw_payload,
-            parameters=parameters,
-            _connection=_connection,
-        )
-        self._actor_data: ActorData
-        self._actor_processing_started_when: int
-        self._callbacks: list[Callable[[], Awaitable]] = []
-        self.__lazy_result_callback: Callable[[], None] = lambda: None
-        self.__result_success: bool | None = None
-        self.__result_data: str | None = None
-        self.__result_exception: Exception | None = None
+        self._server = server
+        self._message = message
+        self._default_serializer = default_serializer
 
-    @classmethod
-    def construct_as_dependency(cls, *, context: ResolverContext) -> MessageDependency:
-        # Construct message from resolver context
-        instance = cls(
-            key=context.message_key,
-            raw_payload=context.message_raw_payload,
-            parameters=context.message_parameters,
-            _connection=context.connection,
-        )
-        instance._actor_data = context.actor_data
-        instance._actor_processing_started_when = context.actor_processing_started_when
-        return instance
+    @property
+    def payload(self) -> bytes:
+        return self._message.payload
 
-    async def resolve(self) -> MessageDependency:
-        return self
+    @property
+    def headers(self) -> dict[str, str] | None:
+        return self._message.headers
 
-    def add_callback(self, fn: Callable[[], Any | Awaitable[Any]]) -> None:
-        self._callbacks.append(asyncify(fn))
+    @property
+    def content_type(self) -> str | None:
+        return self._message.content_type
 
-    def set_result(self, result: Any) -> None:
-        if self.parameters.result is None:
-            raise ValueError("parameters.result is not set.")
+    @property
+    def channel(self) -> str:
+        return self._message.channel
 
-        if (rbb := self._connection.results_bucket_broker) is None:
-            raise ValueError("Results bucket broker is not configured.")
+    @property
+    def is_acted_on(self) -> bool:
+        return self._message.is_acted_on
 
-        data = self._actor_data.converter.convert_outputs(result)
+    @property
+    def action(self) -> MessageAction | None:
+        return self._message.action
 
-        self.__result_success = True
-        self.__result_data = data
-        self.__result_exception = None
+    @property
+    def message_id(self) -> str | None:
+        """Unique identifier of a message if provided by the message broker."""
+        return self._message.message_id
 
-        async def _inner() -> None:
-            await rbb.store_bucket(
-                id_=self.parameters.result.id_,  # type: ignore[union-attr]
-                payload=rbb.BUCKET_CLASS(  # type: ignore[call-arg]
-                    data=data,
-                    started_when=self._actor_processing_started_when,
-                    finished_when=time.time_ns(),
-                    success=True,
-                    exception=None,
-                    timestamp=datetime.now(),
-                    ttl=self.parameters.result.ttl,  # type: ignore[union-attr]
-                ),
-            )
+    async def ack(self) -> None:
+        """Acknowledge the message."""
+        await self._message.ack()
 
-        self.__lazy_result_callback = partial(self._callbacks.insert, len(self._callbacks), _inner)
+    async def nack(self) -> None:
+        """Not-acknowledge the message."""
+        await self._message.nack()
 
-    def set_exception(self, exc: Exception) -> None:
-        if self.parameters.result is None:
-            raise ValueError("parameters.result is not set.")
+    async def reject(self) -> None:
+        """Reject the message."""
+        await self._message.reject()
 
-        if (rbb := self._connection.results_bucket_broker) is None:
-            raise ValueError("Results bucket broker is not configured.")
-
-        self.__result_success = False
-        self.__result_data = None
-        self.__result_exception = exc
-
-        async def _inner() -> None:
-            await rbb.store_bucket(
-                id_=self.parameters.result.id_,  # type: ignore[union-attr]
-                payload=rbb.BUCKET_CLASS(  # type: ignore[call-arg]
-                    data=str(exc),
-                    started_when=self._actor_processing_started_when,
-                    finished_when=time.time_ns(),
-                    success=False,
-                    exception=type(exc).__name__,
-                    timestamp=datetime.now(),
-                    ttl=self.parameters.result.ttl,  # type: ignore[union-attr]
-                ),
-            )
-
-        self.__lazy_result_callback = partial(self._callbacks.insert, len(self._callbacks), _inner)
-
-    async def __execute_callbacks(self) -> None:
-        self.__lazy_result_callback()
-        [await c() for c in self._callbacks]  # execute in order
-
-    async def ack(self) -> NoReturn:
-        await super().ack()
-        await self.__execute_callbacks()
-        raise _NoAction(
-            success=self.__result_success if self.__result_success is not None else True,
-            data=self.__result_data,
-            exception=self.__result_exception,
-        )
-
-    async def nack(self) -> NoReturn:
-        await super().nack()
-        await self.__execute_callbacks()
-        raise _NoAction(
-            success=self.__result_success if self.__result_success is not None else False,
-            data=self.__result_data,
-            exception=self.__result_exception,
-        )
-
-    async def reject(self) -> NoReturn:
-        await super().reject()
-        await self.__execute_callbacks()
-        raise _NoAction(
-            success=self.__result_success if self.__result_success is not None else False,
-            data=self.__result_data,
-            exception=self.__result_exception,
-        )
-
-    async def reschedule(self) -> NoReturn:
-        await super().reschedule()
-        await self.__execute_callbacks()
-        raise _NoAction(
-            success=self.__result_success if self.__result_success is not None else True,
-            data=self.__result_data,
-            exception=self.__result_exception,
-        )
-
-    async def retry(self, next_retry: timedelta | None = None) -> NoReturn:
-        await super().retry(
-            next_retry=(
-                self._actor_data.retry_policy(
-                    retry_number=self.parameters.retries.already_tried + 1,
-                )
-                if next_retry is None
-                else next_retry
+    async def send_message(
+        self,
+        *,
+        channel: str,
+        payload: bytes,
+        headers: dict[str, str] | None = None,
+        content_type: str | None = None,
+        server_specific_parameters: dict[str, Any] | None = None,
+    ) -> None:
+        """Send a new message to a specified channel."""
+        await self._server.publish(
+            channel=channel,
+            message=MessageData(
+                payload=payload,
+                headers=headers,
+                content_type=content_type,
             ),
-        )
-        await self.__execute_callbacks()
-        raise _NoAction(
-            success=self.__result_success if self.__result_success is not None else False,
-            data=self.__result_data,
-            exception=self.__result_exception,
+            server_specific_parameters=server_specific_parameters,
         )
 
-    async def force_retry(self, next_retry: timedelta | None = None) -> NoReturn:
-        await super().force_retry(
-            next_retry=(
-                self._actor_data.retry_policy(
-                    retry_number=self.parameters.retries.already_tried + 1,
-                )
-                if next_retry is None
-                else next_retry
+    async def send_message_json(
+        self,
+        *,
+        channel: str,
+        payload: Any,
+        headers: dict[str, str] | None = None,
+        server_specific_parameters: dict[str, Any] | None = None,
+        serializer: SerializerT | None = None,
+    ) -> None:
+        """Send a new message to a specified channel."""
+        serializer = serializer if serializer is not None else self._default_serializer
+        await self._server.publish(
+            channel=channel,
+            message=MessageData(
+                payload=serializer(payload),
+                headers=headers,
+                content_type="application/json",
             ),
+            server_specific_parameters=server_specific_parameters,
         )
-        await self.__execute_callbacks()
-        raise _NoAction(
-            success=self.__result_success if self.__result_success is not None else False,
-            data=self.__result_data,
-            exception=self.__result_exception,
+
+    async def reply(
+        self,
+        *,
+        payload: bytes,
+        headers: dict[str, str] | None = None,
+        content_type: str | None = None,
+        channel: str | None = None,  # if None, message will be sent to the same channel
+        server_specific_parameters: dict[str, Any] | None = None,
+    ) -> None:
+        """Atomically (if supporter by the server) ack and reply to the message."""
+        await self._message.reply(
+            payload=payload,
+            headers=headers,
+            content_type=content_type,
+            channel=channel,
+            server_specific_parameters=server_specific_parameters,
         )
+
+    async def reply_json(
+        self,
+        *,
+        payload: Any,
+        headers: dict[str, str] | None = None,
+        channel: str | None = None,  # if None, message will be sent to the same channel
+        server_specific_parameters: dict[str, Any] | None = None,
+        serializer: SerializerT | None = None,
+    ) -> None:
+        """Atomically (if supporter by the server) ack and reply with JSON to the message."""
+        serializer = serializer if serializer is not None else self._default_serializer
+        await self._message.reply(
+            payload=serializer(payload),
+            headers=headers,
+            channel=channel,
+            content_type="application/json",
+            server_specific_parameters=server_specific_parameters,
+        )
+
+
+class MessageDependency:
+    """Dependency annotation that indicates that the argument resolves to the received message."""
+
+    async def resolve(self, *, context: DependencyContext) -> EnhancedReceivedMessage:
+        return EnhancedReceivedMessage(
+            server=context.server,
+            message=context.message,
+            default_serializer=context.default_serializer,
+        )
+
+
+# Type alias for convenience
+Message = Annotated["EnhancedReceivedMessage", MessageDependency()]

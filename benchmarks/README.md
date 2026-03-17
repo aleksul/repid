@@ -2,7 +2,9 @@
 
 ## Preparation
 
-Benchmarks are meant to be executed on Python 3.11.
+Benchmarks are meant to be executed on Python 3.11+.
+
+RabbitMQ 4.x is required (AMQP 1.0 is built-in from 4.0).
 
 ```bash
 python -m venv .venv
@@ -28,5 +30,6 @@ python benchmark_dramatiq.py
 python benchmark_celery.py
 ```
 
-Before running another benchmark you need to manually delete created queues in RabbitMQ.
-You can use web UI for that at <http://localhost:15672>.
+`benchmark_repid.py` automatically purges its queue before each run via the
+RabbitMQ Management API. For the other benchmarks, delete their queues manually
+before switching between them. You can use the web UI at <http://localhost:15672>.

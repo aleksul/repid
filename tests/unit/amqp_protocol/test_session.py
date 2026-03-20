@@ -178,6 +178,7 @@ async def test_session_create_receiver_link_alias(monkeypatch: Any) -> None:
         _address: str,
         handle: int,
         _callback: Any,
+        prefetch: int = 100,  # noqa: ARG001
     ) -> MockReceiverLink:
         return MockReceiverLink(name=name, _handle=handle)
 
@@ -356,6 +357,7 @@ async def test_session_create_receiver_not_mapped(monkeypatch: Any) -> None:
         _address: str,
         handle: int,
         _callback: Any,
+        prefetch: int = 100,  # noqa: ARG001
     ) -> MockReceiverLink:
         return MockReceiverLink(name=name, _handle=handle)
 
@@ -448,6 +450,7 @@ async def test_session_create_receiver_default_name(monkeypatch: Any) -> None:
         _address: str,
         handle: int,
         _callback: Any,
+        prefetch: int = 100,  # noqa: ARG001
     ) -> MockReceiverLink:
         return MockReceiverLink(name=name, _handle=handle)
 

@@ -20,6 +20,10 @@ class AmqpSubscriber:
 
     This subscriber uses ManagedSession's ReceiverPool, which automatically
     handles reconnection and link recreation.
+
+    ``concurrency_limit`` is forwarded as the AMQP link-credit (prefetch) so
+    the broker limits in-flight deliveries at the protocol level.  Concurrency
+    of the user callbacks themselves is managed by the runner's semaphore.
     """
 
     def __init__(
@@ -87,7 +91,10 @@ class AmqpSubscriber:
         Args:
             managed_session: The managed session to use
             queues_to_callbacks: Mapping of queue names to callback functions
-            concurrency_limit: Optional concurrency limit (reserved for future use)
+            concurrency_limit: Maximum number of callbacks that may execute
+                concurrently.  When set, this value is also used as the AMQP
+                link-credit (prefetch) so the broker limits in-flight deliveries
+                at the protocol level.
             naming_strategy: Function to convert queue names to AMQP addresses
 
         Returns:
@@ -114,6 +121,7 @@ class AmqpSubscriber:
                 managed_session: ManagedSession = managed_session,
             ) -> None:
                 await paused_event.wait()
+
                 msg = AmqpReceivedMessage(
                     payload=payload,
                     headers=headers,
@@ -129,10 +137,12 @@ class AmqpSubscriber:
 
             # Subscribe using the receiver pool (handles reconnection automatically)
             address = naming_strategy(queue)
+            prefetch = concurrency_limit if concurrency_limit and concurrency_limit > 0 else 100
             link = await receiver_pool.subscribe(
                 address,
                 wrapped_callback,
                 f"receiver-{queue}",
+                prefetch=prefetch,
             )
             links.append(link)
 

@@ -192,6 +192,7 @@ class FakeSessionForPools:
         _address: str,
         _callback: Callable[[bytes, dict[str, Any] | None, int, bytes, ReceiverLink], Any],
         _name: str,
+        prefetch: int = 100,  # noqa: ARG002
     ) -> FakeReceiverLink:
         return self.receiver_links.pop(0)
 

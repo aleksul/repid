@@ -302,6 +302,7 @@ class ReceiverPool:
             ],
         ] = {}
         self._link_names: dict[str, str] = {}  # address -> link name
+        self._prefetches: dict[str, int] = {}  # address -> prefetch count
         self._link_counter = 0
         self._lock = asyncio.Lock()
         self._stop_event = asyncio.Event()
@@ -320,6 +321,7 @@ class ReceiverPool:
             Any,
         ],
         name: str | None = None,
+        prefetch: int = 100,
     ) -> ReceiverLink:
         """
         Subscribe to messages from the given address.
@@ -328,19 +330,22 @@ class ReceiverPool:
             address: Source address
             callback: Function called when message received
             name: Optional link name
+            prefetch: Number of messages to pre-fetch (AMQP link credit).
+                Set to the concurrency limit to apply protocol-level back-pressure.
 
         Returns:
             A ReceiverLink for the subscription
         """
         async with self._lock:
-            # Store callback for re-subscription
+            # Store callback and prefetch for re-subscription
             self._callbacks[address] = callback
+            self._prefetches[address] = prefetch
             self._link_counter += 1
             base_name = name or f"receiver-{address}"
             link_name = f"{base_name}-{self._link_counter}"
             self._link_names[address] = base_name
 
-            return await self._create_link(address, callback, link_name)
+            return await self._create_link(address, callback, link_name, prefetch)
 
     async def _create_link(
         self,
@@ -350,10 +355,11 @@ class ReceiverPool:
             Any,
         ],
         name: str,
+        prefetch: int = 100,
     ) -> ReceiverLink:
         """Create a new receiver link."""
         session = await self._managed_session.get_session()
-        link = await session.create_receiver(address, callback, name)
+        link = await session.create_receiver(address, callback, name, prefetch=prefetch)
         self._links[address] = link
         return link
 
@@ -377,7 +383,8 @@ class ReceiverPool:
                     self._link_counter += 1
                     base_name = self._link_names.get(address, f"receiver-{address}")
                     link_name = f"{base_name}-{self._link_counter}"
-                    await self._create_link(address, callback, link_name)
+                    prefetch = self._prefetches.get(address, 100)
+                    await self._create_link(address, callback, link_name, prefetch)
                     logger.debug("receiver_pool.resubscribed", extra={"address": address})
                 except Exception:
                     logger.exception("receiver_pool.resubscribe.error", extra={"address": address})
@@ -393,6 +400,8 @@ class ReceiverPool:
                 del self._callbacks[address]
             if address in self._link_names:
                 del self._link_names[address]
+            if address in self._prefetches:
+                del self._prefetches[address]
             if address in self._links:
                 link = self._links.pop(address)
                 with contextlib.suppress(Exception):

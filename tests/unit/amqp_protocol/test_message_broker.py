@@ -123,7 +123,13 @@ async def test_amqp_subscriber_create_pause_resume_and_close() -> None:
             self.subscriptions: list[tuple[str, Any, str]] = []
             self.unsubscribed: list[str] = []
 
-        async def subscribe(self, address: str, callback: Any, name: str) -> FakeReceiverLink:
+        async def subscribe(
+            self,
+            address: str,
+            callback: Any,
+            name: str,
+            prefetch: int = 100,  # noqa: ARG002
+        ) -> FakeReceiverLink:
             self.subscriptions.append((address, callback, name))
             return receiver_links[0]
 

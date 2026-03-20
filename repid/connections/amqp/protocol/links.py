@@ -440,6 +440,7 @@ class ReceiverLink(Link):
             [bytes, dict[str, Any] | None, int, bytes, ReceiverLink, Properties | None],
             Any,
         ],
+        prefetch: int = 100,
     ) -> None:
         super().__init__(session, name, address, handle, role=True)
 
@@ -447,8 +448,8 @@ class ReceiverLink(Link):
 
         # Receiver-specific state
         self._delivery_count = 0
-        self._link_credit = 100  # Default credit
-        self._prefetch = 100
+        self._link_credit = prefetch
+        self._prefetch = prefetch
 
         # Multi-frame transfer handling
         self._incoming_transfers: list[TransferFrame] = []

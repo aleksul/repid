@@ -423,6 +423,7 @@ class Session:
             Any,
         ],
         name: str | None = None,
+        prefetch: int = 100,
     ) -> ReceiverLink:
         """
         Create a receiver link.
@@ -431,6 +432,8 @@ class Session:
             address: Source address (queue/topic name)
             callback: Function to call when message received
             name: Link name (auto-generated if not provided)
+            prefetch: Number of messages to pre-fetch (maps to AMQP link credit).
+                Use this to control concurrency at the protocol level.
 
         Returns:
             A new ReceiverLink
@@ -451,7 +454,7 @@ class Session:
             name = f"receiver-{address}-{len(self._links)}"
 
         handle = self._allocate_handle()
-        link = ReceiverLink(self, name, address, handle, callback)
+        link = ReceiverLink(self, name, address, handle, callback, prefetch=prefetch)
         self._links[name] = link
         self._links_by_handle[handle] = link
 

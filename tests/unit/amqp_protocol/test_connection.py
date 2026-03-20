@@ -147,8 +147,9 @@ async def test_connection_send_performative_waits_for_response() -> None:
             result = await connection.send_performative(
                 0,
                 OpenFrame(container_id="local"),
-                wait_for_response=lambda channel, frame: channel == 0
-                and isinstance(frame, CloseFrame),
+                wait_for_response=lambda channel, frame: (
+                    channel == 0 and isinstance(frame, CloseFrame)
+                ),
             )
             assert isinstance(result, CloseFrame)
             return result

@@ -1,4 +1,4 @@
-<!-- markdownlint-disable MD041 -->
+<!-- markdownlint-disable MD041 MD013 -->
 <!-- Thank you for your contribution! -->
 <!-- Unless your change is trivial, please create an issue to discuss it before creating a PR. -->
 

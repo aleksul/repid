@@ -6,30 +6,42 @@ repo_name: aleksul/repid
 repo_url: https://github.com/aleksul/repid
 
 nav:
-- Home: index.md
-- Quickstart Guide: quickstart_guide.md
-- Playground: playground.md
-- Features: features.md
-- Benchmarks: benchmarks.md
-- User Guide:
-  - Initial setup: user_guide/initial_setup.md
-  - Jobs, Actors and Workers: user_guide/jobs_actors_and_workers.md
-  - Deferred scheduling: user_guide/deferred_scheduling.md
-  - Arguments & Results: user_guide/arguments_and_results.md
-  - Dependency injection: user_guide/dependency_injection.md
-  - Message & Eager response: user_guide/message_and_eager_response.md
-  - Testing: user_guide/testing.md
-- Cookbook:
+- Welcome:
+  - Home: index.md
+  - Features: features.md
+  - Benchmarks: benchmarks.md
+  - Playground: playground.md
+- Getting Started:
+  - Quickstart: getting_started/quickstart.md
+  - Glossary: getting_started/glossary.md
+- Core Concepts:
+  - Messages: user_guide/messages.md
+  - Actors:
+    - Basics: user_guide/actors/index.md
+    - Payload & Headers Parsing: user_guide/actors/parsing.md
+    - Routing Strategies: user_guide/actors/routing.md
+    - Connecting & Nesting Routers: user_guide/actors/routers.md
+    - Execution & Timeouts: user_guide/actors/execution.md
+    - Error Handling & Retries: user_guide/actors/errors_and_retries.md
+  - Workers:
+    - Basics: user_guide/workers/index.md
+    - Concurrency & Tasks Limits: user_guide/workers/concurrency.md
+    - Built-in Servers: user_guide/workers/built_in_servers.md
+    - Lifecycle & Production: user_guide/workers/lifecycle.md
+  - Dependency Injection: user_guide/dependency_injection.md
+  - Raw Message & Eager Response: user_guide/raw_message_and_eager_response.md
+  - Message Registry: user_guide/message_registry.md
+  - Server Registry: user_guide/server_registry.md
+  - Server Specific Parameters: user_guide/server_specific_parameters.md
+- Ecosystem & Integrations:
+  - AsyncAPI Schema & Server: integrations/asyncapi.md
+  - Using Pydantic & FastAPI: integrations/fastapi_and_pydantic.md
+- Best Practices & Patterns:
+  - Testing: cookbook/testing.md
   - Chaining jobs: cookbook/chaining_jobs.md
-  - Reschedule dead messages: cookbook/reschedule_dead_messages.md
-  - Use with FastAPI & Pydantic: cookbook/fastapi_and_pydantic.md
-- Advanced User Guide:
-  - Validating with Pydantic: advanced_user_guide/validating_with_pydantic.md
-  - Health checks: advanced_user_guide/health_checks.md
-  - Middlewares: advanced_user_guide/middlewares.md
+  - Middlewares: cookbook/middlewares.md
+- Extending Repid:
   - Your own brokers: advanced_user_guide/your_own_brokers.md
-  - Configuring overrides: advanced_user_guide/configuring_overrides.md
-  - Your own data models: advanced_user_guide/your_own_data_models.md
   - Your own serializer: advanced_user_guide/your_own_serializer.md
   - Your own converter: advanced_user_guide/your_own_converter.md
 - Contributing guide: contributing.md
@@ -62,7 +74,11 @@ markdown_extensions:
 - pymdownx.highlight:
     anchor_linenums: true
 - pymdownx.inlinehilite
-- pymdownx.superfences
+- pymdownx.superfences:
+    custom_fences:
+    - name: mermaid
+      class: mermaid
+      format: !!python/name:pymdownx.superfences.fence_code_format
 - pymdownx.snippets
 - admonition
 - pymdownx.details

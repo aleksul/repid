@@ -1,4 +1,3 @@
-<!-- markdownlint-configure-file { "MD013": { "line_length": 100 } } -->
 <!-- markdownlint-disable MD033 -->
 
 # repid

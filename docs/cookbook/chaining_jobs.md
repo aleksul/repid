@@ -1,91 +1,76 @@
 # Chaining jobs
 
-You can chain jobs using eager response and callback. You can find more details about those
-in the user guide.
+Sometimes you want to break a complex task into multiple smaller steps, where the output of one task
+triggers the next.
 
-We will also take advantage of result bucket technically being a superset
-of the arguments bucket, which allows us to pass result of one job as arguments to another one.
+In Repid, you can easily chain tasks by using the `Message` dependency to send a new message
+directly from within your actor. Because you are using the same server connection, this is extremely
+fast.
 
-That is, if simplified, it looks as follows:
+## Example
 
-```python
-Job("job1", result_id="my_chained_id")  # (1)
-Job("job2", args_id="my_chained_id")
-```
-
-1. Result bucket id corresponds to the second job's arguments bucket id
-
----
-
-Now, let's imagine you were designing some pipeline of jobs. The first one would construct some sort
-of a greetings message and pass it to the second job. The second job will append to the greetings
-message some information about user's id.
+Let's imagine you are designing a user registration pipeline. The first job creates a user ID, and
+the second job sends a welcome email using that ID.
 
 ```python
 import asyncio
-import os
+from repid import Repid, Router, InMemoryServer, Message
 
-from repid import (
-    Connection,
-    Job,
-    MessageDependency,
-    RedisBucketBroker,
-    RedisMessageBroker,
-    Repid,
-    Router,
-    Worker,
-)
+app = Repid()
+app.servers.register_server("default", InMemoryServer(), is_default=True)
 
-redis_messages_dsn = os.environ.get("REDIS_CONNECTION")
-redis_args_and_results_dsn = os.environ.get("REDIS_ARGS_CONNECTION")
+router = Router()
 
-my_connection = Connection(
-    message_broker=RedisMessageBroker(redis_messages_dsn),
-    args_bucket_broker=RedisBucketBroker(redis_args_and_results_dsn),
-    results_bucket_broker=RedisBucketBroker(
-        redis_args_and_results_dsn,
-        use_result_bucket=True,
-    ),
-)
+@router.actor(channel="registration")
+async def create_user(username: str, message: Message) -> None:
+    # 1. Pretend we save to the database and generate an ID
+    user_id = 123
+    print(f"Created user {username} with ID {user_id}")
 
-app = Repid(my_connection)
+    # 2. Chain the next job!
+    # We send a message to the email queue, passing along the generated user_id
+    await message.send_message_json(
+        channel="email",
+        payload={"user_id": user_id, "username": username},
+        headers={"topic": "send_welcome_email"}
+    )
 
-my_router = Router()
+    # The current message is automatically acknowledged when this actor finishes successfully.
 
+@router.actor(channel="email")
+async def send_welcome_email(user_id: int, username: str) -> None:
+    print(f"Sending welcome email to User #{user_id} ({username})!")
 
-@my_router.actor
-async def add_hello(msg: MessageDependency, user_name: str, user_id: int) -> dict:
-    msg.set_result(dict(user_id=user_id, greetings=f"Hello {user_name}!"))
-
-    j = Job("add_id", args_id=msg.parameters.result.id_, result_id="some_result_id")
-    msg.add_callback(j.enqueue)
-
-    await msg.ack()
-
-
-@my_router.actor
-async def add_id(user_id: int, greetings: str) -> str:
-    return f"{greetings} Your id is {user_id}."
-
+app.include_router(router)
 
 async def main() -> None:
-    async with app.magic(auto_disconnect=True):
-        w = Worker(routers=[my_router], messages_limit=2)
+    async with app.servers.default.connection():
+        # Kick off the chain by sending the first message
+        await app.send_message_json(
+            channel="registration",
+            payload={"username": "Alex"},
+            headers={"topic": "create_user"}
+        )
 
-        await Job(
-            "add_hello",
-            args=dict(user_name="Alex", user_id=123),
-            result_id="chained_id",
-        ).enqueue()
-
-        await w.run()
-
-        result_bucket = await Job("add_id", result_id="some_result_id").result
-        print(result_bucket.data)  # (1)
-
+        # Process the queue.
+        # It will first process the 'create_user' message,
+        # which will then enqueue the 'send_welcome_email' message,
+        # which will then be processed in the next iteration!
+        await app.run_worker(messages_limit=2)
 
 if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-1. Prints `Hello Alex! Your id is 123.`
+When you run this script, the worker will process both jobs in sequence!
+
+```bash
+Created user Alex with ID 123
+Sending welcome email to User #123 (Alex)!
+```
+
+### The `reply_json` helper
+
+If you are designing a strict request-response or RPC-like architecture, you can use the
+`message.reply_json()` method. This will automatically publish a message to a reply queue (if
+supported and specified by your broker) while simultaneously acknowledging the current message.

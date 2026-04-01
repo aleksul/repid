@@ -8,7 +8,8 @@
 </p>
 
 <p align="center">
-<b>Repid</b> framework: simple to use, fast to run and extensible to adopt job scheduler.
+<b>Repid</b> is a simple, fast, and extensible async task queue framework,
+with built-in AsyncAPI 3.0 schema generation.
 </p>
 
 <p align="center">
@@ -27,100 +28,80 @@
 
 Here is how the easiest example of producer-consumer application can look like.
 
-Producer:
-
 ```python
 import asyncio
+from repid import Repid, Router, InMemoryServer
 
-from repid import Connection, Job, RabbitMessageBroker, Repid
+# 1. Initialize the application and register a server
+app = Repid()
+app.servers.register_server("default", InMemoryServer(), is_default=True)
 
-app = Repid(Connection(RabbitMessageBroker("amqp://user:password@localhost:5672")))
-
-
-async def main() -> None:
-    async with app.magic():
-        await Job(name="awesome_job").enqueue()
-
-
-asyncio.run(main())
-```
-
-Consumer:
-
-```python
-import asyncio
-
-from repid import Connection, RabbitMessageBroker, Repid, Router, Worker
-
-app = Repid(Connection(RabbitMessageBroker("amqp://user:password@localhost:5672")))
+# 2. Create a router and an actor
 router = Router()
 
-
-@router.actor
-async def awesome_job() -> None:
-    print("Hello async jobs!")
+@router.actor(channel="tasks")
+async def my_awesome_actor(user_id: int) -> None:
+    print(f"Processing for {user_id}")
     await asyncio.sleep(1.0)
 
+app.include_router(router)
 
 async def main() -> None:
-    async with app.magic():
-        await Worker(routers=[router]).run()
+    # 3. Open connection to interact with the queue
+    async with app.servers.default.connection():
+        # Producer: Send a message
+        await app.send_message_json(
+            channel="tasks",
+            payload={"user_id": 123},
+            headers={"topic": "my_awesome_actor"}
+        )
 
+        # Consumer: Run the worker loop (in a real app, this would be a separate process)
+        await app.run_worker(messages_limit=1)
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 ## Install
 
-**Repid** supports Python versions 3.8 and up and is installable via `pip`.
+**Repid** supports Python versions 3.10 and up and is installable via `pip`.
 
 ```bash
 pip install repid
 ```
 
 There are also a couple of additional dependencies you may want to install,
-depending on your use case, e.g.
+depending on your use case:
 
 ```bash
-pip install repid[amqp, redis, cron]
+pip install repid[amqp, redis, pubsub, pydantic]
 ```
 
-## Why repid?
+## Why Repid?
 
-### Asyncio
+**Repid** brings modern Python developer experience (DX) to background tasks, moving away from
+legacy patterns and embracing strong typing, clear architecture, and flexibility.
 
-`Repid` is built around `asyncio`. It means it's pretty fast.
-And you don't have to worry that it will slow down your other asyncio-driven code.
-
-### Ease of integration
-
-There is an abstraction layer on top of other queue solutions.
-It means that even if `repid` doesn't provide some broker out of the box,
-you will be able to write your own.
-
-### Built with microservices in mind
-
-Your producer and consumer can be running in different containers, `repid` will handle it just fine.
-
-### Can be used with other languages
-
-`Repid` uses json (de-)serialization by default, which makes integration with other languages
-as easy as possible. You're also able to easily override default (de-)serialization
-behavior thanks to PEP 544 Protocols.
-
-### Integrated scheduling
-
-`Repid` has its own scheduling mechanisms.
-You can delay job execution until some date or even execute it every once in a while.
-No need for extra dependencies!
+- 📖 **AsyncAPI Native**: Stop maintaining outdated architecture diagrams. Repid automatically
+  inspects your actors and generates AsyncAPI 3.0 schemas and interactive web documentation.
+- 🛡️ **Modern Typing & Validation**: First-class Pydantic support. Your message payloads and headers
+  are strictly validated and type-coerced before your actors even run.
+- 💉 **Dependency Injection**: Write clean, testable code. Inject database connections, settings, or
+  shared logic directly into your actor signatures.
+- 🔌 **Highly Unopinionated**: Repid doesn't force a strict ecosystem. You can use it as just a
+  producer, just a consumer, or easily swap out underlying message brokers without rewriting your
+  business logic.
 
 ## Inspiration
 
-`Repid` is inspired by [`dramatiq`](https://github.com/Bogdanp/dramatiq) and [`arq`](https://github.com/samuelcolvin/arq).
+**Repid** is inspired by [`FastAPI`](https://github.com/tiangolo/fastapi),
+[`dramatiq`](https://github.com/Bogdanp/dramatiq) and [`arq`](https://github.com/samuelcolvin/arq).
 
 ## License
 
-**Repid** is distributed under the terms of the MIT license. Please see [License.md] for more information.
+**Repid** is distributed under the terms of the MIT license.
+Please see [License.md] for more information.
 
 **Repid's logo** is distributed under the terms of the [CC BY-NC 4.0] license.
 It is originally created by [ari_the_crow_].

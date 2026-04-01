@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast, get_args
 
 from repid._utils import is_installed
 from repid.data import ConverterInputSchema
-from repid.dependencies._utils import DependencyContext, get_dependency, get_root_marker
+from repid.dependencies._utils import DependencyContext, get_dependency, get_full_payload_marker
 from repid.dependencies.depends import Depends as DependsClass
 from repid.dependencies.header_dependency import Header
 
@@ -154,8 +154,8 @@ class BasicConverter:
                 inspect.Parameter.POSITIONAL_OR_KEYWORD,
                 inspect.Parameter.KEYWORD_ONLY,
             ):
-                if get_root_marker(p.annotation) is not None:
-                    raise ValueError("Root() requires PydanticConverter.")
+                if get_full_payload_marker(p.annotation) is not None:
+                    raise ValueError("FullPayload() requires PydanticConverter.")
                 if (dep := get_dependency(p.annotation)) is not None:
                     self.dependency_kwargs[p.name] = dep
                     continue
@@ -306,9 +306,9 @@ class PydanticConverter:
             if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY):
                 if (dep := get_dependency(p.annotation)) is not None:
                     dependency_kwargs[p.name] = dep
-                elif get_root_marker(p.annotation) is not None:
+                elif get_full_payload_marker(p.annotation) is not None:
                     if root_arg is not None:
-                        raise ValueError("Only one Root() marker is allowed per actor.")
+                        raise ValueError("Only one FullPayload() marker is allowed per actor.")
                     root_arg = (p.name, get_args(p.annotation)[0])
                 else:
                     kwargs.append(p.name)

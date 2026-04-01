@@ -5,9 +5,9 @@ import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Any, Protocol, get_origin, runtime_checkable
 
+from repid.dependencies.full_payload import FullPayload
 from repid.dependencies.header_dependency import Header
 from repid.dependencies.message_dependency import MessageDependency
-from repid.dependencies.root import Root
 
 if TYPE_CHECKING:
     from repid.connections.abc import ReceivedMessageT, ServerT
@@ -45,12 +45,12 @@ def get_dependency(t: Any) -> DependencyT | None:
     return None
 
 
-def get_root_marker(t: Any) -> Root | None:
-    """Return the `Root` instance from a type annotation if present."""
+def get_full_payload_marker(t: Any) -> FullPayload | None:
+    """Return the `FullPayload` instance from a type annotation if present."""
     if get_origin(t) is not Annotated:
         return None
     for metadata in t.__metadata__:
-        if isinstance(metadata, Root):
+        if isinstance(metadata, FullPayload):
             return metadata
     return None
 

@@ -6,7 +6,7 @@ from typing import Annotated
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from repid import Header, Root
+from repid import FullPayload, Header
 from repid.converter import BasicConverter, ConverterT, PydanticConverter
 from repid.data import MessageData
 from repid.dependencies import Depends
@@ -773,12 +773,12 @@ async def test_pydantic_converter_matching_header_in_multiple_depends_not_duplic
     }
 
 
-async def test_pydantic_converter_root_model_parse() -> None:
+async def test_pydantic_converter_full_payload_model_parse() -> None:
     class MyModel(BaseModel):
         a: int
         b: float
 
-    async def fn(model: Annotated[MyModel, Root()]) -> None: ...
+    async def fn(model: Annotated[MyModel, FullPayload()]) -> None: ...
 
     conv = PydanticConverter(fn, fn_locals=locals(), correlation_id=None)
     args, kwargs = await conv.convert_inputs(
@@ -795,12 +795,12 @@ async def test_pydantic_converter_root_model_parse() -> None:
     assert kwargs == {"model": MyModel(a=1, b=2.5)}
 
 
-async def test_pydantic_converter_root_model_schema() -> None:
+async def test_pydantic_converter_full_payload_model_schema() -> None:
     class MyModel(BaseModel):
         a: int
         b: float
 
-    async def fn(model: Annotated[MyModel, Root()]) -> None: ...
+    async def fn(model: Annotated[MyModel, FullPayload()]) -> None: ...
 
     conv = PydanticConverter(fn, fn_locals=locals(), correlation_id=None)
     schema = conv.get_input_schema()
@@ -817,12 +817,12 @@ async def test_pydantic_converter_root_model_schema() -> None:
     assert schema.content_type == "application/json"
 
 
-async def test_pydantic_converter_root_model_with_extra_kwargs() -> None:
+async def test_pydantic_converter_full_payload_model_with_extra_kwargs() -> None:
     class MyModel(BaseModel):
         a: int
         b: float
 
-    async def fn(model: Annotated[MyModel, Root()], extra: str = "default") -> None: ...
+    async def fn(model: Annotated[MyModel, FullPayload()], extra: str = "default") -> None: ...
 
     conv = PydanticConverter(fn, fn_locals=locals(), correlation_id=None)
     args, kwargs = await conv.convert_inputs(
@@ -842,11 +842,11 @@ async def test_pydantic_converter_root_model_with_extra_kwargs() -> None:
     assert kwargs["model"].b == 2.5
 
 
-async def test_pydantic_converter_root_model_with_extra_kwargs_schema() -> None:
+async def test_pydantic_converter_full_payload_model_with_extra_kwargs_schema() -> None:
     class MyModel(BaseModel):
         a: int
 
-    async def fn(model: Annotated[MyModel, Root()], extra: str = "default") -> None: ...
+    async def fn(model: Annotated[MyModel, FullPayload()], extra: str = "default") -> None: ...
 
     conv = PydanticConverter(fn, fn_locals=locals(), correlation_id=None)
     schema = conv.get_input_schema()
@@ -857,7 +857,7 @@ async def test_pydantic_converter_root_model_with_extra_kwargs_schema() -> None:
     assert "extra" in props
 
 
-def test_pydantic_converter_root_model_multiple_raises() -> None:
+def test_pydantic_converter_full_payload_model_multiple_raises() -> None:
     class M1(BaseModel):
         a: int
 
@@ -865,19 +865,19 @@ def test_pydantic_converter_root_model_multiple_raises() -> None:
         b: int
 
     async def fn(
-        m1: Annotated[M1, Root()],
-        m2: Annotated[M2, Root()],
+        m1: Annotated[M1, FullPayload()],
+        m2: Annotated[M2, FullPayload()],
     ) -> None: ...
 
-    with pytest.raises(ValueError, match="Only one Root\\(\\) marker is allowed per actor"):
+    with pytest.raises(ValueError, match="Only one FullPayload\\(\\) marker is allowed per actor"):
         PydanticConverter(fn, fn_locals=locals(), correlation_id=None)
 
 
-def test_basic_converter_root_model_raises() -> None:
+def test_basic_converter_full_payload_model_raises() -> None:
     class MyModel(BaseModel):
         a: int
 
-    async def fn(model: Annotated[MyModel, Root()]) -> None: ...
+    async def fn(model: Annotated[MyModel, FullPayload()]) -> None: ...
 
-    with pytest.raises(ValueError, match="Root\\(\\) requires PydanticConverter"):
+    with pytest.raises(ValueError, match="FullPayload\\(\\) requires PydanticConverter"):
         BasicConverter(fn, fn_locals=locals(), correlation_id=None)

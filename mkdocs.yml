@@ -1,5 +1,5 @@
 site_name: Repid
-site_description: 'Repid framework: simple to use, fast to run and extensible to adopt job scheduler'
+site_description: Repid is a simple, fast, and extensible async task queue framework, with built-in AsyncAPI 3.0 schema generation.
 site_url: https://repid.aleksul.space
 
 repo_name: aleksul/repid
@@ -96,3 +96,24 @@ extra:
 plugins:
 - search
 - glightbox
+- mike:
+    alias_type: symlink
+    canonical_version: latest
+- llmstxt:
+    enabled: !ENV [CI, false]
+    full_output: llms-full.txt
+    markdown_description: |-
+      Repid is a simple, fast, and extensible async task queue framework for Python 3.10+, featuring built-in AsyncAPI 3.0 schema generation.
+    sections:
+      Getting Started:
+      - getting_started/*.md
+      Core Concepts:
+      - user_guide/*.md
+      - user_guide/actors/*.md
+      - user_guide/workers/*.md
+      Ecosystem & Integrations:
+      - integrations/*.md
+      Best Practices & Patterns:
+      - cookbook/*.md
+      Extending Repid:
+      - advanced_user_guide/*.md

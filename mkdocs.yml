@@ -96,5 +96,3 @@ extra:
 plugins:
 - search
 - glightbox
-extra_css:
-- https://pyscript.net/latest/pyscript.css

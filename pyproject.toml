@@ -8,7 +8,8 @@ docs = [
   "mike>=2.1.4",
   "mkdocs-glightbox>=0.5.2",
   "setuptools>=82.0.1",
-  "mkdocs-llmstxt>=0.5.0"
+  "mkdocs-llmstxt>=0.5.0",
+  "pygments<2.20.0"
 ]
 lint = [
   "mypy>=1.19.1",

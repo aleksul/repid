@@ -15,6 +15,7 @@ repos:
   - id: check-merge-conflict
   - id: check-toml
   - id: check-yaml
+    args: [--unsafe]
   - id: end-of-file-fixer
 
 - repo: https://github.com/astral-sh/ruff-pre-commit

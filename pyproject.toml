@@ -4,7 +4,7 @@ requires = ['hatchling', 'hatch-vcs']
 
 [dependency-groups]
 docs = [
-  "mkdocs-material>=9.7.5",
+  "mkdocs-material>=9.7.6",
   "mike>=2.1.4",
   "mkdocs-glightbox>=0.5.2",
   "setuptools>=82.0.1",
@@ -12,7 +12,7 @@ docs = [
 ]
 lint = [
   "mypy>=1.19.1",
-  "ruff>=0.15.6",
+  "ruff>=0.15.8",
   "types-grpcio>=1.0.0.20251009"
 ]
 pre-commit = [

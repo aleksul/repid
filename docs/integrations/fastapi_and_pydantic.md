@@ -52,7 +52,7 @@ As long as Pydantic is installed in your environment, Repid will automatically s
 `PydanticConverter`. This means any type hints you use in your actor signature will be strictly
 validated, and you can use `pydantic.Field` for defaults and aliases.
 
-For detailed examples on defining actors with Pydantic validation and using the `Root()` dependency
+For detailed examples on defining actors with Pydantic validation and using the `FullPayload()` dependency
 annotation, see the [Actors guide](../user_guide/actors/parsing.md#parsing-with-pydantic).
 
 ## Integration with FastAPI

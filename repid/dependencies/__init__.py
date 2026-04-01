@@ -1,9 +1,9 @@
 from ._utils import DependencyContext as DependencyContext
 from ._utils import DependencyT as DependencyT
 from ._utils import get_dependency as get_dependency
-from ._utils import get_root_marker as get_root_marker
+from ._utils import get_full_payload_marker as get_full_payload_marker
 from .depends import Depends as Depends
+from .full_payload import FullPayload as FullPayload
 from .header_dependency import Header as Header
 from .message_dependency import Message as Message
 from .message_dependency import MessageDependency as MessageDependency
-from .root import Root as Root

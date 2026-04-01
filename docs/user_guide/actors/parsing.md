@@ -78,29 +78,29 @@ async def process_order(
     pass
 ```
 
-### The `Root()` Annotation
+### The `FullPayload()` Annotation
 
 Sometimes you don't want your JSON payload's keys scattered as individual arguments. If you want to
-accept an entire Pydantic model representing the exact root JSON payload, you can use the `Root`
+accept an entire Pydantic model representing the exact root JSON payload, you can use the `FullPayload`
 annotation:
 
 ```python
 from typing import Annotated
 from pydantic import BaseModel
-from repid import Root
+from repid import FullPayload
 
 class UserPayload(BaseModel):
     user_id: int
     is_active: bool
 
 @router.actor
-async def process_user(user: Annotated[UserPayload, Root()]):
+async def process_user(user: Annotated[UserPayload, FullPayload()]):
     # `user` contains the fully validated payload model
     print(user.user_id)
 ```
 
 !!! tip
-    `Root()` is only available when Pydantic is installed.
+    `FullPayload()` is only available when Pydantic is installed.
 
 ## Extracting Headers
 

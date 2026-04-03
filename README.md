@@ -37,6 +37,9 @@ pip install repid
 - **Built for testability** - a drop-in `TestClient` lets you test actors in-memory
   without a running broker, making unit tests fast and dependency-free.
 
+- **LLM-friendly documentation** - grab `llms.txt` or `llms-full.txt` from the docs site
+  to feed into your favorite AI coding assistant.
+
 ## Quickstart
 
 Here is how the simplest producer-consumer application looks, using AMQP server.

@@ -93,6 +93,14 @@ legacy patterns and embracing strong typing, clear architecture, and flexibility
   producer, just a consumer, or easily swap out underlying message brokers without rewriting your
   business logic.
 
+## LLMs
+
+Repid documentation is available in text formats optimized for Large Language Models (LLMs)
+and AI coding assistants:
+
+- [llms.txt](llms.txt) - A concise overview and guide.
+- [llms-full.txt](llms-full.txt) - The complete documentation in a single file.
+
 ## Inspiration
 
 **Repid** is inspired by [`FastAPI`](https://github.com/tiangolo/fastapi),

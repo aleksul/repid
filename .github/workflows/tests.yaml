@@ -80,9 +80,23 @@ jobs:
     - run: uv run coverage report --skip-covered --show-missing
     - run: uv run coverage json  # json for coverage badge
 
-    - name: Update Coverage Badge
+    - name: Generate Coverage Badge
       if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-      uses: we-cli/coverage-badge-action@8a0b6ee05f6dd0f294089cbe7a848452a2b43eef
+      run: |
+        COV=$(uv run python -c 'import json; print(json.load(open("coverage.json"))["totals"]["percent_covered_display"])')
+        if [ "$COV" -ge 95 ]; then COLOR="brightgreen"; elif [ "$COV" -ge 80 ]; then COLOR="yellowgreen"; elif [ "$COV" -ge 60 ]; then COLOR="yellow"; else COLOR="red"; fi
+        mkdir -p badges
+        curl -s "https://img.shields.io/badge/coverage-${COV}%25-${COLOR}" > badges/coverage.svg
+
+    - name: Publish Coverage Badge
+      if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      uses: peaceiris/actions-gh-pages@v4
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./badges
+        publish_branch: gh-pages
+        destination_dir: badges
+        keep_files: true
 
     - name: Coverage summary report
       id: coverage_report

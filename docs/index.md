@@ -16,8 +16,8 @@ with built-in AsyncAPI 3.0 schema generation.
 <a href="https://pypi.org/project/repid/" target="_blank">
     <img src="https://img.shields.io/pypi/v/repid.svg" alt="PyPI version">
 </a>
-<a href="https://codecov.io/gh/aleksul/repid" target="_blank">
-    <img src="https://codecov.io/gh/aleksul/repid/branch/main/graph/badge.svg?token=IP3Z1VXB1G" alt="codecov">
+<a href="https://github.com/aleksul/repid/actions" target="_blank">
+    <img src="https://repid.aleksul.space/badges/coverage.svg" alt="Coverage">
 </a>
 <a href="https://pypi.python.org/pypi/repid/" target="_blank">
     <img src="https://img.shields.io/pypi/pyversions/repid.svg" alt="PyPI pyversions">

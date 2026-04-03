@@ -7,7 +7,7 @@
 </a>
 
 [![PyPI version](https://img.shields.io/pypi/v/repid.svg)](https://pypi.org/project/repid/)
-[![codecov](https://codecov.io/gh/aleksul/repid/branch/main/graph/badge.svg?token=IP3Z1VXB1G)](https://codecov.io/gh/aleksul/repid)
+[![Coverage](https://repid.aleksul.space/badges/coverage.svg)](https://github.com/aleksul/repid/actions)
 [![Tests](https://github.com/aleksul/repid/actions/workflows/tests.yaml/badge.svg)](https://github.com/aleksul/repid/actions/workflows/tests.yaml)
 [![PyPI pyversions](https://img.shields.io/pypi/pyversions/repid.svg)](https://pypi.python.org/pypi/repid/)
 [![Read documentation](https://img.shields.io/badge/read-documentation-informational.svg)](https://repid.aleksul.space)
@@ -36,6 +36,9 @@ pip install repid
 
 - **Built for testability** - a drop-in `TestClient` lets you test actors in-memory
   without a running broker, making unit tests fast and dependency-free.
+
+- **LLM-friendly documentation** - grab `llms.txt` or `llms-full.txt` from the docs site
+  to feed into your favorite AI coding assistant.
 
 ## Quickstart
 

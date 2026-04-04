@@ -13,14 +13,21 @@ if TYPE_CHECKING:
 
 FnReturnT = TypeVar("FnReturnT")
 
-OnErrorT = Literal["nack", "reject"] | Callable[[BaseException], Literal["nack", "reject"]]
+
+AutoActionT = Literal["ack", "nack", "reject"]
+OnErrorAutoT = AutoActionT | Callable[[BaseException], AutoActionT]
+
+ManualActionT = Literal["ack", "nack", "reject", "no_action"]
+OnErrorManualT = ManualActionT | Callable[[BaseException], ManualActionT]
+
+OnErrorT = OnErrorAutoT | OnErrorManualT
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ActorData:
     fn: Callable[..., Coroutine[Any, Any, FnReturnT]]
     name: str
-    confirmation_mode: Literal["auto", "always_ack", "ack_first", "manual"]
+    confirmation_mode: Literal["auto", "always_ack", "ack_first", "manual", "manual_explicit"]
     routing_strategy: Callable[[BaseMessageT], bool]
     middleware_pipeline: Callable[
         [

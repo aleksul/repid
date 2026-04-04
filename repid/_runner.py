@@ -37,7 +37,7 @@ async def _actor_execution(
     return await actor.fn(*args, **kwargs)
 
 
-async def _actor_execution_with_confirmation(
+async def _actor_execution_with_confirmation(  # noqa: C901, PLR0912
     message: ReceivedMessageT,
     actor: ActorData,
     server: ServerT,
@@ -55,20 +55,38 @@ async def _actor_execution_with_confirmation(
             )
     except Exception as exc:
         if not message.is_acted_on:
-            if actor.confirmation_mode == "auto":
+            if actor.confirmation_mode in ("auto", "manual", "manual_explicit"):
                 error_action = (
                     actor.on_error if isinstance(actor.on_error, str) else actor.on_error(exc)
                 )
                 if error_action == "reject":
                     await message.reject()
-                else:
+                elif error_action == "nack":
                     await message.nack()
+                elif error_action == "ack":
+                    await message.ack()
             elif actor.confirmation_mode == "always_ack":
                 await message.ack()
         raise
     else:
-        if not message.is_acted_on and actor.confirmation_mode in ("auto", "always_ack"):
-            await message.ack()
+        if not message.is_acted_on:
+            if actor.confirmation_mode in ("auto", "always_ack"):
+                await message.ack()
+            elif actor.confirmation_mode == "manual_explicit":
+                if result == "reject":
+                    await message.reject()
+                elif result == "nack":
+                    await message.nack()
+                elif result == "ack":
+                    await message.ack()
+                elif result == "no_action":
+                    pass
+                else:
+                    raise ValueError(
+                        f"Actor '{actor.name}' with confirmation_mode='manual_explicit' "
+                        f"returned an invalid value: {result!r}. Expected one of: "
+                        "'ack', 'nack', 'reject', 'no_action'.",
+                    )
         return result
 
 

@@ -40,7 +40,7 @@ make install
 It will create virtual environment and install inside of it all dependencies, including those,
 which are needed for development.
 
-!!! important
+!!! example "Python version"
     Use lowest supported by `repid` version of Python (== 3.10 for now) for your venv.
 
 To activate a venv run:
@@ -68,7 +68,7 @@ uv run pre-commit run -a
 If you want to commit some changes disregarding pre-commit hooks, add `-n` or `--no-verify` flag
 to `git commit` command.
 
-!!! important
+!!! note "CI is important"
     Keep in mind that when you will submit your pull request, all the hooks
     must pass in CI anyway, or, unfortunately, we will have to decline your contribution.
 

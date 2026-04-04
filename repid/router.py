@@ -8,7 +8,15 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, overload
 
 from repid._utils import NotSet, asyncify
 from repid.converter import DefaultConverter
-from repid.data import ActorData, Channel, CorrelationId, OnErrorT
+from repid.data import (
+    ActorData,
+    Channel,
+    CorrelationId,
+    ManualActionT,
+    OnErrorAutoT,
+    OnErrorManualT,
+    OnErrorT,
+)
 from repid.dependencies._utils import validate_dependency
 from repid.middlewares import ActorMiddlewareT, _compile_actor_middleware_pipeline
 
@@ -43,6 +51,7 @@ def catch_all_routing_strategy(*, actor_name: str, **_: Any) -> Callable[[BaseMe
 
 
 YourFunc = TypeVar("YourFunc", bound=Callable)
+ExplicitFunc = TypeVar("ExplicitFunc", bound=Callable[..., Coroutine[Any, Any, ManualActionT]])
 
 
 @dataclass(slots=True, kw_only=True, frozen=True)
@@ -50,7 +59,7 @@ class _ActorDefinition:
     router: Router
     fn: Callable[..., Coroutine[Any, Any, Any]]
     name: str | None
-    confirmation_mode: Literal["auto", "always_ack", "ack_first", "manual"]
+    confirmation_mode: Literal["auto", "always_ack", "ack_first", "manual", "manual_explicit"]
     routing_strategy: RoutingStrategyT
     channel: Channel | str | None
     middlewares: Sequence[ActorMiddlewareT] | None
@@ -297,7 +306,7 @@ class Router:
         /,
         name: str | None = None,
         *,
-        confirmation_mode: Literal["auto", "always_ack", "ack_first", "manual"] = "auto",
+        confirmation_mode: Literal["auto"] = "auto",
         routing_strategy: RoutingStrategyT = topic_based_routing_strategy,
         channel: Channel | str | None = None,
         middlewares: Sequence[ActorMiddlewareT] | None = None,
@@ -313,7 +322,7 @@ class Router:
         external_docs: ExternalDocs | None = None,
         bindings: OperationBindingsObject | None = None,
         deprecated: bool = False,
-        on_error: OnErrorT = "nack",
+        on_error: OnErrorAutoT = "nack",
         correlation_id: CorrelationId | None = None,
         message_schema: ActorMessageMetadata | None = None,
     ) -> Callable[[YourFunc], YourFunc]: ...
@@ -325,7 +334,7 @@ class Router:
         /,
         name: str | None = None,
         *,
-        confirmation_mode: Literal["auto", "always_ack", "ack_first", "manual"] = "auto",
+        confirmation_mode: Literal["auto"] = "auto",
         routing_strategy: RoutingStrategyT = topic_based_routing_strategy,
         channel: Channel | str | None = None,
         middlewares: Sequence[ActorMiddlewareT] | None = None,
@@ -341,18 +350,19 @@ class Router:
         external_docs: ExternalDocs | None = None,
         bindings: OperationBindingsObject | None = None,
         deprecated: bool = False,
-        on_error: OnErrorT = "nack",
+        on_error: OnErrorAutoT = "nack",
         correlation_id: CorrelationId | None = None,
         message_schema: ActorMessageMetadata | None = None,
     ) -> YourFunc: ...
 
+    @overload
     def actor(
         self,
-        fn: YourFunc | None = None,
+        fn: None = None,
         /,
         name: str | None = None,
         *,
-        confirmation_mode: Literal["auto", "always_ack", "ack_first", "manual"] = "auto",
+        confirmation_mode: Literal["always_ack", "ack_first"],
         routing_strategy: RoutingStrategyT = topic_based_routing_strategy,
         channel: Channel | str | None = None,
         middlewares: Sequence[ActorMiddlewareT] | None = None,
@@ -368,10 +378,186 @@ class Router:
         external_docs: ExternalDocs | None = None,
         bindings: OperationBindingsObject | None = None,
         deprecated: bool = False,
-        on_error: OnErrorT = "nack",
         correlation_id: CorrelationId | None = None,
         message_schema: ActorMessageMetadata | None = None,
-    ) -> YourFunc | Callable[[YourFunc], YourFunc]:
+    ) -> Callable[[YourFunc], YourFunc]: ...
+
+    @overload
+    def actor(
+        self,
+        fn: YourFunc,
+        /,
+        name: str | None = None,
+        *,
+        confirmation_mode: Literal["always_ack", "ack_first"],
+        routing_strategy: RoutingStrategyT = topic_based_routing_strategy,
+        channel: Channel | str | None = None,
+        middlewares: Sequence[ActorMiddlewareT] | None = None,
+        timeout: float | None = None,
+        title: str | None = None,
+        summary: str | None = None,
+        description: str | None = None,
+        run_in_process: bool | None = None,
+        pool_executor: Executor | None = None,
+        converter: type[ConverterT] | None = None,
+        security: Sequence[Any] | None = None,
+        tags: Sequence[Tag] | None = None,
+        external_docs: ExternalDocs | None = None,
+        bindings: OperationBindingsObject | None = None,
+        deprecated: bool = False,
+        correlation_id: CorrelationId | None = None,
+        message_schema: ActorMessageMetadata | None = None,
+    ) -> YourFunc: ...
+
+    @overload
+    def actor(
+        self,
+        fn: None = None,
+        /,
+        name: str | None = None,
+        *,
+        confirmation_mode: Literal["manual"],
+        routing_strategy: RoutingStrategyT = topic_based_routing_strategy,
+        channel: Channel | str | None = None,
+        middlewares: Sequence[ActorMiddlewareT] | None = None,
+        timeout: float | None = None,
+        title: str | None = None,
+        summary: str | None = None,
+        description: str | None = None,
+        run_in_process: bool | None = None,
+        pool_executor: Executor | None = None,
+        converter: type[ConverterT] | None = None,
+        security: Sequence[Any] | None = None,
+        tags: Sequence[Tag] | None = None,
+        external_docs: ExternalDocs | None = None,
+        bindings: OperationBindingsObject | None = None,
+        deprecated: bool = False,
+        on_error: OnErrorManualT = "no_action",
+        correlation_id: CorrelationId | None = None,
+        message_schema: ActorMessageMetadata | None = None,
+    ) -> Callable[[YourFunc], YourFunc]: ...
+
+    @overload
+    def actor(
+        self,
+        fn: YourFunc,
+        /,
+        name: str | None = None,
+        *,
+        confirmation_mode: Literal["manual"],
+        routing_strategy: RoutingStrategyT = topic_based_routing_strategy,
+        channel: Channel | str | None = None,
+        middlewares: Sequence[ActorMiddlewareT] | None = None,
+        timeout: float | None = None,
+        title: str | None = None,
+        summary: str | None = None,
+        description: str | None = None,
+        run_in_process: bool | None = None,
+        pool_executor: Executor | None = None,
+        converter: type[ConverterT] | None = None,
+        security: Sequence[Any] | None = None,
+        tags: Sequence[Tag] | None = None,
+        external_docs: ExternalDocs | None = None,
+        bindings: OperationBindingsObject | None = None,
+        deprecated: bool = False,
+        on_error: OnErrorManualT = "no_action",
+        correlation_id: CorrelationId | None = None,
+        message_schema: ActorMessageMetadata | None = None,
+    ) -> YourFunc: ...
+
+    @overload
+    def actor(
+        self,
+        fn: None = None,
+        /,
+        name: str | None = None,
+        *,
+        confirmation_mode: Literal["manual_explicit"],
+        routing_strategy: RoutingStrategyT = topic_based_routing_strategy,
+        channel: Channel | str | None = None,
+        middlewares: Sequence[ActorMiddlewareT] | None = None,
+        timeout: float | None = None,
+        title: str | None = None,
+        summary: str | None = None,
+        description: str | None = None,
+        run_in_process: bool | None = None,
+        pool_executor: Executor | None = None,
+        converter: type[ConverterT] | None = None,
+        security: Sequence[Any] | None = None,
+        tags: Sequence[Tag] | None = None,
+        external_docs: ExternalDocs | None = None,
+        bindings: OperationBindingsObject | None = None,
+        deprecated: bool = False,
+        on_error: OnErrorManualT = "no_action",
+        correlation_id: CorrelationId | None = None,
+        message_schema: ActorMessageMetadata | None = None,
+    ) -> Callable[[ExplicitFunc], ExplicitFunc]: ...
+
+    @overload
+    def actor(
+        self,
+        fn: ExplicitFunc,
+        /,
+        name: str | None = None,
+        *,
+        confirmation_mode: Literal["manual_explicit"],
+        routing_strategy: RoutingStrategyT = topic_based_routing_strategy,
+        channel: Channel | str | None = None,
+        middlewares: Sequence[ActorMiddlewareT] | None = None,
+        timeout: float | None = None,
+        title: str | None = None,
+        summary: str | None = None,
+        description: str | None = None,
+        run_in_process: bool | None = None,
+        pool_executor: Executor | None = None,
+        converter: type[ConverterT] | None = None,
+        security: Sequence[Any] | None = None,
+        tags: Sequence[Tag] | None = None,
+        external_docs: ExternalDocs | None = None,
+        bindings: OperationBindingsObject | None = None,
+        deprecated: bool = False,
+        on_error: OnErrorManualT = "no_action",
+        correlation_id: CorrelationId | None = None,
+        message_schema: ActorMessageMetadata | None = None,
+    ) -> ExplicitFunc: ...
+
+    def actor(
+        self,
+        fn: YourFunc | ExplicitFunc | None = None,
+        /,
+        name: str | None = None,
+        *,
+        confirmation_mode: Literal[
+            "auto",
+            "always_ack",
+            "ack_first",
+            "manual",
+            "manual_explicit",
+        ] = "auto",
+        routing_strategy: RoutingStrategyT = topic_based_routing_strategy,
+        channel: Channel | str | None = None,
+        middlewares: Sequence[ActorMiddlewareT] | None = None,
+        timeout: float | None = None,
+        title: str | None = None,
+        summary: str | None = None,
+        description: str | None = None,
+        run_in_process: bool | None = None,
+        pool_executor: Executor | None = None,
+        converter: type[ConverterT] | None = None,
+        security: Sequence[Any] | None = None,
+        tags: Sequence[Tag] | None = None,
+        external_docs: ExternalDocs | None = None,
+        bindings: OperationBindingsObject | None = None,
+        deprecated: bool = False,
+        on_error: OnErrorAutoT | OnErrorManualT | None = None,
+        correlation_id: CorrelationId | None = None,
+        message_schema: ActorMessageMetadata | None = None,
+    ) -> (
+        YourFunc
+        | ExplicitFunc
+        | Callable[[YourFunc], YourFunc]
+        | Callable[[ExplicitFunc], ExplicitFunc]
+    ):
         """Actor decorator.
 
         Args:
@@ -491,6 +677,9 @@ class Router:
         )
         for p in signature.parameters.values():
             validate_dependency(p.annotation)
+
+        if on_error is None:
+            on_error = "no_action" if confirmation_mode in ("manual", "manual_explicit") else "nack"
 
         self._definitions.append(
             _ActorDefinition(

@@ -1,4 +1,8 @@
 from .actor import ActorData as ActorData
+from .actor import AutoActionT as AutoActionT
+from .actor import ManualActionT as ManualActionT
+from .actor import OnErrorAutoT as OnErrorAutoT
+from .actor import OnErrorManualT as OnErrorManualT
 from .actor import OnErrorT as OnErrorT
 from .channel import Channel as Channel
 from .contact import Contact as Contact

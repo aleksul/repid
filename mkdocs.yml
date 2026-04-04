@@ -22,7 +22,7 @@ nav:
     - Routing Strategies: user_guide/actors/routing.md
     - Connecting & Nesting Routers: user_guide/actors/routers.md
     - Execution & Timeouts: user_guide/actors/execution.md
-    - Error Handling & Retries: user_guide/actors/errors_and_retries.md
+    - Confirmation Modes & Error Handling: user_guide/actors/confirmation_and_errors.md
   - Workers:
     - Basics: user_guide/workers/index.md
     - Concurrency & Tasks Limits: user_guide/workers/concurrency.md

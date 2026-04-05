@@ -28,23 +28,24 @@ async def sentry_actor_middleware(
     message: ReceivedMessageT,
     actor: ActorData,
 ) -> T:
-    # 1. Isolate the context for this specific task execution
-    with sentry_sdk.new_scope() as scope:
-        # 2. Add useful contextual tags
-        scope.set_tag("repid.channel", message.channel)
+    with sentry_sdk.new_scope() as scope:  # (1)!
+        scope.set_tag("repid.channel", message.channel)  # (2)!
         scope.set_tag("repid.actor", actor.name)
         if message.message_id:
             scope.set_tag("repid.message_id", message.message_id)
 
         try:
-            # 3. Execute the actor
-            return await call_next(message, actor)
+            return await call_next(message, actor)  # (3)!
 
         except Exception as e:
-            # 4. Capture the exception before letting it bubble up to Repid
-            sentry_sdk.capture_exception(e)
+            sentry_sdk.capture_exception(e)  # (4)!
             raise
 ```
+
+1. Isolate the context for this specific task execution so tags don't bleed into other concurrent tasks.
+2. Add useful contextual tags that will appear in your Sentry dashboard.
+3. Execute the actor (and any subsequent middlewares).
+4. Capture the exception before letting it bubble up to Repid's internal error handler.
 
 ## Registering the Middleware
 
@@ -56,20 +57,21 @@ errors.
 import sentry_sdk
 from repid import Repid, Router
 
-# Initialize Sentry
-sentry_sdk.init()
+sentry_sdk.init()  # (1)!
 
-# Register the middleware globally
-app = Repid(actor_middlewares=[sentry_actor_middleware])
+app = Repid(actor_middlewares=[sentry_actor_middleware])  # (2)!
 
 router = Router()
 
-# Now any actor on this router will automatically report errors!
-@router.actor(channel="my_queue")
+@router.actor(channel="my_queue")  # (3)!
 async def process_task(data: dict) -> None:
     print("Processing task...")
 
-    # Any exceptions here will immediately show up in your Sentry dashboard!
-    # They will include the channel, actor name, and message ID tags!
-    raise ValueError("Something went wrong!")
+    raise ValueError("Something went wrong!")  # (4)!
 ```
+
+1. Initialize Sentry.
+2. Register the middleware globally on the Repid app so all routers inherit it.
+3. Any actor on this router will now automatically report errors.
+4. Any exceptions here will immediately show up in your Sentry dashboard!
+They will include the channel, actor name, and message ID tags.

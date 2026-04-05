@@ -1,50 +1,61 @@
 # RabbitMQ Retries with Exponential Backoff
 
-When a task fails, you often want to retry it automatically, but with increasing delays
-between attempts (exponential backoff). This prevents your system from being overwhelmed
-by a failing dependency and avoids wasting resources on immediate, likely-to-fail retries.
+When a task fails, retrying it with increasing delays (exponential backoff) prevents your
+system from being overwhelmed by failing dependencies.
 
-This cookbook explains how to implement exponential backoff using **RabbitMQ 4.x** (or
-3.10+), utilizing **Quorum Queues** to prevent poison messages and a smart routing
-topology that allows **one set of backoff queues** for all your work queues.
+This cookbook explains how to implement exponential backoff using **RabbitMQ 4.x**
+(or 3.13+ by enabling plugin `rabbitmq-plugins enable rabbitmq_amqp1_0`).
+It uses **Quorum Queues** to prevent poison messages and a smart **Topic Exchange** topology
+that shares a single set of delay queues across all your work queues.
 
-This guide draws inspiration from
-[Brian Storti's excellent article on the topic](https://www.brianstorti.com/rabbitmq-exponential-backoff/).
+_(Inspired by [Brian Storti's article](https://www.brianstorti.com/rabbitmq-exponential-backoff/))_
 
-## The Architecture
+## The Architecture & Message Flow
 
-RabbitMQ does not support natively delaying messages per-message without custom plugins.
-Instead, we simulate delays by placing a message in a queue with no consumers and a
-Time-To-Live (`x-message-ttl`). When the TTL expires, the message is dead-lettered to an
-exchange that routes it back to its original work queue.
+RabbitMQ lacks native per-message delays. We simulate delays using queues with a Time-To-Live
+(`x-message-ttl`). When the TTL expires, messages are dead-lettered back to an exchange.
 
-To support multiple backoff delays (e.g., 10s, 60s, 300s) for multiple different work
-queues (e.g., `emails`, `reports`) **without** creating a separate delay queue for every
-work queue, we use **Topic Exchanges**.
+Creating a dedicated delay queue for _every_ work queue and delay interval is inefficient.
+Instead, we use **Topic Exchanges** to share delay queues.
 
-1. **`retry_exchange` (Topic)**: Fails are published here. Routing key format:
-   `delay.<delay_ms>.<original_queue_name>`.
-2. **Delay Queues**: E.g., `delay_10s`. Bound to `retry_exchange` with routing key
-   `delay.10000.#`. Has `x-message-ttl=10000` and its `x-dead-letter-exchange` is set to
-   `requeue_exchange`.
-3. **`requeue_exchange` (Topic)**: Receives expired messages from delay queues.
-4. **Work Queues**: E.g., `emails`. Bound to `requeue_exchange` with routing key
-   `*.*.emails`. Configured as a **Quorum Queue** with `x-delivery-limit` to prevent
-   immediate poison message loops (e.g. if the worker hard crashes).
+Here is the lifecycle of a retried message:
+
+```mermaid
+graph TD
+    WQ[(my_work_queue)] -->|Consumes| W[Worker]
+
+    W -->|1st Fail Routing Key:<br/>delay.10000.my_work_queue| RX{{retry_exchange}}
+    W -->|2nd Fail Routing Key:<br/>delay.60000.my_work_queue| RX
+
+    RX -->|Binding:<br/>delay.10000.#| DQ1[(delay_10s<br/>TTL: 10s)]
+    RX -->|Binding:<br/>delay.60000.#| DQ2[(delay_60s<br/>TTL: 60s)]
+
+    DQ1 -.->|Dead-letter<br/>Routing Key preserved| RQX{{requeue_exchange}}
+    DQ2 -.->|Dead-letter<br/>Routing Key preserved| RQX
+
+    RQX -->|Binding:<br/>*.*.my_work_queue| WQ
+```
+
+1. **Fail**: A worker fails to process a message. The application calculates the delay, increments
+   the retry counter, and publishes it to `retry_exchange` with a routing key like
+   `delay.10000.my_work_queue` (or `delay.60000.my_work_queue` for the next attempt).
+2. **Wait**: The exchange routes it to the corresponding shared delay queue (e.g., `delay_10s` or
+   `delay_60s`) via the wildcard bindings. These queues have no consumers and a matching
+   `x-message-ttl`.
+3. **Expire**: The TTL expires. RabbitMQ dead-letters the message to `requeue_exchange`,
+   preserving the original routing key (e.g., `delay.10000.my_work_queue`).
+4. **Requeue**: `requeue_exchange` routes the message back to `my_work_queue` via the wildcard
+   binding `*.*.my_work_queue`.
 
 ## Setting Up the Topology
 
-Because Repid's AMQP server is designed for message processing rather than broker
-administration, you should set up your RabbitMQ topology using your preferred tool. For
-example, you can use RabbitMQ's native Definitions JSON format, which can be applied via
-the HTTP API.
+Configure this topology using your preferred administration tool. Below is an example using
+RabbitMQ's native Definitions JSON format.
 
-First, create a `definitions.json` file. This declarative format defines the exchanges,
-queues, and bindings exactly as described above:
+Create a `definitions.json` file:
 
 ```json
 {
-  "rabbit_version": "4.0.0",
   "vhosts": [{ "name": "/" }],
   "exchanges": [
     {
@@ -126,7 +137,7 @@ You can upload this configuration using the RabbitMQ Management HTTP API via `cu
 (assuming the management plugin `rabbitmq_management` is enabled):
 
 ```bash
-curl -i -u guest:guest -H "content-type:application/json" -X POST \  # (1)
+curl -i -u guest:guest -H "content-type:application/json" -X POST \ # (1)!
   -d @definitions.json http://localhost:15672/api/definitions
 ```
 
@@ -137,24 +148,12 @@ configuration file in `rabbitmq.conf` to this JSON file)._
 
 ## The Decorator Implementation
 
-To keep our actors clean and reusable, we can encapsulate the entire retry, delay
-calculation, and republishing logic into a Python decorator.
+To keep our actors clean and reusable, we can encapsulate the entire retry, delay calculation, and
+republishing logic into a single Python decorator.
 
-Because Repid relies on `inspect.signature()` to resolve Dependency Injection arguments
-(like parsing your JSON payload into Pydantic models or injecting `Message`), we **must**
-explicitly manipulate the `__signature__` attribute of our wrapper. If we don't, Repid
-either won't see your original arguments (breaking payload parsing) or won't see the
-injected `Message` parameter.
-
-By using `typing.Concatenate` and `ParamSpec`, we ensure the wrapper is perfectly
-type-safe for your IDE, while dynamically injecting the `message` parameter so Repid knows
-to provide it at runtime.
-
-By using Repid's default `confirmation_mode="auto"`, this decorator works elegantly: if it
-catches an exception, publishes a retry message, and suppresses the error by returning
-normally, Repid will automatically `ack` the original message. If retries are exhausted,
-it simply re-raises the exception so Repid can handle it according to the `on_error`
-policy (e.g., rejecting or dead-lettering it).
+This decorator dynamically merges the `Message` dependency into your actor's signature so Repid can
+inject it at runtime. It leverages Repid's default `confirmation_mode="auto"` to elegantly handle
+successes (auto-ack) and exhausted retries (re-raise for `on_error` handling).
 
 ```python
 import inspect
@@ -182,18 +181,14 @@ def with_rabbitmq_retries(
         backoff_delays = [10_000, 60_000, 300_000, 600_000, 1_800_000]
 
     def decorator(
-        func: Callable[P, Awaitable[R]]
+        func: Callable[P, Awaitable[R]],
     ) -> Callable[Concatenate[Message, P], Awaitable[R]]:
-        # 1. We must dynamically merge the signature so Repid injects BOTH
-        #    your custom payload arguments AND the `Message` dependency.
-        #    Without this, @wraps hides `message`, or removing @wraps hides your payload args!
-        sig = inspect.signature(func)
+        sig = inspect.signature(func)  # (1)!
 
-        # Add `message: Message` as a required parameter if it isn't already there
         if "message" not in sig.parameters:
             new_params = [
-                inspect.Parameter("message", inspect.Parameter.KEYWORD_ONLY, annotation=Message),
-                *list(sig.parameters.values())
+                *list(sig.parameters.values()),
+                inspect.Parameter("message", inspect.Parameter.KEYWORD_ONLY, annotation=Message)
             ]
             new_sig = sig.replace(parameters=new_params)
         else:
@@ -202,59 +197,64 @@ def with_rabbitmq_retries(
         @wraps(func)
         async def wrapper(message: Message, *args: P.args, **kwargs: P.kwargs) -> R:
             try:
-                # 2. Execute the original actor code
-                # If the original func didn't explicitly request 'message', we don't pass it down.
                 if "message" in sig.parameters:
                     kw = cast(dict[str, Any], kwargs)
                     kw["message"] = message
-                    return await func(*args, **kw)  # type: ignore[arg-type]
+                    return await func(*args, **kw)  # (2)!
                 else:
                     return await func(*args, **kwargs)
 
-            except retry_exceptions as e:
-                # 3. Handle the failure and calculate backoff
-                # Any exception NOT in retry_exceptions will bypass this block and be
-                # immediately handled by Repid's on_error policy (no retries).
+            except retry_exceptions as e:  # (3)!
                 headers = message.headers or {}
                 retry_count = int(headers.get("x-retry-count", 0))
 
                 if retry_count >= max_retries:
                     print(f"Max retries ({max_retries}) reached for message {message.message_id}")
-                    # Re-raise the exception so Repid's auto mode acts on it
-                    raise
+                    raise  # (4)!
 
                 delay_index = min(retry_count, len(backoff_delays) - 1)
                 delay_ms = backoff_delays[delay_index]
 
                 print(f"Task failed: {e}. Retrying in {delay_ms}ms (Attempt {retry_count + 1})")
 
-                # 4. Republish to the delay exchange
                 new_headers = headers.copy()
                 new_headers["x-retry-count"] = str(retry_count + 1)
 
-                # We explicitly construct the AMQP 1.0 address for a RabbitMQ exchange
-                # Format: /exchanges/<exchange_name>/<routing_key>
-                # message.channel contains the original queue name
-                amqp_to_address = f"/exchanges/{retry_exchange}/delay.{delay_ms}.{message.channel}"
+                amqp_to_address = (
+                  f"/exchanges/{retry_exchange}/delay.{delay_ms}.{message.channel}"  # (5)!
+                )
 
                 await message.send_message(
-                    channel=message.channel, # The channel doesn't matter since `to` overrides it
+                    channel=message.channel,
                     payload=message.payload,
                     content_type=message.content_type,
                     headers=new_headers,
                     server_specific_parameters={"to": amqp_to_address},
                 )
 
-                # Return normally to suppress the exception.
-                # In auto mode, this causes Repid to ACK the original message!
-                return None  # type: ignore[return-value]
+                return None  # (6)!
 
-        # Apply the merged signature to the wrapper so Repid's DI can parse it
-        wrapper.__signature__ = new_sig  # type: ignore[attr-defined]
+        wrapper.__signature__ = new_sig  # (7)!
         return wrapper
 
     return decorator
 ```
+
+1. We must dynamically merge the signature so Repid injects BOTH your custom payload arguments
+AND the `Message` dependency. Without this, `@wraps` hides `message`,
+or removing `@wraps` hides your payload args!
+2. Execute the original actor code, safely omitting `message` if they didn't explicitly request
+it in their signature.
+3. Handle the failure and calculate backoff. Any exception NOT in `retry_exceptions` will bypass
+this block and be immediately handled by Repid's `on_error` policy (no retries).
+4. Re-raise the exception so Repid's auto mode catches it and naturally nacks/rejects
+it based on your actor settings.
+5. Explicitly construct the AMQP 1.0 address for a RabbitMQ exchange
+(format: `/exchanges/<exchange_name>/<routing_key>`).
+6. Return normally to suppress the exception. In auto mode, this causes Repid
+to automatically `ack` the original message!
+7. Apply the merged signature to the wrapper so Repid's DI parser knows
+`message` needs to be provided.
 
 ### Using the Decorator
 
@@ -270,20 +270,11 @@ async def process_task(data: dict) -> None:
     print(f"Processing data: {data}")
 
     if data.get("bad_payload"):
-        # This will NOT be retried. It immediately propagates to Repid and gets NACK-ed.
-        raise ValueError("Invalid data format")
+        raise ValueError("Invalid data format")  # (1)!
 
-    # This WILL be caught by the decorator and retried with backoff.
-    raise ConnectionError("Temporary API failure")
+    raise ConnectionError("Temporary API failure")  # (2)!
 ```
 
-## Summary
-
-By combining **Topic Exchanges**, **Message TTLs**, and **Repid's extensible Server
-architecture**:
-
-1. You can exponentially back off failed jobs without overwhelming your consumers.
-2. A **single** set of backoff queues handles delays for **all** your work queues
-   automatically.
-3. You maintain safety against unhandled application crashes via Quorum Queue
-   `x-delivery-limit`.
+1. This will NOT be retried. It bypasses our decorator exception block
+and immediately propagates to Repid to be handled (e.g. NACK-ed or Dead Lettered).
+2. This WILL be caught by the decorator and retried with exponential backoff!

@@ -40,6 +40,9 @@ nav:
   - Testing: cookbook/testing.md
   - Chaining jobs: cookbook/chaining_jobs.md
   - Middlewares: cookbook/middlewares.md
+- Cookbook:
+  - Sentry Middleware: cookbook/sentry_middleware.md
+  - RabbitMQ Retries: cookbook/rabbitmq_retries.md
 - Extending Repid:
   - Your own brokers: advanced_user_guide/your_own_brokers.md
   - Your own serializer: advanced_user_guide/your_own_serializer.md
@@ -114,6 +117,11 @@ plugins:
       Ecosystem & Integrations:
       - integrations/*.md
       Best Practices & Patterns:
-      - cookbook/*.md
+      - cookbook/testing.md
+      - cookbook/chaining_jobs.md
+      - cookbook/middlewares.md
+      Cookbook:
+      - cookbook/sentry_middleware.md
+      - cookbook/rabbitmq_retries.md
       Extending Repid:
       - advanced_user_guide/*.md

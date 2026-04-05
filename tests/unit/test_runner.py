@@ -681,6 +681,25 @@ async def test_runner_on_error_nack_nacks_message() -> None:
         assert client.get_processed_messages()[0].nacked
 
 
+async def test_runner_on_error_ack_acks_message() -> None:
+    app = Repid()
+    router = Router()
+
+    @router.actor(on_error="ack")
+    async def ack_on_error_actor() -> None:
+        raise ValueError("Intentional error")
+
+    app.include_router(router)
+
+    async with TestClient(app, raise_on_actor_error=False) as client:
+        await client.send_message_json(
+            channel="default",
+            payload={},
+            headers={"topic": "ack_on_error_actor"},
+        )
+        assert client.get_processed_messages()[0].acked
+
+
 @pytest.mark.parametrize(
     ("exc_type", "expected_rejected"),
     [
@@ -719,7 +738,7 @@ async def test_runner_on_error_ignored_for_always_ack() -> None:
     app = Repid()
     router = Router()
 
-    @router.actor(confirmation_mode="always_ack", on_error="reject")
+    @router.actor(confirmation_mode="always_ack", on_error="reject")  # type: ignore[call-overload]
     async def always_ack_reject_actor() -> None:
         raise ValueError("Intentional error")
 

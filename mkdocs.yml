@@ -43,6 +43,7 @@ nav:
 - Cookbook:
   - Sentry Middleware: cookbook/sentry_middleware.md
   - RabbitMQ Retries: cookbook/rabbitmq_retries.md
+  - Large Payloads: cookbook/large_payloads.md
 - Extending Repid:
   - Your own brokers: advanced_user_guide/your_own_brokers.md
   - Your own serializer: advanced_user_guide/your_own_serializer.md
@@ -123,5 +124,6 @@ plugins:
       Cookbook:
       - cookbook/sentry_middleware.md
       - cookbook/rabbitmq_retries.md
+      - cookbook/large_payloads.md
       Extending Repid:
       - advanced_user_guide/*.md

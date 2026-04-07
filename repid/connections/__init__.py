@@ -29,6 +29,11 @@ if is_installed("redis"):
 
     __all__ += ["RedisServer"]
 
+if is_installed("aiokafka"):
+    from repid.connections.kafka import KafkaServer
+
+    __all__ += ["KafkaServer"]
+
 # check via try-import because pubsub is a sub-package of gcloud.aio
 imported_pubsub = False
 try:

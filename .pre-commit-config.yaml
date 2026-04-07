@@ -45,6 +45,6 @@ repos:
     name: mypy
     language: python
     pass_filenames: false
-    entry: uv run mypy .
+    entry: uv run --no-active mypy .
     types: [python]
     require_serial: true

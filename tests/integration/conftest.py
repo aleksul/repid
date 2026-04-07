@@ -1,14 +1,18 @@
+import asyncio
 from pathlib import Path
 from time import sleep
 
 import grpc
 import pytest
+from aiokafka.admin import AIOKafkaAdminClient, NewTopic
+from aiokafka.errors import KafkaConnectionError
 from pytest_docker_tools import container, wrappers
 from pytest_lazy_fixtures import lf as lazy_fixture
 
 from repid import Repid
 from repid.connections.abc import ServerT
 from repid.connections.amqp import AmqpServer
+from repid.connections.kafka import KafkaServer
 from repid.connections.pubsub import PubsubServer
 from repid.connections.redis import RedisServer
 from tests.integration.pubsub_proto_helpers import Subscription, Topic
@@ -46,6 +50,29 @@ pubsub_container = container(
     ports={"8085/tcp": None},
     scope="session",
     wrapper_class=DeltioContainer,
+)
+
+
+class KafkaContainer(wrappers.Container):
+    def ready(self) -> bool:
+        self._container.reload()
+        return bool(self.status == "running")
+
+
+kafka_container = container(
+    image="redpandadata/redpanda:latest",
+    entrypoint="/bin/sh",
+    command=[
+        "-c",
+        "while [ ! -f /tmp/port ]; do sleep 0.1; done && "
+        "PORT=$(cat /tmp/port) && "
+        "exec /usr/bin/rpk redpanda start --smp 1 --reserve-memory 0M --overprovisioned --node-id 0 "
+        "--kafka-addr PLAINTEXT://0.0.0.0:29092 "
+        "--advertise-kafka-addr PLAINTEXT://127.0.0.1:$PORT",
+    ],
+    ports={"29092/tcp": None},
+    scope="session",
+    wrapper_class=KafkaContainer,
 )
 
 
@@ -144,11 +171,84 @@ def redis_connection(redis_container: "wrappers.Container") -> ServerT:
     return RedisServer(f"redis://:test@localhost:{redis_container.ports['6379/tcp'][0]}/0")
 
 
+@pytest.fixture(scope="session")
+async def kafka_connection(kafka_container: "wrappers.Container") -> ServerT:  # noqa: C901, PLR0912
+    # Wait for container ports to be assigned
+    port = None
+    for _ in range(100):
+        try:
+            kafka_container._container.reload()
+            port = kafka_container.ports["29092/tcp"][0]
+            break
+        except (KeyError, AttributeError):
+            sleep(0.1)
+
+    if port is None:
+        raise RuntimeError("Could not get port from kafka container")
+
+    kafka_container.exec_run(f"sh -c 'echo {port} > /tmp/port'")
+
+    while "Started Kafka API server" not in kafka_container.logs():
+        await asyncio.sleep(0.1)
+
+    dsn = f"127.0.0.1:{port}"
+    server = KafkaServer(dsn, client_id="repid-test-client")
+
+    # Retry connection until redpanda is fully up
+    for _ in range(100):
+        try:
+            await server.connect()
+            await server.disconnect()
+            break
+        except (KafkaConnectionError, ConnectionRefusedError):
+            await asyncio.sleep(0.1)
+    else:
+        raise Exception("Kafka did not start in time")
+
+    # Connect admin client and list existing topics
+    admin_client = AIOKafkaAdminClient(bootstrap_servers=dsn)
+    for _ in range(10):
+        try:
+            await admin_client.start()
+            existing_topics = await admin_client.list_topics()
+            break
+        except Exception:
+            await asyncio.sleep(0.5)
+    else:
+        raise Exception("Failed to start admin client")
+
+    # Create necessary topics
+    try:
+        topics_to_create = []
+        for topic in [
+            "default",
+            "repid_default_dlq",
+            "another",
+            "test_reject_channel",
+            "repid_test_reject_channel_dlq",
+            "test_nack_channel",
+            "repid_test_nack_channel_dlq",
+            "test_reply_channel",
+            "test_reply_dest_channel",
+            "test_close_channel",
+        ]:
+            if topic not in existing_topics:
+                topics_to_create.append(NewTopic(topic, num_partitions=1, replication_factor=1))
+
+        if topics_to_create:
+            await admin_client.create_topics(topics_to_create)
+    finally:
+        await admin_client.close()
+
+    return server
+
+
 @pytest.fixture(
     params=[
         lazy_fixture("rabbitmq_connection"),
         lazy_fixture("pubsub_connection"),
         lazy_fixture("redis_connection"),
+        lazy_fixture("kafka_connection"),
     ],
 )
 def autoconn(request: pytest.FixtureRequest) -> Repid:

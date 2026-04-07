@@ -650,6 +650,7 @@ class Router:
                 summary=summary,
                 description=description,
                 run_in_process=run_in_process,
+                pool_executor=pool_executor,
                 converter=converter,
                 security=security,
                 tags=tags,
@@ -659,6 +660,15 @@ class Router:
                 on_error=on_error,
                 correlation_id=correlation_id,
                 message_schema=message_schema,
+            )
+
+        if run_in_process is True and pool_executor is not None:
+            raise ValueError("Specify either 'run_in_process' or 'pool_executor', not both.")
+
+        if confirmation_mode in ("ack_first", "always_ack") and on_error is not None:
+            raise ValueError(
+                "The 'on_error' parameter is not compatible with 'ack_first' or 'always_ack' "
+                "confirmation modes, as the message will always be acknowledged.",
             )
 
         fn_locals: dict[str, Any] | None = None

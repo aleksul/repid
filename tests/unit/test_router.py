@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 
+import pytest
+
 from repid import Router
 from repid.converter import BasicConverter
 from repid.data import Channel, MessageData
@@ -176,3 +178,32 @@ def test_include_router_propagates_converter() -> None:
     router1.include_router(router2)
 
     assert router2.converter is BasicConverter
+
+
+def test_actor_raises_on_both_run_in_process_and_pool_executor() -> None:
+    router = Router()
+    executor = ThreadPoolExecutor(max_workers=1)
+
+    with pytest.raises(
+        ValueError,
+        match=r"Specify either 'run_in_process' or 'pool_executor', not both\.",
+    ):
+
+        @router.actor(run_in_process=True, pool_executor=executor)
+        def my_actor() -> None:
+            pass
+
+
+@pytest.mark.parametrize("confirmation_mode", ["ack_first", "always_ack"])
+def test_actor_raises_on_invalid_confirmation_mode_and_on_error(confirmation_mode: str) -> None:
+    router = Router()
+
+    with pytest.raises(
+        ValueError,
+        match=r"The 'on_error' parameter is not compatible with 'ack_first' or 'always_ack' "
+        r"confirmation modes, as the message will always be acknowledged\.",
+    ):
+
+        @router.actor(confirmation_mode=confirmation_mode, on_error="reject")  # type: ignore[call-overload]
+        def my_actor() -> None:
+            pass

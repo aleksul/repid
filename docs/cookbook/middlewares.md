@@ -17,8 +17,7 @@ To create an actor middleware, you implement the `ActorMiddlewareT` protocol.
 
     ```python
     from typing import Any, Coroutine, Callable
-    from repid import ReceivedMessageT
-    from repid import ActorData
+    from repid import ReceivedMessageT, ActorData
 
     async def logging_middleware[T](
         call_next: Callable[[ReceivedMessageT, ActorData], Coroutine[None, None, T]],
@@ -73,9 +72,9 @@ To create a producer middleware, you implement the `ProducerMiddlewareT` protoco
 === "Python 3.12+"
 
     ```python
+    import uuid
     from typing import Any, Coroutine, Callable
     from repid import MessageData
-    import uuid
 
     async def producer_tracing_middleware[T](
         call_next: Callable[
@@ -108,9 +107,9 @@ To create a producer middleware, you implement the `ProducerMiddlewareT` protoco
 === "Python 3.10+"
 
     ```python
+    import uuid
     from typing import Any, Coroutine, Callable, TypeVar
     from repid import MessageData
-    import uuid
 
     T = TypeVar("T")
 

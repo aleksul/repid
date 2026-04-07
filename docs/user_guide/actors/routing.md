@@ -79,7 +79,10 @@ When a worker pulls a message from a channel, it evaluates the routing strategie
 listening on that channel.
 
 - **Multiple Matches**: If multiple actors match a single message, the message is **always routed to
-  the first matching actor** (based on the order they were registered to the router).
+    the first matching actor** (based on the order they were registered to the router). A common
+    example is defining 2 actors on the same channel where one actor uses
+    `catch_all_routing_strategy`: if that catch-all actor is registered first, it will consume
+    messages before a more specific topic-based actor can match them.
 - **No Matches**: If no actor matches the message, the worker will reject it (returning it to the
   queue). If the same unrouted message is pulled repeatedly, Repid will eventually classify it as a
   "poison message" and negatively acknowledge (`Nack`) it, to prevent it from permanently blocking

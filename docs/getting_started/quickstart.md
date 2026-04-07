@@ -83,10 +83,11 @@ open. You can handle connections using async context managers.
 
 ```python
 import asyncio
-from repid import Repid, InMemoryServer
+from repid import Repid, AmqpServer
 
 app = Repid()
-app.servers.register_server("default", InMemoryServer(), is_default=True)
+server = AmqpServer("amqp://localhost")
+app.servers.register_server("my_rabbitmq", server, is_default=True)
 
 async def main():
     # Retrieve the default server and open a connection
@@ -121,11 +122,12 @@ connected to the same underlying server/broker!
 
 ```python title="worker.py"
 import asyncio
-from repid import Repid, Router, InMemoryServer
+from repid import Repid, Router, AmqpServer
 
 # 1. Initialize an app for the worker to use
 app = Repid()
-app.servers.register_server("default", InMemoryServer(), is_default=True)
+server = AmqpServer("amqp://localhost")
+app.servers.register_server("my_rabbitmq", server, is_default=True)
 
 # 2. Create a router and an actor
 router = Router()

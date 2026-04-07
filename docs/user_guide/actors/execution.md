@@ -69,5 +69,5 @@ def run_heavy_query():
 ```
 
 !!! note
-    If both `pool_executor` and `run_in_process` are specified,
-    `pool_executor` will be used.
+    You cannot specify both `pool_executor` and `run_in_process`, as
+    `run_in_process` implies using Repid's process pool executor.

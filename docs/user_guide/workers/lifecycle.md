@@ -75,8 +75,9 @@ sequenceDiagram
    currently executing actors to finish their processing naturally.
 3. **Cancellation (if necessary)**: If the timeout is reached and actors are still running, Repid
    triggers an `asyncio.CancelledError` inside those tasks. They are given a brief moment
-   (`cancellation_timeout`, defaulting to 1s) to run any `finally` blocks, after which the worker
-   `Reject`s their messages, returning them to the queue so another worker can pick them up.
+   (`cancellation_timeout`, defaulting to 1s) to run any `finally` blocks, while the worker
+   simultaneously `Reject`s their messages, returning them to the queue so another worker can
+   pick them up.
 4. **Disconnect**: Finally, the worker safely closes its connection to the broker and shuts down the
    process.
 

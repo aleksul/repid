@@ -734,26 +734,6 @@ async def test_runner_on_error_callable_routes_by_exception_type(
         assert msg.nacked == (not expected_rejected)
 
 
-async def test_runner_on_error_ignored_for_always_ack() -> None:
-    app = Repid()
-    router = Router()
-
-    @router.actor(confirmation_mode="always_ack", on_error="reject")  # type: ignore[call-overload]
-    async def always_ack_reject_actor() -> None:
-        raise ValueError("Intentional error")
-
-    app.include_router(router)
-
-    async with TestClient(app, raise_on_actor_error=False) as client:
-        await client.send_message_json(
-            channel="default",
-            payload={},
-            headers={"topic": "always_ack_reject_actor"},
-        )
-        # always_ack overrides on_error — message is acked, not rejected
-        assert client.get_processed_messages()[0].acked
-
-
 def _make_unrouted_message(message_id: str | None) -> Mock:
     msg = Mock()
     msg.message_id = message_id

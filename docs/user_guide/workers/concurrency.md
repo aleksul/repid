@@ -1,4 +1,4 @@
-# Tasks Limit
+# Concurrency limit
 
 A Repid worker runs inside a single `asyncio` event loop. It can pull multiple messages from the
 broker and execute them concurrently.

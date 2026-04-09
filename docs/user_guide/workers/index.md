@@ -35,7 +35,7 @@ if __name__ == "__main__":
     You usually run your worker loop as an independent process/instance,
     separately from your main web server.
 
-## Restarts & Messages Limit
+## Messages Limit
 
 In distributed orchestrated systems (like Kubernetes or Docker Swarm), it is a common practice to
 periodically restart worker processes to prevent long-term memory leaks or zombie connections.

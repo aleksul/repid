@@ -30,6 +30,9 @@ class Depends:
         run_in_process: bool = False,
         pool_executor: Executor | None = None,
     ) -> None:
+        if run_in_process is True and pool_executor is not None:
+            raise ValueError("Specify either 'run_in_process' or 'pool_executor', not both.")
+
         self._fn = asyncify(fn, run_in_process=run_in_process, executor=pool_executor)
 
         self._fn_locals = None
@@ -48,6 +51,9 @@ class Depends:
         run_in_process: bool = False,
         pool_executor: Executor | None = None,
     ) -> None:
+        if run_in_process is True and pool_executor is not None:
+            raise ValueError("Specify either 'run_in_process' or 'pool_executor', not both.")
+
         self._fn = asyncify(fn, run_in_process=run_in_process, executor=pool_executor)
         self._update_subdependencies()
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Annotated, Any
 
 import pytest
@@ -13,6 +14,23 @@ from repid.data import MessageData
 from repid.dependencies import Depends, MessageDependency
 from repid.dependencies._utils import get_dependency
 from repid.test_client import TestClient
+
+
+def test_depends_raises_on_both_run_in_process_and_pool_executor() -> None:
+    executor = ThreadPoolExecutor(max_workers=1)
+
+    with pytest.raises(
+        ValueError,
+        match=r"Specify either 'run_in_process' or 'pool_executor', not both\.",
+    ):
+        Depends(lambda: None, run_in_process=True, pool_executor=executor)
+
+    dep = Depends(lambda: None)
+    with pytest.raises(
+        ValueError,
+        match=r"Specify either 'run_in_process' or 'pool_executor', not both\.",
+    ):
+        dep.override(lambda: None, run_in_process=True, pool_executor=executor)
 
 
 async def test_simple_message_dependency() -> None:

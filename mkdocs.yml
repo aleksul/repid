@@ -13,6 +13,7 @@ nav:
   - Playground: playground.md
 - Getting Started:
   - Quickstart: getting_started/quickstart.md
+  - Supported Brokers: getting_started/supported_brokers.md
   - Glossary: getting_started/glossary.md
 - Core Concepts:
   - Messages: user_guide/messages.md
@@ -25,7 +26,7 @@ nav:
     - Confirmation Modes & Error Handling: user_guide/actors/confirmation_and_errors.md
   - Workers:
     - Basics: user_guide/workers/index.md
-    - Concurrency & Tasks Limits: user_guide/workers/concurrency.md
+    - Concurrency Limits: user_guide/workers/concurrency.md
     - Built-in Servers: user_guide/workers/built_in_servers.md
     - Lifecycle & Production: user_guide/workers/lifecycle.md
   - Dependency Injection: user_guide/dependency_injection.md

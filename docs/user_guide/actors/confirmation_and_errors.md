@@ -129,3 +129,38 @@ If you need to implement retries, you have two main options:
     ever yielding an error back to Repid. Note that from the broker's perspective,
     processing of a single message takes much longer, which can lead to worse
     concurrency.
+
+## Poison Message Handling
+
+A "poison message" is a message that consistently fails to process, potentially causing an
+infinite loop of errors and retries that clogs your queue.
+
+How Repid handles poison messages depends on *where* the failure occurs: during routing,
+or during execution.
+
+### Unrouted Messages
+
+If a message is pulled from a channel but Repid cannot find a matching actor to route it
+to, Repid will initially `reject` (requeue) the message. However, to prevent infinite
+loops, Repid maintains an internal counter of how many times it has seen the same unrouted
+message.
+
+If an unrouted message is encountered **10 times** (by default), Repid classifies it as a
+poison message. It logs an `actor.route.poison_message` error and will `nack` the message
+instead of requeuing it, allowing the broker to drop it or move it to a Dead Letter Queue
+(DLQ).
+
+### Actor Execution Failures
+
+Because Repid delegates execution retry logic to the underlying message broker, handling
+poison messages that crash *inside* your actor code largely depends on your
+infrastructure:
+
+1. **Broker-Level Delivery Limits (Recommended):** Most mature brokers support configuring
+   maximum delivery attempts. Once a message exceeds this limit, the broker automatically
+   routes it to a Dead Letter Queue (DLQ) or drops it. This prevents the message from
+   being infinitely re-queued and keeps your application logic clean.
+2. **Application-Level Handling:** You can also handle poison messages explicitly within
+   your actor. By catching exceptions and explicitly acknowledging (`ack`) the failing
+   message—perhaps after logging it or saving the payload to a separate database table—you
+   remove it from the queue and stop the retry loop.

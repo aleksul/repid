@@ -4,6 +4,7 @@ from pathlib import Path
 from time import sleep
 from typing import Any
 
+import aiobotocore.session
 import grpc
 import nats
 import pytest
@@ -19,6 +20,7 @@ from repid.connections.kafka import KafkaServer
 from repid.connections.nats import NatsServer
 from repid.connections.pubsub import PubsubServer
 from repid.connections.redis import RedisServer
+from repid.connections.sqs import SqsServer
 from tests.integration.pubsub_proto_helpers import Subscription, Topic
 
 RABBITMQ_DEFINITIONS_JSON = Path(__file__).parent / "rabbitmq_definitions.json"
@@ -91,6 +93,12 @@ nats_container = container(
     ports={"4222/tcp": None},
     scope="session",
     wrapper_class=NatsContainer,
+)
+
+elasticmq_container = container(
+    image="softwaremill/elasticmq-native:1.7.1",
+    ports={"9324/tcp": None},
+    scope="session",
 )
 
 
@@ -353,6 +361,50 @@ async def nats_connection(nats_container: "wrappers.Container") -> ServerT:
     return server
 
 
+@pytest.fixture(scope="session")
+async def sqs_connection(elasticmq_container: "wrappers.Container") -> ServerT:
+    while "Started SQS rest server" not in elasticmq_container.logs():
+        await asyncio.sleep(0.1)
+
+    port = elasticmq_container.ports["9324/tcp"][0]
+    endpoint_url = f"http://127.0.0.1:{port}"
+
+    session = aiobotocore.session.get_session()
+    async with session.create_client(
+        "sqs",
+        region_name="elasticmq",
+        endpoint_url=endpoint_url,
+        aws_access_key_id="x",
+        aws_secret_access_key="x",
+        aws_session_token="x",
+    ) as client:
+        # Create necessary queues for tests
+        queues_to_create = [
+            "default",
+            "test_nack_channel",
+            "repid_test_nack_channel_dlq",
+            "test_reply_channel",
+            "test_reply_dest_channel",
+            "test_double_actions_channel",
+            "test_exception_channel",
+            "test_close_channel",
+            "another",
+            "other_channel",
+            "wrong",
+        ]
+        for q in queues_to_create:
+            await client.create_queue(QueueName=q)
+
+    return SqsServer(
+        endpoint_url=endpoint_url,
+        region_name="elasticmq",
+        aws_access_key_id="x",
+        aws_secret_access_key="x",
+        aws_session_token="x",
+        receive_wait_time_seconds=0,
+    )
+
+
 @pytest.fixture(
     params=[
         lazy_fixture("rabbitmq_connection"),
@@ -360,6 +412,7 @@ async def nats_connection(nats_container: "wrappers.Container") -> ServerT:
         lazy_fixture("redis_connection"),
         lazy_fixture("kafka_connection"),
         lazy_fixture("nats_connection"),
+        lazy_fixture("sqs_connection"),
     ],
 )
 def autoconn(request: pytest.FixtureRequest) -> Repid:

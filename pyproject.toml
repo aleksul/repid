@@ -14,7 +14,8 @@ docs = [
 lint = [
   "mypy>=1.19.1",
   "ruff>=0.15.8",
-  "types-grpcio>=1.0.0.20251009"
+  "types-grpcio>=1.0.0.20251009",
+  "types-aiobotocore[sqs]>=3.4.0"
 ]
 pre-commit = [
   "pre-commit>=4.5.1"
@@ -64,6 +65,7 @@ pubsub = [
 ]
 pydantic = ["pydantic>=2.0.0,<3.0.0"]
 redis = ["redis<8.0.0,>=7.0.0"]
+sqs = ["aiobotocore>=2.10.0,<3.0.0"]
 
 [project.urls]
 documentation = "https://repid.aleksul.space"

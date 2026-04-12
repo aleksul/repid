@@ -56,6 +56,7 @@ requires-python = ">=3.10"
 
 [project.optional-dependencies]
 amqp = []
+kafka = ["aiokafka>=0.13.0,<0.14.0"]
 pubsub = [
   "google-auth>=2.43.0",
   "grpcio>=1.76.0"
@@ -80,7 +81,7 @@ exclude_lines = [
 fail_under = 100
 
 [tool.coverage.run]
-omit = ["repid/connections/rabbitmq/protocols.py"]
+omit = ["repid/connections/rabbitmq/protocols.py", "repid/connections/kafka/protocols.py"]
 source = ["repid"]
 
 [tool.hatch.build.targets.wheel]
@@ -119,7 +120,7 @@ module = "tests.*"
 
 [[tool.mypy.overrides]]
 ignore_missing_imports = true
-module = ["pytest_docker_tools"]
+module = ["pytest_docker_tools", "aiokafka.*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

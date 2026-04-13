@@ -1,8 +1,11 @@
 import asyncio
+import contextlib
 from pathlib import Path
 from time import sleep
+from typing import Any
 
 import grpc
+import nats
 import pytest
 from aiokafka.admin import AIOKafkaAdminClient, NewTopic
 from aiokafka.errors import KafkaConnectionError
@@ -13,6 +16,7 @@ from repid import Repid
 from repid.connections.abc import ServerT
 from repid.connections.amqp import AmqpServer
 from repid.connections.kafka import KafkaServer
+from repid.connections.nats import NatsServer
 from repid.connections.pubsub import PubsubServer
 from repid.connections.redis import RedisServer
 from tests.integration.pubsub_proto_helpers import Subscription, Topic
@@ -46,7 +50,7 @@ class DeltioContainer(wrappers.Container):
 
 
 pubsub_container = container(
-    image="ghcr.io/jeffijoe/deltio:latest",
+    image="ghcr.io/jeffijoe/deltio:0.7.0",
     ports={"8085/tcp": None},
     scope="session",
     wrapper_class=DeltioContainer,
@@ -60,7 +64,7 @@ class KafkaContainer(wrappers.Container):
 
 
 kafka_container = container(
-    image="redpandadata/redpanda:latest",
+    image="redpandadata/redpanda:v26.1.4",
     entrypoint="/bin/sh",
     command=[
         "-c",
@@ -73,6 +77,20 @@ kafka_container = container(
     ports={"29092/tcp": None},
     scope="session",
     wrapper_class=KafkaContainer,
+)
+
+
+class NatsContainer(wrappers.Container):
+    def ready(self) -> bool:
+        return "Server is ready" in self.logs()
+
+
+nats_container = container(
+    image="nats:2.12.6",
+    command="-js",
+    ports={"4222/tcp": None},
+    scope="session",
+    wrapper_class=NatsContainer,
 )
 
 
@@ -243,12 +261,105 @@ async def kafka_connection(kafka_container: "wrappers.Container") -> ServerT:  #
     return server
 
 
+@pytest.fixture
+async def nats_connection(nats_container: "wrappers.Container") -> ServerT:
+
+    port = None
+    for _ in range(100):
+        try:
+            nats_container._container.reload()
+            port = nats_container.ports["4222/tcp"][0]
+            break
+        except (KeyError, AttributeError):
+            await asyncio.sleep(0.1)
+
+    if port is None:
+        raise RuntimeError("Could not get port from nats container")
+
+    dsn = f"nats://127.0.0.1:{port}"
+    server = NatsServer(dsn)
+
+    for _ in range(100):
+        nc = None
+        try:
+            nc = await nats.connect(dsn)
+            js = nc.jetstream()
+
+            async def ensure_stream(js_context: Any, name: str, subjects: list[str]) -> None:
+                try:
+                    await js_context.add_stream(name=name, subjects=subjects)
+                except Exception as e:
+                    if (
+                        "stream name already in use" not in str(e).lower()
+                        and "already exists" not in str(e).lower()
+                    ):
+                        raise
+
+            await ensure_stream(
+                js_context=js,
+                name="repid_default",
+                subjects=["default", "another", "another_edge_case"],
+            )
+            await ensure_stream(
+                js_context=js,
+                name="test_reject_channel_stream",
+                subjects=["test_reject_channel"],
+            )
+            await ensure_stream(
+                js_context=js,
+                name="test_reply_channel_stream",
+                subjects=["test_reply_channel"],
+            )
+            await ensure_stream(
+                js_context=js,
+                name="test_exc_channel_stream",
+                subjects=["test_exc_channel"],
+            )
+            await ensure_stream(
+                js_context=js,
+                name="repid_test_exc_channel_dlq_stream",
+                subjects=["repid_test_exc_channel_dlq"],
+            )
+            await ensure_stream(
+                js_context=js,
+                name="repid_default_dlq",
+                subjects=["repid_default_dlq"],
+            )
+            await ensure_stream(
+                js_context=js,
+                name="test_nack_channel_stream",
+                subjects=["test_nack_channel"],
+            )
+            await ensure_stream(
+                js_context=js,
+                name="test_nack_channel_stream_2",
+                subjects=["test_nack_channel_2"],
+            )
+            await ensure_stream(
+                js_context=js,
+                name="repid_test_nack_channel_dlq_stream",
+                subjects=["repid_test_nack_channel_dlq"],
+            )
+            break
+        except Exception:
+            await asyncio.sleep(0.1)
+        finally:
+            if nc is not None:
+                with contextlib.suppress(Exception):
+                    await nc.close()
+    else:
+        raise Exception("NATS did not start in time")
+
+    return server
+
+
 @pytest.fixture(
     params=[
         lazy_fixture("rabbitmq_connection"),
         lazy_fixture("pubsub_connection"),
         lazy_fixture("redis_connection"),
         lazy_fixture("kafka_connection"),
+        lazy_fixture("nats_connection"),
     ],
 )
 def autoconn(request: pytest.FixtureRequest) -> Repid:

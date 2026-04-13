@@ -48,3 +48,8 @@ if imported_pubsub:
     from repid.connections.pubsub import PubsubServer
 
     __all__ += ["PubsubServer"]
+
+if is_installed("nats"):
+    from repid.connections.nats import NatsServer
+
+    __all__ += ["NatsServer"]

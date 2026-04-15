@@ -389,9 +389,13 @@ class RedisSubscriber(SubscriberT):
             except asyncio.CancelledError:
                 break
             except (ConnectionError, TimeoutError, ResponseError) as exc:
+                if self._closed:  # pragma: no cover
+                    break
                 logger.exception("consumer.error.redis", exc_info=exc)
                 await asyncio.sleep(self._retry_delay)
             except Exception as exc:
+                if self._closed:  # pragma: no cover
+                    break
                 logger.exception("consumer.error.unexpected", exc_info=exc)
                 await asyncio.sleep(self._retry_delay)
 

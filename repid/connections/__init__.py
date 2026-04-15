@@ -53,3 +53,8 @@ if is_installed("nats"):
     from repid.connections.nats import NatsServer
 
     __all__ += ["NatsServer"]
+
+if is_installed("aiobotocore"):
+    from repid.connections.sqs import SqsServer
+
+    __all__ += ["SqsServer"]

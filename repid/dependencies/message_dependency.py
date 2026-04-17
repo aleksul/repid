@@ -34,6 +34,10 @@ class EnhancedReceivedMessage:
         return self._message.content_type
 
     @property
+    def reply_to(self) -> str | None:
+        return self._message.reply_to
+
+    @property
     def channel(self) -> str:
         return self._message.channel
 
@@ -109,30 +113,46 @@ class EnhancedReceivedMessage:
         payload: bytes,
         headers: dict[str, str] | None = None,
         content_type: str | None = None,
-        channel: str | None = None,  # if None, message will be sent to the same channel
+        channel: str | None = None,
         server_specific_parameters: dict[str, Any] | None = None,
     ) -> None:
-        """Atomically (if supporter by the server) ack and reply to the message."""
-        await self._message.reply(
-            payload=payload,
-            headers=headers,
-            content_type=content_type,
-            channel=channel,
-            server_specific_parameters=server_specific_parameters,
-        )
+        """Atomically (if supported by the server) ack and reply to the message, or fallback to send and ack."""
+        if self._server.capabilities.get("supports_native_reply", False):
+            await self._message.reply(
+                payload=payload,
+                headers=headers,
+                content_type=content_type,
+                channel=channel,
+                server_specific_parameters=server_specific_parameters,
+            )
+        else:
+            reply_channel = channel or self.reply_to
+            if reply_channel is None:
+                raise ValueError(
+                    "Reply channel is not set. Provide `channel` or publish with `reply_to`.",
+                )
+
+            await self.send_message(
+                channel=reply_channel,
+                payload=payload,
+                headers=headers,
+                content_type=content_type,
+                server_specific_parameters=server_specific_parameters,
+            )
+            await self.ack()
 
     async def reply_json(
         self,
         *,
         payload: Any,
         headers: dict[str, str] | None = None,
-        channel: str | None = None,  # if None, message will be sent to the same channel
+        channel: str | None = None,
         server_specific_parameters: dict[str, Any] | None = None,
         serializer: SerializerT | None = None,
     ) -> None:
-        """Atomically (if supporter by the server) ack and reply with JSON to the message."""
+        """Atomically (if supported by the server) ack and reply with JSON to the message."""
         serializer = serializer if serializer is not None else self._default_serializer
-        await self._message.reply(
+        await self.reply(
             payload=serializer(payload),
             headers=headers,
             channel=channel,

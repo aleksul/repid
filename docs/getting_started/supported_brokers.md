@@ -33,6 +33,7 @@ in your application's memory.
 - **Under the hood:** Relies entirely on native Python asynchronous primitives stored in
   memory. This ensures zero network overhead and immediate message delivery within a
   single process.
+- **Reply support:** Native request/reply is supported.
 
 ## AMQP 1.0 (RabbitMQ)
 
@@ -51,6 +52,7 @@ systems using the AMQP 1.0 protocol, most notably RabbitMQ.
   legacy AMQP 0.9.1 protocol, Repid uses AMQP 1.0, which is significantly more optimized
   and reliable.** By avoiding heavy third-party async Python clients, it delivers a
   streamlined and highly performant experience.
+- **Reply support:** Native request/reply is supported.
 
 ## NATS
 
@@ -60,6 +62,7 @@ The **NATS** broker allows you to use the high-performance NATS messaging system
 - **Installation:** `pip install "repid[nats]"`
 - **Caveats:** Requires a running NATS server with JetStream enabled.
 - **Under the hood:** Uses the official `nats-py` asynchronous client.
+- **Reply support:** Native request/reply is supported.
 
 ## Redis
 
@@ -76,6 +79,7 @@ queue and the advanced features of a dedicated message broker.
   Streams** (using commands like `XADD`, `XREADGROUP`, and `XACK`). It natively handles
   consumer group offsets, making it significantly more reliable than older Redis Pub/Sub
   or list-based (`BLPOP`) task queue implementations.
+- **Reply support:** Native request/reply is not supported.
 
 ## Google Cloud Pub/Sub
 
@@ -92,6 +96,7 @@ scaling architectures on the Google Cloud Platform.
   asynchronously. By utilizing raw async gRPC calls (`grpc.aio`) directly to Pub/Sub
   endpoints, Repid achieves superior connection resilience, concurrency, and performance
   tailored to its task processing needs.
+- **Reply support:** Native request/reply is not supported.
 
 ## Amazon SQS
 
@@ -101,6 +106,7 @@ The **Amazon SQS** broker provides integration with AWS Simple Queue Service.
 - **Installation:** `pip install "repid[sqs]"`
 - **Caveats:** Tightly coupled to the AWS ecosystem.
 - **Under the hood:** Leverages `aiobotocore` for asynchronous communication with SQS API.
+- **Reply support:** Native request/reply is not supported.
 
 ## Apache Kafka
 
@@ -111,6 +117,7 @@ The **Apache Kafka** broker integrates Repid with Kafka for high-throughput even
 - **Installation:** `pip install "repid[kafka]"`
 - **Caveats:** Requires a Kafka cluster.
 - **Under the hood:** Utilizes `aiokafka` for asynchronous interaction with Kafka brokers.
+- **Reply support:** Native request/reply is not supported.
 
 ---
 

@@ -142,7 +142,7 @@ class KafkaServer(ServerT):
         return {
             "supports_acknowledgments": True,
             "supports_persistence": True,
-            "supports_reply": True,
+            "supports_reply": False,
             "supports_lightweight_pause": False,
         }
 

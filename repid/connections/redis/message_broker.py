@@ -60,6 +60,7 @@ def _build_message_fields(
     payload: bytes,
     headers: dict[str, str] | None,
     content_type: str | None,
+    reply_to: str | None,
 ) -> dict[bytes, bytes | str]:
     """Build Redis stream message fields from payload, headers, and content type."""
     fields: dict[bytes, bytes | str] = {b"payload": payload}
@@ -67,12 +68,14 @@ def _build_message_fields(
         fields[b"headers"] = json.dumps(headers)
     if content_type:
         fields[b"content_type"] = content_type
+    if reply_to:
+        fields[b"reply_to"] = reply_to
     return fields
 
 
 def _parse_message_fields(
     fields: dict[Any, Any],
-) -> tuple[bytes, dict[str, str] | None, str | None]:
+) -> tuple[bytes, dict[str, str] | None, str | None, str | None]:
     """Parse Redis stream message fields into payload, headers, and content type."""
     payload = fields.get(b"payload", b"")
     if isinstance(payload, str):
@@ -92,7 +95,12 @@ def _parse_message_fields(
             content_type_raw.decode() if isinstance(content_type_raw, bytes) else content_type_raw
         )
 
-    return payload, headers, content_type
+    reply_to: str | None = None
+    reply_to_raw = fields.get(b"reply_to")
+    if reply_to_raw:
+        reply_to = reply_to_raw.decode() if isinstance(reply_to_raw, bytes) else reply_to_raw
+
+    return payload, headers, content_type, reply_to
 
 
 class RedisSentMessage(SentMessageT):
@@ -102,6 +110,7 @@ class RedisSentMessage(SentMessageT):
         "_content_type",
         "_headers",
         "_payload",
+        "_reply_to",
     )
 
     def __init__(
@@ -110,10 +119,12 @@ class RedisSentMessage(SentMessageT):
         payload: bytes,
         headers: dict[str, str] | None = None,
         content_type: str | None = None,
+        reply_to: str | None = None,
     ) -> None:
         self._payload = payload
         self._headers = headers
         self._content_type = content_type
+        self._reply_to = reply_to
 
     @property
     def payload(self) -> bytes:
@@ -126,6 +137,10 @@ class RedisSentMessage(SentMessageT):
     @property
     def content_type(self) -> str | None:
         return self._content_type
+
+    @property
+    def reply_to(self) -> str | None:
+        return self._reply_to
 
 
 class RedisReceivedMessage(ReceivedMessageT):
@@ -142,6 +157,7 @@ class RedisReceivedMessage(ReceivedMessageT):
         "_message_id",
         "_payload",
         "_redis",
+        "_reply_to",
         "_server",
         "_stream_name",
     )
@@ -152,6 +168,7 @@ class RedisReceivedMessage(ReceivedMessageT):
         payload: bytes,
         headers: dict[str, str] | None,
         content_type: str | None,
+        reply_to: str | None,
         message_id: str,
         channel: str,
         stream_name: str,
@@ -164,6 +181,7 @@ class RedisReceivedMessage(ReceivedMessageT):
         self._payload = payload
         self._headers = headers
         self._content_type = content_type
+        self._reply_to = reply_to
         self._message_id = message_id
         self._channel = channel
         self._stream_name = stream_name
@@ -185,6 +203,10 @@ class RedisReceivedMessage(ReceivedMessageT):
     @property
     def content_type(self) -> str | None:
         return self._content_type
+
+    @property
+    def reply_to(self) -> str | None:
+        return self._reply_to
 
     @property
     def message_id(self) -> str | None:
@@ -217,7 +239,12 @@ class RedisReceivedMessage(ReceivedMessageT):
 
         async with self._redis.pipeline(transaction=True) as pipe:
             if self._dlq_stream is not None:
-                fields = _build_message_fields(self._payload, self._headers, self._content_type)
+                fields = _build_message_fields(
+                    self._payload,
+                    self._headers,
+                    self._content_type,
+                    self._reply_to,
+                )
                 fields[b"original_stream"] = self._stream_name
                 fields[b"original_id"] = self._message_id
                 xadd_kwargs: dict[str, Any] = {}
@@ -241,7 +268,12 @@ class RedisReceivedMessage(ReceivedMessageT):
         self._action = MessageAction.rejected
 
         async with self._redis.pipeline(transaction=True) as pipe:
-            fields = _build_message_fields(self._payload, self._headers, self._content_type)
+            fields = _build_message_fields(
+                self._payload,
+                self._headers,
+                self._content_type,
+                self._reply_to,
+            )
             pipe.xadd(self._stream_name, fields)  # type: ignore[arg-type]
             pipe.xack(self._stream_name, self._consumer_group, self._message_id)
             await pipe.execute()
@@ -253,21 +285,12 @@ class RedisReceivedMessage(ReceivedMessageT):
         headers: dict[str, str] | None = None,
         content_type: str | None = None,
         channel: str | None = None,
-        server_specific_parameters: dict[str, Any] | None = None,  # noqa: ARG002
+        server_specific_parameters: dict[str, Any] | None = None,
     ) -> None:
-        """Acknowledge and reply to the message atomically."""
         if self._action is not None:
             return
-        self._action = MessageAction.replied
-
-        target_channel = channel or self._channel
-
-        async with self._redis.pipeline(transaction=True) as pipe:
-            pipe.xack(self._stream_name, self._consumer_group, self._message_id)
-            reply_stream = self._server.stream_name_for(target_channel)
-            reply_fields = _build_message_fields(payload, headers, content_type)
-            pipe.xadd(reply_stream, reply_fields)  # type: ignore[arg-type]
-            await pipe.execute()
+        _ = (payload, headers, content_type, channel, server_specific_parameters)
+        raise NotImplementedError("Redis does not support native replies.")
 
 
 class RedisSubscriber(SubscriberT):
@@ -456,12 +479,13 @@ class RedisSubscriber(SubscriberT):
             msg_id = msg_id_raw.decode() if isinstance(msg_id_raw, bytes) else msg_id_raw
             self._in_flight_messages.add(msg_id)
 
-            payload, headers, content_type = _parse_message_fields(fields)
+            payload, headers, content_type, reply_to = _parse_message_fields(fields)
 
             received_msg = RedisReceivedMessage(
                 payload=payload,
                 headers=headers,
                 content_type=content_type,
+                reply_to=reply_to,
                 message_id=msg_id,
                 channel=channel,
                 stream_name=stream_name,
@@ -696,7 +720,7 @@ class RedisServer(ServerT):
         return {
             "supports_acknowledgments": True,
             "supports_persistence": True,
-            "supports_reply": True,
+            "supports_reply": False,
             "supports_lightweight_pause": True,
         }
 
@@ -772,7 +796,12 @@ class RedisServer(ServerT):
         stream_name = self._stream_name_strategy(channel)
         params = server_specific_parameters or {}
 
-        fields = _build_message_fields(message.payload, message.headers, message.content_type)
+        fields = _build_message_fields(
+            message.payload,
+            message.headers,
+            message.content_type,
+            message.reply_to,
+        )
 
         xadd_kwargs: dict[str, Any] = {}
         if "maxlen" in params:

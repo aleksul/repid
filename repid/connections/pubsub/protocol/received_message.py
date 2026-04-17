@@ -6,7 +6,6 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 from repid.connections.abc import MessageAction
-from repid.data import MessageData
 
 from .proto import PubsubMessage, StreamingPullRequest
 
@@ -54,6 +53,10 @@ class PubsubReceivedMessage:
     @property
     def content_type(self) -> str | None:
         return self._raw_message.attributes.get("content_type")
+
+    @property
+    def reply_to(self) -> str | None:
+        return self._raw_message.attributes.get("reply_to")
 
     @property
     def channel(self) -> str:
@@ -138,15 +141,5 @@ class PubsubReceivedMessage:
         """Reply by publishing a message and acknowledging this one."""
         if self._action is not None:
             return
-        await self._send_ack_request()
-        self._action = MessageAction.replied
-        reply_channel = channel or self._channel_name
-        await self._server.publish(
-            channel=reply_channel,
-            message=MessageData(
-                payload=payload,
-                headers=headers,
-                content_type=content_type,
-            ),
-            server_specific_parameters=server_specific_parameters,
-        )
+        _ = (payload, headers, content_type, channel, server_specific_parameters)
+        raise NotImplementedError("PubSub does not support native replies.")

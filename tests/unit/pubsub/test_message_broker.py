@@ -210,6 +210,7 @@ def test_build_attributes() -> None:
     msg = MagicMock()
     msg.headers = {"h1": "v1"}
     msg.content_type = "application/json"
+    msg.reply_to = None
 
     assert server._build_attributes(msg, None) == {"h1": "v1", "content_type": "application/json"}
 
@@ -219,6 +220,7 @@ def test_build_attributes() -> None:
     msg_empty = MagicMock()
     msg_empty.headers = None
     msg_empty.content_type = None
+    msg_empty.reply_to = None
     assert server._build_attributes(msg_empty, None) is None
 
 
@@ -323,6 +325,7 @@ def test_build_attributes_variants() -> None:
     msg = MagicMock()
     msg.headers = {"h1": "v1"}
     msg.content_type = "json"
+    msg.reply_to = None
 
     attrs = server._build_attributes(msg, {"attributes": {"extra": 123}})
     assert attrs == {"h1": "v1", "content_type": "json", "extra": "123"}

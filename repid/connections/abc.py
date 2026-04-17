@@ -29,6 +29,9 @@ class BaseMessageT(Protocol):
     @property
     def content_type(self) -> str | None: ...
 
+    @property
+    def reply_to(self) -> str | None: ...
+
 
 class SentMessageT(BaseMessageT, Protocol):
     pass
@@ -60,7 +63,7 @@ class ReceivedMessageT(BaseMessageT, Protocol):
         payload: bytes,
         headers: dict[str, str] | None = None,
         content_type: str | None = None,
-        channel: str | None = None,  # if None, message will be sent to the same channel
+        channel: str | None = None,
         server_specific_parameters: dict[str, Any] | None = None,
     ) -> None:
         """Atomically (if supporter by the server) ack and reply to the message."""

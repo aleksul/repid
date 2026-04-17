@@ -22,6 +22,7 @@ router = Router()
 async def my_actor(message: Message) -> None:
     print(message.payload)  # Raw bytes payload
     print(message.headers)  # Dictionary of headers
+    print(message.reply_to)  # Reply destination (if present)
     print(message.channel)  # The channel this message was received from
     print(message.message_id) # The unique ID of the message (if supported by broker)
 ```
@@ -63,12 +64,14 @@ The `Message` object provides the following actions:
 - `await message.reject()`: Reject the message (wasn't accepted for processing, put back in the
   original queue).
 - `await message.reply(payload=b"...")`: Atomically (if supported by the server) acknowledge the
-  message and send a reply message.
+  message and send a reply message. You must provide either `channel=...` or have an incoming
+  `reply_to` value available on the message.
 - `await message.reply_json(payload={"status": "ok"})`: Atomically acknowledge and reply with JSON
   data.
 
-If atomic reply is not suppored by the broker, it's usually the same as calling `.ack()` and
-`.send_message()`.
+If reply is not supported natively by the broker, `message.reply()` /
+`message.reply_json()` will automatically fall back to sending a new message to the
+specified channel and acknowledging the current message.
 
 You can also check if a message has already been acted upon using the `.is_acted_on` property.
 

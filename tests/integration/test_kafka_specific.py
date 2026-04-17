@@ -28,10 +28,12 @@ class DummySentMessage(SentMessageT):
         payload: bytes,
         headers: dict[str, str] | None = None,
         content_type: str | None = None,
+        reply_to: str | None = None,
     ) -> None:
         self._payload = payload
-        self._headers = headers or {}
+        self._headers = headers
         self._content_type = content_type
+        self._reply_to = reply_to
 
     @property
     def payload(self) -> bytes:
@@ -44,6 +46,10 @@ class DummySentMessage(SentMessageT):
     @property
     def content_type(self) -> str | None:
         return self._content_type
+
+    @property
+    def reply_to(self) -> str | None:
+        return self._reply_to
 
 
 async def test_kafka_reject(kafka_repid: Repid, kafka_connection: ServerT) -> None:
@@ -189,38 +195,18 @@ async def test_kafka_reply(kafka_repid: Repid, kafka_connection: ServerT) -> Non
 
         assert received_msg is not None
 
-        await received_msg.reply(
-            payload=b"reply_response",
-            headers={"is_reply": "true"},
-            content_type="application/json",
-            channel=reply_channel_name,
-        )
+        with pytest.raises(NotImplementedError, match=r"Kafka does not support native replies\."):
+            await received_msg.reply(
+                payload=b"reply_response",
+                headers={"is_reply": "true"},
+                content_type="application/json",
+                channel=reply_channel_name,
+            )
 
         await subscriber.close()
 
-        reply_received_msg: ReceivedMessageT | None = None
-        reply_event = asyncio.Event()
 
-        async def on_reply_message(msg: ReceivedMessageT) -> None:
-            nonlocal reply_received_msg
-            reply_received_msg = msg
-            reply_event.set()
-
-        reply_subscriber = await kafka_connection.subscribe(
-            channels_to_callbacks={reply_channel_name: on_reply_message},
-            concurrency_limit=1,
-        )
-
-        await asyncio.wait_for(reply_event.wait(), timeout=10.0)
-        await reply_subscriber.close()
-
-        assert reply_received_msg is not None
-        assert reply_received_msg.payload == b"reply_response"
-        assert reply_received_msg.headers == {"is_reply": "true"}
-        assert reply_received_msg.content_type == "application/json"
-
-
-async def test_kafka_message_properties_and_double_actions(
+async def test_kafka_message_properties_and_double_actions(  # noqa: PLR0915
     kafka_repid: Repid,
     kafka_connection: ServerT,
 ) -> None:
@@ -251,7 +237,7 @@ async def test_kafka_message_properties_and_double_actions(
         assert kafka_connection.capabilities == {
             "supports_acknowledgments": True,
             "supports_persistence": True,
-            "supports_reply": True,
+            "supports_reply": False,
             "supports_lightweight_pause": False,
         }
 
@@ -288,6 +274,7 @@ async def test_kafka_message_properties_and_double_actions(
         assert received_msg.channel == channel_name
         assert received_msg.content_type is None
         assert received_msg.headers == {}
+        assert received_msg.reply_to is None
         assert received_msg.message_id is not None
         assert received_msg.action is None
         assert not received_msg.is_acted_on

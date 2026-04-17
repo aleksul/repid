@@ -73,4 +73,7 @@ Sending welcome email to User #123 (Alex)!
 
 If you are designing a strict request-response or RPC-like architecture, you can use the
 `message.reply_json()` method. This will automatically publish a message to a reply queue (if
-supported and specified by your broker) while simultaneously acknowledging the current message.
+supported by your broker) while simultaneously acknowledging the current message.
+
+Make sure a reply destination is available, either by passing `channel=...` explicitly or by
+receiving a message that already includes `reply_to` metadata.

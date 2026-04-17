@@ -75,6 +75,10 @@ class SqsReceivedMessage(ReceivedMessageT):
         return self._content_type
 
     @property
+    def reply_to(self) -> str | None:
+        return None
+
+    @property
     def channel(self) -> str:
         return self._channel
 
@@ -176,48 +180,5 @@ class SqsReceivedMessage(ReceivedMessageT):
     ) -> None:
         if self._action is not None:
             return
-
-        if self._server._client is not None and self._receipt_handle:
-            reply_channel = channel if channel is not None else self._channel
-            reply_queue_url = await self._server._get_queue_url(reply_channel)
-
-            body_str = base64.b64encode(payload).decode("ascii")
-
-            message_attributes: dict[str, Any] = {}
-            if headers:
-                for k, v in headers.items():
-                    message_attributes[k] = {"DataType": "String", "StringValue": v}
-            if content_type:
-                message_attributes["content-type"] = {
-                    "DataType": "String",
-                    "StringValue": content_type,
-                }
-            if not body_str:
-                body_str = EMPTY_PAYLOAD_BODY_PLACEHOLDER
-                message_attributes[EMPTY_PAYLOAD_ATTRIBUTE] = {
-                    "DataType": "String",
-                    "StringValue": EMPTY_PAYLOAD_ATTRIBUTE_VALUE,
-                }
-
-            kwargs: dict[str, Any] = {
-                "QueueUrl": reply_queue_url,
-                "MessageBody": body_str,
-                "MessageAttributes": message_attributes,
-            }
-            if server_specific_parameters:
-                kwargs.update(server_specific_parameters)
-
-            await self._server._client.send_message(**kwargs)
-
-            try:
-                await self._server._client.delete_message(
-                    QueueUrl=self._queue_url,
-                    ReceiptHandle=self._receipt_handle,
-                )
-            except botocore.exceptions.ClientError as e:
-                error_response = getattr(e, "response", {})
-                err = error_response.get("Error", {}) if isinstance(error_response, dict) else {}
-                if isinstance(err, dict) and err.get("Code") != "ReceiptHandleIsInvalid":
-                    raise  # pragma: no cover
-
-        self._action = MessageAction.replied
+        _ = (payload, headers, content_type, channel, server_specific_parameters)
+        raise NotImplementedError("SQS does not support native replies.")

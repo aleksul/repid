@@ -504,9 +504,7 @@ async def test_message_broker_properties() -> None:
     assert broker.bindings is None
 
     caps = broker.capabilities
-    assert caps["supports_acknowledgments"] is True
-    assert caps["supports_persistence"] is True
-    assert caps["supports_reply"] is True
+    assert caps["supports_native_reply"] is True
     assert caps["supports_lightweight_pause"] is False
 
     assert broker.managed_session is None

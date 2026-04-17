@@ -102,7 +102,7 @@ def test_pubsub_server_properties_basic() -> None:
     )
     assert server.title == "Title"
     assert server.summary == "Summary"
-    assert server.capabilities["supports_acknowledgments"] is True
+    assert server.capabilities["supports_native_reply"] is False
 
 
 async def test_pubsub_server_disconnect() -> None:
@@ -239,8 +239,8 @@ def test_pubsub_server_all_properties() -> None:
     assert server.bindings is None
 
     caps = server.capabilities
-    assert caps["supports_acknowledgments"] is True
-    assert caps["supports_persistence"] is True
+    assert caps["supports_native_reply"] is False
+    assert caps["supports_lightweight_pause"] is False
 
     assert server.resilience_config is not None
     assert server.resilience_state is not None

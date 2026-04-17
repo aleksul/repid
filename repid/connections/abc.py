@@ -70,9 +70,7 @@ class ReceivedMessageT(BaseMessageT, Protocol):
 
 
 class CapabilitiesT(TypedDict):
-    supports_acknowledgments: bool
-    supports_persistence: bool
-    supports_reply: bool
+    supports_native_reply: bool
     supports_lightweight_pause: bool
 
 

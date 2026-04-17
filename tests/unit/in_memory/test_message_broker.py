@@ -150,7 +150,7 @@ def test_server_properties() -> None:
     assert server.tags is None
     assert server.external_docs is None
     assert server.bindings is None
-    assert server.capabilities["supports_acknowledgments"]
+    assert server.capabilities["supports_native_reply"]
     assert not server.is_connected
 
 

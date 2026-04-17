@@ -361,9 +361,7 @@ class NatsServer(ServerT):
     @property
     def capabilities(self) -> CapabilitiesT:
         return {
-            "supports_acknowledgments": True,
-            "supports_persistence": True,
-            "supports_reply": True,
+            "supports_native_reply": True,
             "supports_lightweight_pause": False,
         }
 

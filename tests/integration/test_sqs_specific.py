@@ -396,7 +396,7 @@ async def test_sqs_server_properties_are_correct(sqs_connection: ServerT) -> Non
     assert server.tags == [{"name": "tag1"}]
     assert server.external_docs == {"url": "http://docs"}
     assert server.bindings == {"sqs": "binding"}
-    assert server.capabilities["supports_acknowledgments"] is True
+    assert server.capabilities["supports_native_reply"] is False
 
 
 async def test_sqs_server_connection_state(sqs_connection: ServerT) -> None:

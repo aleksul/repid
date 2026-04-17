@@ -146,9 +146,7 @@ def test_redis_server_init() -> None:
     assert server.bindings is None
 
     caps = server.capabilities
-    assert caps["supports_acknowledgments"]
-    assert caps["supports_persistence"]
-    assert not caps["supports_reply"]
+    assert not caps["supports_native_reply"]
     assert caps["supports_lightweight_pause"]
 
 

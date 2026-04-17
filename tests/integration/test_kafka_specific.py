@@ -235,9 +235,7 @@ async def test_kafka_message_properties_and_double_actions(  # noqa: PLR0915
         assert kafka_connection.bindings is None
         assert kafka_connection.is_connected
         assert kafka_connection.capabilities == {
-            "supports_acknowledgments": True,
-            "supports_persistence": True,
-            "supports_reply": False,
+            "supports_native_reply": False,
             "supports_lightweight_pause": False,
         }
 

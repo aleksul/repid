@@ -130,9 +130,7 @@ class SqsServer(ServerT):
     @property
     def capabilities(self) -> CapabilitiesT:
         return {
-            "supports_acknowledgments": True,
-            "supports_persistence": True,
-            "supports_reply": False,
+            "supports_native_reply": False,
             "supports_lightweight_pause": False,
         }
 

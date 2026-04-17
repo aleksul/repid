@@ -54,7 +54,7 @@ async def test_nats_basic_attributes(nats_connection: NatsServer) -> None:
     assert nats_connection.tags is None
     assert nats_connection.external_docs is None
     assert nats_connection.bindings is None
-    assert nats_connection.capabilities["supports_acknowledgments"] is True
+    assert nats_connection.capabilities["supports_native_reply"] is True
 
 
 async def test_nats_publish_subscribe(nats_connection: NatsServer) -> None:

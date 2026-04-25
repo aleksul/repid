@@ -140,9 +140,7 @@ class AmqpServer:
     @property
     def capabilities(self) -> CapabilitiesT:
         return {
-            "supports_acknowledgments": True,
-            "supports_persistence": True,
-            "supports_reply": True,
+            "supports_native_reply": True,
             "supports_lightweight_pause": False,
         }
 
@@ -243,10 +241,34 @@ class AmqpServer:
         # Prepare server-specific parameters for uAMQP
         header = params.get("header")
         properties = params.get("properties")
+        message_reply_to = getattr(message, "reply_to", None)
         if properties is None:
-            properties = Properties(message_id=str(uuid4()))
-        elif properties.message_id is None:
-            properties.message_id = str(uuid4())
+            properties = Properties(
+                message_id=str(uuid4()),
+                correlation_id=None,
+                reply_to=message_reply_to,
+            )
+        else:
+            # Create a shallow copy to avoid mutating user-provided dictionary
+            properties = Properties(
+                message_id=properties.message_id
+                if properties.message_id is not None
+                else str(uuid4()),
+                user_id=properties.user_id,
+                to=properties.to,
+                subject=properties.subject,
+                reply_to=properties.reply_to
+                if properties.reply_to is not None
+                else message_reply_to,
+                correlation_id=properties.correlation_id,
+                content_type=properties.content_type,
+                content_encoding=properties.content_encoding,
+                absolute_expiry_time=properties.absolute_expiry_time,
+                creation_time=properties.creation_time,
+                group_id=properties.group_id,
+                group_sequence=properties.group_sequence,
+                reply_to_group_id=properties.reply_to_group_id,
+            )
         delivery_annotations = params.get("delivery_annotations")
         message_annotations = params.get("message_annotations")
         footers = params.get("footers")

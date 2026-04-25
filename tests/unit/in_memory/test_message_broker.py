@@ -19,13 +19,13 @@ def test_sent_message_properties() -> None:
     msg = InMemorySentMessage(
         payload=b"test",
         headers={"key": "val"},
-        correlation_id="corr",
+        reply_to="reply_chan",
         content_type="text",
         message_id="msg_id",
     )
     assert msg.payload == b"test"
     assert msg.headers == {"key": "val"}
-    assert msg.correlation_id == "corr"
+    assert msg.reply_to == "reply_chan"
     assert msg.content_type == "text"
     assert msg.message_id == "msg_id"
 
@@ -40,6 +40,7 @@ async def test_received_message_ack() -> None:
     assert msg.payload == b"abc"
     assert msg.headers is None
     assert msg.content_type is None
+    assert msg.reply_to is None
     assert msg.message_id is None
     assert msg.channel == "chan"
 
@@ -83,13 +84,23 @@ async def test_received_message_reject() -> None:
 
 async def test_received_message_reply() -> None:
     queue = DummyQueue()
-    d_msg = DummyQueue.Message(payload=b"abc")
-    queue.processing.add(d_msg)
+    queues = {"chan": queue}
+    d_msg_no_reply = DummyQueue.Message(payload=b"abc")
+    queue.processing.add(d_msg_no_reply)
 
-    msg = InMemoryReceivedMessage(d_msg, queue, "chan")
+    msg = InMemoryReceivedMessage(d_msg_no_reply, queue, "chan", queues)
+    with pytest.raises(ValueError, match="Reply channel is not set"):
+        await msg.reply(payload=b"reply", headers={"h": "v"})
+
+    # Remove the no-reply-to message and create a fresh one with reply_to set
+    queue.processing.remove(d_msg_no_reply)
+    d_msg = DummyQueue.Message(payload=b"abc", reply_to="chan")
+    queue.processing.add(d_msg)
+    msg = InMemoryReceivedMessage(d_msg, queue, "chan", queues)
     await msg.reply(payload=b"reply", headers={"h": "v"})
 
     assert msg.is_acted_on
+    assert d_msg not in queue.processing
 
     assert not queue.queue.empty()
     reply_msg = queue.queue.get_nowait()
@@ -102,22 +113,24 @@ async def test_received_message_reply() -> None:
     assert queue.queue.empty()
 
     # Test reply to different channel with NEW message
-    d_msg2 = DummyQueue.Message(payload=b"xyz")
+    d_msg2 = DummyQueue.Message(payload=b"xyz", reply_to="chan")
     queue.processing.add(d_msg2)
-    msg2 = InMemoryReceivedMessage(d_msg2, queue, "chan")
+    msg2 = InMemoryReceivedMessage(d_msg2, queue, "chan", queues)
 
     await msg2.reply(payload=b"reply2", channel="other")
 
-    assert not queue.queue.empty()
-    reply_msg2 = queue.queue.get_nowait()
+    assert d_msg2 not in queue.processing
+    assert not queues["other"].queue.empty()
+    reply_msg2 = queues["other"].queue.get_nowait()
     assert reply_msg2.payload == b"reply2"
 
 
 async def test_received_message_reply_already_acted() -> None:
     queue = DummyQueue()
+    queues = {"chan": queue}
     d_msg = DummyQueue.Message(payload=b"abc")
     queue.processing.add(d_msg)
-    msg = InMemoryReceivedMessage(d_msg, queue, "chan")
+    msg = InMemoryReceivedMessage(d_msg, queue, "chan", queues)
     await msg.ack()
     await msg.reply(payload=b"abc")  # Should return immediately and not enqueue anything
     assert queue.queue.empty()
@@ -137,7 +150,7 @@ def test_server_properties() -> None:
     assert server.tags is None
     assert server.external_docs is None
     assert server.bindings is None
-    assert server.capabilities["supports_acknowledgments"]
+    assert server.capabilities["supports_native_reply"]
     assert not server.is_connected
 
 
@@ -165,7 +178,11 @@ async def test_server_publish_not_connected() -> None:
 async def test_server_publish() -> None:
     server = InMemoryServer()
     await server.connect()
-    msg = InMemorySentMessage(payload=b"abc", headers={"h": "1"})
+    msg = InMemorySentMessage(
+        payload=b"abc",
+        headers={"h": "1"},
+        reply_to="reply_chan",
+    )
 
     await server.publish(channel="test_chan", message=msg)
 
@@ -173,6 +190,7 @@ async def test_server_publish() -> None:
     received = await queue.queue.get()
     assert received.payload == b"abc"
     assert received.headers == {"h": "1"}
+    assert received.reply_to == "reply_chan"
     assert received.message_id is not None  # Generated UUID
 
     # Test with provided message_id

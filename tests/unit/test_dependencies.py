@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from typing import Annotated, Any
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from annotated_types import Gt
@@ -13,6 +14,7 @@ from repid.converter import BasicConverter, DefaultConverter
 from repid.data import MessageData
 from repid.dependencies import Depends, MessageDependency
 from repid.dependencies._utils import get_dependency
+from repid.dependencies.message_dependency import EnhancedReceivedMessage
 from repid.test_client import TestClient
 
 
@@ -149,7 +151,7 @@ async def test_message_dependency_reply() -> None:
 
     @router.actor
     async def myactor(m: Message) -> None:
-        await m.reply_json(payload={"response": "ok"})
+        await m.reply_json(payload={"response": "ok"}, channel="default")
 
     app.include_router(router)
 
@@ -162,6 +164,39 @@ async def test_message_dependency_reply() -> None:
         channel, reply_msg = msg._reply_messages[0]
         assert channel == "default"
         assert reply_msg.payload == b'{"response":"ok"}'
+
+
+async def test_message_dependency_reply_fallback() -> None:
+    def _default_serializer(data: object) -> bytes:
+        _ = data
+        return b""
+
+    server = Mock()
+    server.capabilities = {"supports_native_reply": False}
+    server.publish = AsyncMock()
+
+    msg_mock = Mock()
+    msg_mock.reply = AsyncMock(side_effect=NotImplementedError)
+    msg_mock.ack = AsyncMock()
+    msg_mock.reply_to = "fallback_channel"
+
+    enhanced = EnhancedReceivedMessage(
+        server=server,
+        message=msg_mock,
+        default_serializer=_default_serializer,
+    )
+
+    # This should trigger the fallback
+    await enhanced.reply(payload=b"test-fallback")
+
+    # Should publish then ack
+    server.publish.assert_called_once()
+    msg_mock.ack.assert_called_once()
+
+    # If no reply_to and no channel, raises ValueError
+    msg_mock.reply_to = None
+    with pytest.raises(ValueError, match="Reply channel is not set"):
+        await enhanced.reply(payload=b"test-fallback")
 
 
 async def test_depends() -> None:
@@ -655,6 +690,7 @@ async def test_message_reply_raw() -> None:
         await m.reply(
             payload=b"raw response",
             content_type="application/octet-stream",
+            channel="default",
         )
 
     app.include_router(router)

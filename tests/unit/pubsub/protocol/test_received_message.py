@@ -1,5 +1,5 @@
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -32,6 +32,7 @@ def test_received_message_properties(msg_fixture: received_message.PubsubReceive
     assert msg_fixture.payload == b"data"
     assert msg_fixture.headers == {"key": "val", "content_type": "json"}
     assert msg_fixture.content_type == "json"
+    assert msg_fixture.reply_to is None
     assert msg_fixture.channel == "chan1"
     assert not msg_fixture.is_acted_on
     assert msg_fixture.message_id == "msg1"
@@ -110,20 +111,8 @@ async def test_received_message_extend_deadline(
 
 
 async def test_received_message_reply(msg_fixture: received_message.PubsubReceivedMessage) -> None:
-    with patch.object(msg_fixture._server, "publish", new=AsyncMock()) as mock_publish:
+    with pytest.raises(NotImplementedError, match=r"PubSub does not support native replies\."):
         await msg_fixture.reply(payload=b"response")
-
-    assert msg_fixture.is_acted_on  # Because it acks
-
-    # Verify ack
-    req = msg_fixture._write_queue.get_nowait()
-    assert req.ack_ids == ["ack1"]
-
-    # Verify publish
-    mock_publish.assert_called_once()
-    call_args = mock_publish.call_args[1]
-    assert call_args["channel"] == "chan1"
-    assert call_args["message"].payload == b"response"
 
 
 def test_received_message_no_attributes(
@@ -137,9 +126,6 @@ def test_received_message_no_attributes(
 async def test_received_message_reply_after_ack_is_noop(
     msg_fixture: received_message.PubsubReceivedMessage,
 ) -> None:
-    with patch.object(msg_fixture._server, "publish", new=AsyncMock()) as mock_publish:
-        await msg_fixture.ack()
-        await msg_fixture.reply(payload=b"ignored")
-
-    mock_publish.assert_not_called()
+    await msg_fixture.ack()
+    await msg_fixture.reply(payload=b"ignored")
     assert msg_fixture._write_queue.qsize() == 1  # Only the ack request

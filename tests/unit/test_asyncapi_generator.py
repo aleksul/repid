@@ -1468,7 +1468,12 @@ def test_asyncapi_generator_message_name_collision() -> None:
         "info": {"title": "Repid AsyncAPI", "version": "0.0.1"},
         "servers": {},
         "channels": {
-            "test-channel": {"messages": {"my_actor": {"$ref": "#/components/messages/my_actor"}}},
+            "test-channel": {
+                "messages": {
+                    "my_actor": {"$ref": "#/components/messages/my_actor"},
+                    "my_actor_1": {"$ref": "#/components/messages/my_actor_1"},
+                },
+            },
         },
         "operations": {
             "receive_my_actor": {
@@ -1676,5 +1681,105 @@ def test_asyncapi_generator_actor_message_schema() -> None:
             "messageBindings": {
                 "my_actor-message_bindings": {"amqp": {"messageType": "my.actor"}},
             },
+        },
+    }
+
+
+def test_asyncapi_generator_actor_name_with_spaces_and_slashes() -> None:
+    app = Repid()
+    router = Router()
+
+    @router.actor(name="my actor /v1")
+    async def worker() -> None:
+        pass
+
+    app.include_router(router)
+
+    schema = app.generate_asyncapi_schema()
+
+    assert schema == {
+        "asyncapi": "3.0.0",
+        "info": {"title": "Repid AsyncAPI", "version": "0.0.1"},
+        "servers": {},
+        "channels": {
+            "default": {
+                "messages": {
+                    "my_actor_v1": {"$ref": "#/components/messages/my_actor_v1"},
+                },
+            },
+        },
+        "operations": {
+            "receive_my_actor_v1": {
+                "action": "receive",
+                "channel": {"$ref": "#/channels/default"},
+                "summary": "Worker",
+                "messages": [{"$ref": "#/channels/default/messages/my_actor_v1"}],
+            },
+        },
+        "components": {
+            "messages": {
+                "my_actor_v1": {"name": "my actor /v1", "contentType": ""},
+            },
+        },
+    }
+
+
+def test_asyncapi_generator_actor_names_with_same_sanitized_operation_id() -> None:
+    app = Repid()
+    router = Router()
+
+    @router.actor(name="dup name")
+    async def worker_one() -> None:
+        pass
+
+    @router.actor(name="dup/name")
+    async def worker_two() -> None:
+        pass
+
+    app.include_router(router)
+
+    schema = app.generate_asyncapi_schema()
+
+    assert schema["operations"] == {
+        "receive_dup_name": {
+            "action": "receive",
+            "channel": {"$ref": "#/channels/default"},
+            "summary": "Worker One",
+            "messages": [{"$ref": "#/channels/default/messages/dup_name"}],
+        },
+        "receive_dup_name_1": {
+            "action": "receive",
+            "channel": {"$ref": "#/channels/default"},
+            "summary": "Worker Two",
+            "messages": [{"$ref": "#/channels/default/messages/dup_name_1"}],
+        },
+    }
+
+
+def test_asyncapi_generator_actor_name_with_only_separators_uses_fallback_keys() -> None:
+    app = Repid()
+    router = Router()
+
+    @router.actor(name="///")
+    async def worker() -> None:
+        pass
+
+    app.include_router(router)
+
+    schema = app.generate_asyncapi_schema()
+
+    assert schema["channels"] == {
+        "default": {
+            "messages": {
+                "message": {"$ref": "#/components/messages/message"},
+            },
+        },
+    }
+    assert schema["operations"] == {
+        "receive": {
+            "action": "receive",
+            "channel": {"$ref": "#/channels/default"},
+            "summary": "Worker",
+            "messages": [{"$ref": "#/channels/default/messages/message"}],
         },
     }

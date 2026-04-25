@@ -3,7 +3,8 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from copy import deepcopy
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
+from urllib.parse import quote
 
 from repid.asyncapi.models import (
     AsyncAPI3Schema,
@@ -46,6 +47,20 @@ if TYPE_CHECKING:
 
 SecurityScheme = dict[str, object]
 
+_COMPONENT_KEY_SANITIZER_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _sanitize_component_key(value: str, *, fallback: str) -> str:
+    sanitized = _COMPONENT_KEY_SANITIZER_RE.sub("_", value).strip("._-")
+    if not sanitized:
+        return fallback
+    return sanitized
+
+
+def _escape_ref_token(value: str) -> str:
+    escaped = value.replace("~", "~0").replace("/", "~1")
+    return quote(escaped, safe="-._~")
+
 
 class AsyncAPIComponents:
     def __init__(self) -> None:
@@ -61,12 +76,17 @@ class AsyncAPIComponents:
 
         self._external_docs_lookup: dict[str, str] = {}
 
-    def add_message(self, message: MessageObject, original_name: str) -> str:
-        name = original_name
+    def _unique_key(self, store: dict, base_name: str) -> str:
+        name = base_name
         counter = 1
-        while name in self.messages:
-            name = f"{original_name}_{counter}"
+        while name in store:
+            name = f"{base_name}_{counter}"
             counter += 1
+        return name
+
+    def add_message(self, message: MessageObject, original_name: str) -> str:
+        base_name = _sanitize_component_key(original_name, fallback="message")
+        name = self._unique_key(self.messages, base_name)
         self.messages[name] = message
         return name
 
@@ -86,29 +106,34 @@ class AsyncAPIComponents:
         return {"$ref": f"#/components/tags/{tag.name}"}
 
     def add_security_scheme(self, name: str, scheme: SecurityScheme) -> ReferenceModel:
-        if name not in self.security_schemes:
-            self.security_schemes[name] = scheme
-        return {"$ref": f"#/components/securitySchemes/{name}"}
+        base_name = _sanitize_component_key(name, fallback="security_scheme")
+        normalized = self._unique_key(self.security_schemes, base_name)
+        self.security_schemes[normalized] = scheme
+        return {"$ref": f"#/components/securitySchemes/{_escape_ref_token(normalized)}"}
 
     def add_server_binding(self, name: str, binding: ServerBindingsObject) -> ReferenceModel:
-        if name not in self.server_bindings:
-            self.server_bindings[name] = binding
-        return {"$ref": f"#/components/serverBindings/{name}"}
+        base_name = _sanitize_component_key(name, fallback="server_bindings")
+        normalized = self._unique_key(self.server_bindings, base_name)
+        self.server_bindings[normalized] = binding
+        return {"$ref": f"#/components/serverBindings/{_escape_ref_token(normalized)}"}
 
     def add_channel_binding(self, name: str, binding: ChannelBindingsObject) -> ReferenceModel:
-        if name not in self.channel_bindings:
-            self.channel_bindings[name] = binding
-        return {"$ref": f"#/components/channelBindings/{name}"}
+        base_name = _sanitize_component_key(name, fallback="channel_bindings")
+        normalized = self._unique_key(self.channel_bindings, base_name)
+        self.channel_bindings[normalized] = binding
+        return {"$ref": f"#/components/channelBindings/{_escape_ref_token(normalized)}"}
 
     def add_operation_binding(self, name: str, binding: OperationBindingsObject) -> ReferenceModel:
-        if name not in self.operation_bindings:
-            self.operation_bindings[name] = binding
-        return {"$ref": f"#/components/operationBindings/{name}"}
+        base_name = _sanitize_component_key(name, fallback="operation_bindings")
+        normalized = self._unique_key(self.operation_bindings, base_name)
+        self.operation_bindings[normalized] = binding
+        return {"$ref": f"#/components/operationBindings/{_escape_ref_token(normalized)}"}
 
     def add_message_binding(self, name: str, binding: MessageBindingsObject) -> ReferenceModel:
-        if name not in self.message_bindings:
-            self.message_bindings[name] = binding
-        return {"$ref": f"#/components/messageBindings/{name}"}
+        base_name = _sanitize_component_key(name, fallback="message_bindings")
+        normalized = self._unique_key(self.message_bindings, base_name)
+        self.message_bindings[normalized] = binding
+        return {"$ref": f"#/components/messageBindings/{_escape_ref_token(normalized)}"}
 
     def add_external_docs(
         self,
@@ -218,8 +243,7 @@ class DataExtractor:
 
         if isinstance(obj.bindings, dict) and obj.bindings:
             binding_name = f"{obj.name}-message_bindings"
-            msg["bindings"] = {"$ref": f"#/components/messageBindings/{binding_name}"}
-            self.components.add_message_binding(binding_name, obj.bindings)
+            msg["bindings"] = self.components.add_message_binding(binding_name, obj.bindings)
 
         self._attach_examples_from_schema(msg, obj)
         return msg
@@ -231,8 +255,10 @@ class DataExtractor:
             self.extract_common(actor.message_schema, msg)
             if isinstance(actor.message_schema.bindings, dict) and actor.message_schema.bindings:
                 binding_name = f"{actor.name}-message_bindings"
-                msg["bindings"] = {"$ref": f"#/components/messageBindings/{binding_name}"}
-                self.components.add_message_binding(binding_name, actor.message_schema.bindings)
+                msg["bindings"] = self.components.add_message_binding(
+                    binding_name,
+                    actor.message_schema.bindings,
+                )
             self._attach_examples_from_schema(msg, actor.message_schema)
 
         input_schema = actor.converter.get_input_schema()
@@ -270,17 +296,22 @@ class DataExtractor:
             return []
         out: list[MessageExampleObject] = []
         for ex in examples:
-            ex_dict: MessageExampleObject = {}  # type: ignore[assignment]
-            if ex.name is not None:
-                ex_dict["name"] = ex.name
-            if ex.summary is not None:
-                ex_dict["summary"] = ex.summary
-            if ex.headers is not None:
-                ex_dict["headers"] = ex.headers
             if ex.payload is not None:
-                ex_dict["payload"] = ex.payload
-            if "headers" in ex_dict or "payload" in ex_dict:
-                out.append(ex_dict)
+                payload_example: MessageExampleObject = {"payload": ex.payload}
+                if ex.name is not None:
+                    payload_example["name"] = ex.name
+                if ex.summary is not None:
+                    payload_example["summary"] = ex.summary
+                if ex.headers is not None:
+                    payload_example["headers"] = ex.headers
+                out.append(payload_example)
+            elif ex.headers is not None:
+                headers_example: MessageExampleObject = {"headers": ex.headers}
+                if ex.name is not None:
+                    headers_example["name"] = ex.name
+                if ex.summary is not None:
+                    headers_example["summary"] = ex.summary
+                out.append(headers_example)
         return out
 
     def _attach_examples_from_schema(
@@ -328,10 +359,15 @@ class AsyncAPIGenerator:
         components = AsyncAPIComponents()
         extractor = DataExtractor(components)
         message_keys: dict[int, str] = {}
+        actors_per_router: list[tuple[Router, dict[str, list[ActorData]]]] = []
+
+        for router in self.routers:
+            actors_by_channel = router._actors_per_channel_address
+            actors_per_router.append((router, actors_by_channel))
 
         # 1. Collect Messages and Bindings
-        for router in self.routers:
-            for actors in router._actors_per_channel_address.values():
+        for _, actors_by_channel in actors_per_router:
+            for actors in actors_by_channel.values():
                 for actor in actors:
                     actor_msg = extractor.message_from_actor(actor)
                     key = components.add_message(actor_msg, actor.name)
@@ -346,8 +382,13 @@ class AsyncAPIGenerator:
         # 3. Generate parts that populate components
         info = self._generate_info(components)
         servers = self._generate_servers(extractor, components)
-        channels = self._generate_channels(extractor, components, message_keys)
-        operations = self._generate_operations(extractor, components, message_keys)
+        channels = self._generate_channels(extractor, components, message_keys, actors_per_router)
+        operations = self._generate_operations(
+            extractor,
+            components,
+            message_keys,
+            actors_per_router,
+        )
 
         # 4. Build Components Object
         comps = Components(messages=components.messages)
@@ -454,12 +495,11 @@ class AsyncAPIGenerator:
         extractor: DataExtractor,
         components: AsyncAPIComponents,
         message_keys: dict[int, str],
+        actors_per_router: list[tuple[Router, dict[str, list[ActorData]]]],
     ) -> dict[str, Channel]:
         channels: dict[str, Channel] = {}
-        router_channel_addresses: set[str] = set()
 
-        for router in self.routers:
-            actors_by_channel: dict[str, list[ActorData]] = router._actors_per_channel_address
+        for router, actors_by_channel in actors_per_router:
             for ch in router.channels:
                 channel_obj: Channel = {}
                 extractor.extract_common(ch, channel_obj)
@@ -472,12 +512,15 @@ class AsyncAPIGenerator:
                     if bindings:
                         channel_obj["bindings"] = bindings
 
-                messages_map = self._channel_messages_for_address(ch.address, actors_by_channel)
+                messages_map = self._channel_messages_for_address(
+                    ch.address,
+                    actors_by_channel,
+                    message_keys,
+                )
                 if messages_map:
                     channel_obj["messages"] = messages_map
 
                 channels[ch.address] = channel_obj
-                router_channel_addresses.add(ch.address)
 
         for op in self.messages._operations.values():
             if op.channel.address not in channels:
@@ -497,34 +540,39 @@ class AsyncAPIGenerator:
             operation_channel = channel_obj
             if op.messages:
                 op_ch_messages = {
-                    msg.name: ReferenceModel(
+                    message_keys.get(id(msg), msg.name): ReferenceModel(
                         {
                             "$ref": f"#/components/messages/{message_keys.get(id(msg), msg.name)}",
                         },
                     )
                     for msg in op.messages
                 }
-                operation_messages: dict[
-                    str,
-                    ReferenceModel,
-                ] = operation_channel.setdefault("messages", {})  # type: ignore[assignment]
+                operation_messages: dict[str, ReferenceModel] = {}
+                existing_messages = operation_channel.get("messages")
+                if existing_messages is not None:
+                    operation_messages.update(cast(dict[str, ReferenceModel], existing_messages))
                 for k, v in op_ch_messages.items():
                     if k not in operation_messages:
                         operation_messages[k] = v
+                operation_channel["messages"] = operation_messages
         return channels
 
     def _channel_messages_for_address(
         self,
         address: str,
         actors_by_channel: dict[str, list[ActorData]],
+        message_keys: dict[int, str],
     ) -> dict[str, ReferenceModel]:
         messages_map: dict[str, ReferenceModel] = {}
         for actor in actors_by_channel.get(address, []):
-            messages_map[actor.name] = {"$ref": f"#/components/messages/{actor.name}"}
+            message_key = message_keys.get(id(actor), actor.name)
+            messages_map[message_key] = {"$ref": f"#/components/messages/{message_key}"}
         for op in self.messages._operations.values():
             if op.channel.address == address:
                 for msg in op.messages:
-                    messages_map[msg.name] = {"$ref": f"#/components/messages/{msg.name}"}
+                    message_key = message_keys.get(id(msg), msg.name)
+                    if message_key not in messages_map:
+                        messages_map[message_key] = {"$ref": f"#/components/messages/{message_key}"}
         return messages_map
 
     def _generate_operations(
@@ -532,18 +580,23 @@ class AsyncAPIGenerator:
         extractor: DataExtractor,
         components: AsyncAPIComponents,
         message_keys: dict[int, str],
+        actors_per_router: list[tuple[Router, dict[str, list[ActorData]]]],
     ) -> dict[str, Operation]:
         operations: dict[str, Operation] = {}
-        for router in self.routers:
-            for actor in router.actors:
-                operations.update(
-                    self._generate_router_operations(
-                        actor.channel_address,
-                        {actor.name: actor},
-                        extractor,
-                        components,
-                    ),
-                )
+        generated_operation_ids: set[str] = set()
+        for _, actors_by_channel in actors_per_router:
+            for channel, actors in actors_by_channel.items():
+                for actor in actors:
+                    operations.update(
+                        self._generate_router_operations(
+                            channel,
+                            {actor.name: actor},
+                            extractor,
+                            components,
+                            message_keys,
+                            generated_operation_ids,
+                        ),
+                    )
         for op_id, op_obj in self.messages._operations.items():
             operations[op_id] = self._generate_operation_send(
                 op_obj,
@@ -560,10 +613,23 @@ class AsyncAPIGenerator:
         actors: dict[str, ActorData],
         extractor: DataExtractor,
         components: AsyncAPIComponents,
+        message_keys: dict[int, str],
+        generated_operation_ids: set[str],
     ) -> dict[str, Operation]:
         result: dict[str, Operation] = {}
         for actor_name, actor in actors.items():
-            channel_ref = f"#/channels/{channel.replace('/', '~1')}"
+            escaped_channel = _escape_ref_token(channel)
+            message_key = message_keys.get(id(actor), actor.name)
+            escaped_message = _escape_ref_token(message_key)
+            channel_ref = f"#/channels/{escaped_channel}"
+            operation_base_id = _sanitize_component_key(f"receive_{actor_name}", fallback="receive")
+            operation_id = operation_base_id
+            counter = 1
+            while operation_id in generated_operation_ids:
+                operation_id = f"{operation_base_id}_{counter}"
+                counter += 1
+            generated_operation_ids.add(operation_id)
+
             op: Operation = {
                 "action": "receive",
                 "channel": {"$ref": channel_ref},
@@ -572,7 +638,7 @@ class AsyncAPIGenerator:
 
             op["messages"] = [
                 {
-                    "$ref": f"#/channels/{channel.replace('/', '~1')}/messages/{actor_name.replace('/', '~1')}",
+                    "$ref": f"#/channels/{escaped_channel}/messages/{escaped_message}",
                 },
             ]
 
@@ -586,13 +652,13 @@ class AsyncAPIGenerator:
 
             security = self._process_security_schemes(
                 actor.security,
-                f"receive_{actor_name}",
+                operation_id,
                 "operation",
                 components,
             )
             if security:
                 op["security"] = security
-            result[f"receive_{actor_name}"] = op
+            result[operation_id] = op
         return result
 
     def _generate_operation_send(
@@ -603,7 +669,8 @@ class AsyncAPIGenerator:
         op_id: str,
         message_keys: dict[int, str],
     ) -> Operation:
-        channel_ref = f"#/channels/{op_obj.channel.address.replace('/', '~1')}"
+        escaped_channel = _escape_ref_token(op_obj.channel.address)
+        channel_ref = f"#/channels/{escaped_channel}"
         op: Operation = {
             "action": "send",
             "channel": {"$ref": channel_ref},
@@ -611,10 +678,9 @@ class AsyncAPIGenerator:
         extractor.extract_common(op_obj, op)
 
         if op_obj.messages:
-            escaped_channel = op_obj.channel.address.replace("/", "~1")
             op["messages"] = [
                 {
-                    "$ref": f"#/channels/{escaped_channel}/messages/{message_keys.get(id(msg), msg.name).replace('/', '~1')}",
+                    "$ref": f"#/channels/{escaped_channel}/messages/{_escape_ref_token(message_keys.get(id(msg), msg.name))}",
                 }
                 for msg in op_obj.messages
             ]
@@ -651,10 +717,7 @@ class AsyncAPIGenerator:
         for index, scheme in enumerate(security):
             if isinstance(scheme, dict) and "$ref" not in scheme:
                 scheme_name = f"{parent_id}_{parent_type}-security-schema-{index}"
-                components.add_security_scheme(scheme_name, scheme)
-                processed_security.append(
-                    {"$ref": f"#/components/securitySchemes/{scheme_name}"},
-                )
+                processed_security.append(components.add_security_scheme(scheme_name, scheme))
             else:  # pragma: no cover
                 processed_security.append(scheme)
         return processed_security

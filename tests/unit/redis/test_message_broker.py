@@ -41,6 +41,7 @@ def make_received_message(pipeline_mock: tuple[MagicMock, MagicMock]) -> Any:
             "payload": b"p",
             "headers": {},
             "content_type": "c",
+            "reply_to": None,
             "message_id": "1-0",
             "channel": "chan",
             "stream_name": "s",
@@ -66,13 +67,19 @@ def test_redis_build_message_fields() -> None:
     headers = {"a": "b"}
     content_type = "application/json"
 
-    fields = _build_message_fields(payload, headers, content_type)
+    fields = _build_message_fields(
+        payload,
+        headers,
+        content_type,
+        reply_to="reply-chan",
+    )
 
     assert fields[b"payload"] == payload
     assert fields[b"headers"] == json.dumps(headers)
     assert fields[b"content_type"] == content_type
+    assert fields[b"reply_to"] == "reply-chan"
 
-    fields_min = _build_message_fields(payload, None, None)
+    fields_min = _build_message_fields(payload, None, None, None)
     assert fields_min[b"payload"] == payload
     assert b"headers" not in fields_min
     assert b"content_type" not in fields_min
@@ -86,28 +93,37 @@ def test_redis_parse_message_fields() -> None:
         b"payload": payload,
         b"headers": json.dumps(headers).encode(),
         b"content_type": content_type.encode(),
+        b"reply_to": b"reply-chan",
     }
 
-    p, h, ct = _parse_message_fields(fields)
+    p, h, ct, reply_to = _parse_message_fields(fields)
     assert p == payload
     assert h == headers
     assert ct == content_type
+    assert reply_to == "reply-chan"
 
     fields_str = {b"payload": "str_payload"}
-    p, _, _ = _parse_message_fields(fields_str)
+    p, _, _, _ = _parse_message_fields(fields_str)
     assert p == b"str_payload"
 
-    p, h, ct = _parse_message_fields({})
+    p, h, ct, reply_to = _parse_message_fields({})
     assert p == b""
     assert h is None
     assert ct is None
+    assert reply_to is None
 
 
 def test_redis_sent_message() -> None:
-    msg = RedisSentMessage(payload=b"foo", headers={"x": "y"}, content_type="text/plain")
+    msg = RedisSentMessage(
+        payload=b"foo",
+        headers={"x": "y"},
+        content_type="text/plain",
+        reply_to="reply-chan",
+    )
     assert msg.payload == b"foo"
     assert msg.headers == {"x": "y"}
     assert msg.content_type == "text/plain"
+    assert msg.reply_to == "reply-chan"
 
 
 def test_redis_server_init() -> None:
@@ -130,9 +146,7 @@ def test_redis_server_init() -> None:
     assert server.bindings is None
 
     caps = server.capabilities
-    assert caps["supports_acknowledgments"]
-    assert caps["supports_persistence"]
-    assert caps["supports_reply"]
+    assert not caps["supports_native_reply"]
     assert caps["supports_lightweight_pause"]
 
 
@@ -530,42 +544,17 @@ async def test_redis_received_message_reject(
 
 
 async def test_redis_received_message_reply(
-    pipeline_mock: tuple[MagicMock, MagicMock],
+    pipeline_mock: tuple[MagicMock, MagicMock],  # noqa: ARG001
     make_received_message: Any,
 ) -> None:
-    _, pipe = pipeline_mock
-
-    server = MagicMock(stream_name_for=lambda c: f"repid:{c}")
-
-    msg = make_received_message(
-        message_id="1-0",
-        channel="chan",
-        stream_name="s",
-        consumer_group="g",
-        dlq_stream="dlq",
-        server=server,
-    )
-
-    await msg.reply(payload=b"resp", headers={"r": "h"}, content_type="rc", channel="reply_chan")
-
-    assert msg.is_acted_on
-
-    pipe.xack.assert_called_once_with("s", "g", "1-0")
-
-    pipe.xadd.assert_called_once()
-    args, _ = pipe.xadd.call_args
-    assert args[0] == "repid:reply_chan"
-    assert args[1][b"payload"] == b"resp"
-
-    pipe.execute.assert_awaited_once()
-
-    pipe.reset_mock()
-    pipe.xadd.reset_mock()
-    pipe.xack.reset_mock()
-    msg._action = None
-    await msg.reply(payload=b"resp")
-    args, _ = pipe.xadd.call_args
-    assert args[0] == "repid:chan"
+    msg = make_received_message()
+    with pytest.raises(NotImplementedError, match="Redis does not support native replies"):
+        await msg.reply(
+            payload=b"resp",
+            headers={"r": "h"},
+            content_type="rc",
+            channel="reply_chan",
+        )
 
 
 @patch("repid.connections.redis.message_broker.Redis")
@@ -616,6 +605,9 @@ async def test_redis_received_message_properties_and_ack_acted_on(
     msg = make_received_message(headers={"h": "v"}, content_type="c")
     assert msg.headers == {"h": "v"}
     assert msg.content_type == "c"
+
+    msg_with_meta = make_received_message(reply_to="reply-1")
+    assert msg_with_meta.reply_to == "reply-1"
 
     msg._action = MessageAction.acked
     await msg.ack()

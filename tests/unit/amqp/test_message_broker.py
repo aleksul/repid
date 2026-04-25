@@ -284,6 +284,7 @@ async def test_amqp_received_message_properties() -> None:
     )
 
     assert msg.content_type is None
+    assert msg.reply_to is None
     assert msg.channel == "test-channel"
     assert msg.message_id is None
     assert msg.is_acted_on is False
@@ -317,6 +318,82 @@ async def test_amqp_received_message_bytes_message_id() -> None:
 
     assert make_msg(Properties(message_id=b"my-bytes-id")).message_id == "my-bytes-id"
     assert make_msg(Properties(message_id=42)).message_id == "42"
+
+
+async def test_amqp_received_message_reply_to() -> None:
+    connection = FakeConnection()
+    fake_session = FakeSession(connection=connection, channel=2)
+
+    class FakeReceiverLinkWithSession:
+        handle: int = 7
+        session: FakeSession = fake_session
+
+    link = FakeReceiverLinkWithSession()
+    msg = AmqpReceivedMessage(
+        payload=b"test",
+        headers=None,
+        link=cast(Any, link),
+        delivery_id=1,
+        delivery_tag=b"tag",
+        channel_name="q",
+        managed_session=cast(ManagedSession, object()),
+        publish_fn=lambda: asyncio.sleep(0),
+        properties=Properties(reply_to="reply-to"),
+    )
+
+    assert msg.reply_to == "reply-to"
+
+
+async def test_amqp_received_message_bytes_properties() -> None:
+    connection = FakeConnection()
+    fake_session = FakeSession(connection=connection, channel=2)
+
+    class FakeReceiverLinkWithSession:
+        handle: int = 7
+        session: FakeSession = fake_session
+
+    link = FakeReceiverLinkWithSession()
+    msg = AmqpReceivedMessage(
+        payload=b"test",
+        headers=None,
+        link=cast(Any, link),
+        delivery_id=1,
+        delivery_tag=b"tag",
+        channel_name="q",
+        managed_session=cast(ManagedSession, object()),
+        publish_fn=lambda: asyncio.sleep(0),
+        properties=Properties(
+            content_type=cast(Any, b"application/json"),
+            reply_to=cast(Any, b"reply-bytes"),
+        ),
+    )
+
+    assert msg.content_type == "application/json"
+    assert msg.reply_to == "reply-bytes"
+
+
+async def test_amqp_received_message_non_bytes_content_type_casts_to_str() -> None:
+    connection = FakeConnection()
+    fake_session = FakeSession(connection=connection, channel=2)
+
+    class FakeReceiverLinkWithSession:
+        handle: int = 7
+        session: FakeSession = fake_session
+
+    link = FakeReceiverLinkWithSession()
+    msg = AmqpReceivedMessage(
+        payload=b"test",
+        headers=None,
+        link=cast(Any, link),
+        delivery_id=1,
+        delivery_tag=b"tag",
+        channel_name="q",
+        managed_session=cast(ManagedSession, object()),
+        publish_fn=lambda: asyncio.sleep(0),
+        properties=Properties(content_type=cast(Any, 123)),
+    )
+
+    assert msg.content_type == "123"
 
 
 async def test_amqp_publish_fills_missing_message_id_on_existing_properties(
@@ -362,6 +439,49 @@ async def test_amqp_publish_fills_missing_message_id_on_existing_properties(
     assert sent_properties[0].message_id is not None
 
 
+async def test_amqp_publish_fills_missing_reply_to_on_existing_properties(
+    monkeypatch: Any,
+) -> None:
+    sent_properties: list[Properties] = []
+
+    class FakeSenderPool:
+        async def send(
+            self,
+            address: str,  # noqa: ARG002
+            body: bytes,  # noqa: ARG002
+            *,
+            headers: Any = None,  # noqa: ARG002
+            message_properties: Properties | None = None,
+            **kwargs: Any,  # noqa: ARG002
+        ) -> None:
+            if message_properties is not None:
+                sent_properties.append(message_properties)
+
+    class FakeManagedSessionWithSender:
+        sender_pool = FakeSenderPool()
+        is_connected = True
+
+        async def get_session(self) -> None:
+            pass
+
+    broker = AmqpServer("amqp://guest:guest@localhost:5672/")
+    monkeypatch.setattr(broker, "_managed_session", FakeManagedSessionWithSender())
+
+    class FakeMessage:
+        payload = b"hello"
+        headers: ClassVar[dict] = {}
+        reply_to = "reply-1"
+
+    await broker.publish(
+        channel="queue",
+        message=cast(SentMessageT, FakeMessage()),
+        server_specific_parameters={"properties": Properties(message_id="id-1")},
+    )
+
+    assert len(sent_properties) == 1
+    assert sent_properties[0].reply_to == "reply-1"
+
+
 async def test_message_broker_properties() -> None:
     broker = AmqpServer(
         "amqp://user:pass@example.com:5672/vhost",
@@ -384,9 +504,7 @@ async def test_message_broker_properties() -> None:
     assert broker.bindings is None
 
     caps = broker.capabilities
-    assert caps["supports_acknowledgments"] is True
-    assert caps["supports_persistence"] is True
-    assert caps["supports_reply"] is True
+    assert caps["supports_native_reply"] is True
     assert caps["supports_lightweight_pause"] is False
 
     assert broker.managed_session is None
@@ -570,6 +688,7 @@ async def test_amqp_received_message_reply_first() -> None:
         channel_name="q",
         managed_session=cast(ManagedSession, object()),
         publish_fn=publish_fn,
+        properties=Properties(reply_to="reply-to-channel"),
     )
 
     await msg.reply(payload=b"response", headers={"x": "1"})
@@ -578,10 +697,115 @@ async def test_amqp_received_message_reply_first() -> None:
     assert len(connection.sent) == 1  # Ack was sent
     assert len(published) == 1
     assert published[0] == (
-        "q",
+        "reply-to-channel",
         MessageData(payload=b"response", headers={"x": "1"}, content_type=None),
     )
 
     # Second reply is a no-op
     await msg.reply(payload=b"ignored")
     assert len(published) == 1
+
+
+async def test_amqp_received_message_reply_uses_reply_to() -> None:
+    connection = FakeConnection()
+    fake_session = FakeSession(connection=connection, channel=2)
+
+    class FakeReceiverLinkWithSession:
+        handle: int = 7
+        session: FakeSession = fake_session
+
+    link = FakeReceiverLinkWithSession()
+    published: list[tuple[str, MessageData, dict[str, Any]]] = []
+
+    async def publish_fn(
+        *,
+        channel: str,
+        message: MessageData,
+        server_specific_parameters: dict[str, Any] | None = None,
+    ) -> None:
+        published.append((channel, message, server_specific_parameters or {}))
+
+    msg = AmqpReceivedMessage(
+        payload=b"original",
+        headers=None,
+        link=cast(Any, link),
+        delivery_id=8,
+        delivery_tag=b"tag",
+        channel_name="q",
+        managed_session=cast(ManagedSession, object()),
+        publish_fn=publish_fn,
+        properties=Properties(reply_to="reply-target"),
+    )
+
+    await msg.reply(payload=b"response")
+
+    assert published[0][0] == "reply-target"
+    assert published[0][1] == MessageData(
+        payload=b"response",
+        headers=None,
+        content_type=None,
+    )
+    assert "properties" not in published[0][2]
+
+
+async def test_amqp_received_message_reply_updates_existing_properties() -> None:
+    connection = FakeConnection()
+    fake_session = FakeSession(connection=connection, channel=2)
+
+    class FakeReceiverLinkWithSession:
+        handle: int = 7
+        session: FakeSession = fake_session
+
+    link = FakeReceiverLinkWithSession()
+    published: list[dict[str, Any]] = []
+
+    async def publish_fn(
+        *,
+        channel: str,
+        message: MessageData,
+        server_specific_parameters: dict[str, Any] | None = None,
+    ) -> None:
+        _ = channel
+        _ = message
+        published.append(server_specific_parameters or {})
+
+    msg = AmqpReceivedMessage(
+        payload=b"original",
+        headers=None,
+        link=cast(Any, link),
+        delivery_id=10,
+        delivery_tag=b"tag",
+        channel_name="q",
+        managed_session=cast(ManagedSession, object()),
+        publish_fn=publish_fn,
+        properties=Properties(reply_to="reply-target"),
+    )
+
+    params = {"properties": Properties(message_id="id-1")}
+    await msg.reply(payload=b"response", server_specific_parameters=params)
+
+    assert isinstance(published[0]["properties"], Properties)
+
+
+async def test_amqp_received_message_reply_requires_channel_or_reply_to() -> None:
+    connection = FakeConnection()
+    fake_session = FakeSession(connection=connection, channel=2)
+
+    class FakeReceiverLinkWithSession:
+        handle: int = 7
+        session: FakeSession = fake_session
+
+    link = FakeReceiverLinkWithSession()
+    msg = AmqpReceivedMessage(
+        payload=b"original",
+        headers=None,
+        link=cast(Any, link),
+        delivery_id=9,
+        delivery_tag=b"tag",
+        channel_name="q",
+        managed_session=cast(ManagedSession, object()),
+        publish_fn=lambda **_kwargs: asyncio.sleep(0),
+    )
+
+    with pytest.raises(ValueError, match="Reply channel is not set"):
+        await msg.reply(payload=b"response")

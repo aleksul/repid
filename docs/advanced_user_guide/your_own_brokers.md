@@ -33,9 +33,7 @@ class MyCustomServer:
     @property
     def capabilities(self) -> CapabilitiesT:
         return {
-            "supports_acknowledgments": True,
-            "supports_persistence": True,
-            "supports_reply": False,
+            "supports_native_reply": False,
             "supports_lightweight_pause": False,
         }
 
@@ -114,7 +112,10 @@ class MyCustomSubscriber:
 
 When invoking the callbacks provided to `subscribe`, you must provide
 instances compatible with `ReceivedMessageT` protocol. These objects wrap the payload, headers,
-and any methods necessary to acknowledge or reject the message (`ack`, `nack`, `reject`, `reply`).
+reply metadata (`reply_to`), and methods to act on a message (`ack`, `nack`, `reject`, `reply`).
+
+If your broker does not provide native request/reply
+semantics, implement `reply(...)` to raise `NotImplementedError`.
 
 By implementing these protocols, your custom broker will integrate natively with the rest
 of Repid's architecture, including routers, workers, and middlewares.

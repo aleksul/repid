@@ -59,7 +59,23 @@ class AmqpReceivedMessage:
 
     @property
     def content_type(self) -> str | None:
-        return None
+        if self._properties is None:
+            return None
+        content_type = self._properties.content_type
+        if content_type is None:
+            return None
+        if isinstance(content_type, bytes):
+            return content_type.decode()
+        return str(content_type)
+
+    @property
+    def reply_to(self) -> str | None:
+        if self._properties is None or self._properties.reply_to is None:
+            return None
+        reply_to = self._properties.reply_to
+        if isinstance(reply_to, bytes):
+            return reply_to.decode()
+        return str(reply_to)
 
     @property
     def channel(self) -> str:
@@ -136,10 +152,15 @@ class AmqpReceivedMessage:
     ) -> None:
         if self._action is not None:
             return
+        reply_channel = channel or self.reply_to
+        if reply_channel is None:
+            raise ValueError(
+                "Reply channel is not set. Provide `channel` or publish with `reply_to`.",
+            )
+
         await self._do_ack()
         self._action = MessageAction.replied
-
-        reply_channel = channel or self._channel_name
+        params = dict(server_specific_parameters or {})
 
         await self._publish_fn(
             channel=reply_channel,
@@ -148,5 +169,5 @@ class AmqpReceivedMessage:
                 headers=headers,
                 content_type=content_type,
             ),
-            server_specific_parameters=server_specific_parameters,
+            server_specific_parameters=params,
         )

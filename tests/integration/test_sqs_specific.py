@@ -32,10 +32,12 @@ class DummySentMessage(SentMessageT):
         payload: bytes,
         headers: dict[str, str] | None = None,
         content_type: str | None = None,
+        reply_to: str | None = None,
     ) -> None:
         self._payload = payload
         self._headers = headers or {}
         self._content_type = content_type
+        self._reply_to = reply_to
 
     @property
     def payload(self) -> bytes:
@@ -48,6 +50,10 @@ class DummySentMessage(SentMessageT):
     @property
     def content_type(self) -> str | None:
         return self._content_type
+
+    @property
+    def reply_to(self) -> str | None:
+        return self._reply_to
 
 
 class MockSubscriberWithProcessException(SqsSubscriber):
@@ -199,29 +205,11 @@ async def test_sqs_reply_sends_message_to_reply_channel(
 
         assert received_msg is not None
 
-        await received_msg.reply(
-            payload=b"replied_payload",
-            channel=reply_channel_name,
-        )
-
-        reply_msg: ReceivedMessageT | None = None
-        reply_event = asyncio.Event()
-
-        async def on_reply_message(msg: ReceivedMessageT) -> None:
-            nonlocal reply_msg
-            reply_msg = msg
-            reply_event.set()
-
-        reply_subscriber = await sqs_connection.subscribe(
-            channels_to_callbacks={reply_channel_name: on_reply_message},
-            concurrency_limit=1,
-        )
-
-        await asyncio.wait_for(reply_event.wait(), timeout=15.0)
-        await reply_subscriber.close()
-
-        assert reply_msg is not None
-        assert reply_msg.payload == b"replied_payload"
+        with pytest.raises(NotImplementedError, match=r"SQS does not support native replies\."):
+            await received_msg.reply(
+                payload=b"replied_payload",
+                channel=reply_channel_name,
+            )
 
 
 async def test_sqs_publish_preserves_empty_payload(
@@ -292,26 +280,8 @@ async def test_sqs_reply_preserves_empty_payload(sqs_repid: Repid, sqs_connectio
         await subscriber.close()
 
         assert received_msg is not None
-        await received_msg.reply(payload=b"", channel=reply_channel_name)
-
-        reply_msg: ReceivedMessageT | None = None
-        reply_event = asyncio.Event()
-
-        async def on_reply_message(msg: ReceivedMessageT) -> None:
-            nonlocal reply_msg
-            reply_msg = msg
-            reply_event.set()
-
-        reply_subscriber = await sqs_connection.subscribe(
-            channels_to_callbacks={reply_channel_name: on_reply_message},
-            concurrency_limit=1,
-        )
-
-        await asyncio.wait_for(reply_event.wait(), timeout=15.0)
-        await reply_subscriber.close()
-
-        assert reply_msg is not None
-        assert reply_msg.payload == b""
+        with pytest.raises(NotImplementedError, match=r"SQS does not support native replies\."):
+            await received_msg.reply(payload=b"", channel=reply_channel_name)
 
 
 async def test_sqs_multiple_actions_are_ignored(sqs_repid: Repid, sqs_connection: ServerT) -> None:
@@ -426,7 +396,7 @@ async def test_sqs_server_properties_are_correct(sqs_connection: ServerT) -> Non
     assert server.tags == [{"name": "tag1"}]
     assert server.external_docs == {"url": "http://docs"}
     assert server.bindings == {"sqs": "binding"}
-    assert server.capabilities["supports_acknowledgments"] is True
+    assert server.capabilities["supports_native_reply"] is False
 
 
 async def test_sqs_server_connection_state(sqs_connection: ServerT) -> None:
@@ -489,6 +459,7 @@ async def test_sqs_message_properties_parsing(sqs_connection: ServerT) -> None:
     assert msg.payload == b"test_payload"
     assert msg.headers == {"custom-header": "header_val"}
     assert msg.content_type == "text/plain"
+    assert msg.reply_to is None
     assert msg.channel == "my_channel"
     assert msg.action is None
     assert msg.is_acted_on is False
@@ -533,14 +504,13 @@ async def test_sqs_message_reply_with_server_params(sqs_connection: ServerT) -> 
         q1_url = await server._get_queue_url("default")
         msg_dict2 = {"MessageId": "2", "ReceiptHandle": "r2", "Body": "eQ=="}
         msg2 = SqsReceivedMessage(server, "default", q1_url, msg_dict2)
-        await msg2.reply(
-            payload=b"hi",
-            headers={"foo": "bar"},
-            content_type="text/plain",
-            server_specific_parameters={"DelaySeconds": 1},
-        )
-        assert msg2.action == MessageAction.replied
-        assert msg2.is_acted_on is True
+        with pytest.raises(NotImplementedError, match=r"SQS does not support native replies\."):
+            await msg2.reply(
+                payload=b"hi",
+                headers={"foo": "bar"},
+                content_type="text/plain",
+                server_specific_parameters={"DelaySeconds": 1},
+            )
 
 
 async def test_sqs_message_nack_without_dlq(sqs_connection: ServerT) -> None:

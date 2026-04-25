@@ -6,3 +6,4 @@ class MessageData:
     payload: bytes
     headers: dict[str, str] | None = None
     content_type: str | None = None
+    reply_to: str | None = None

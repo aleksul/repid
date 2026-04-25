@@ -4,7 +4,8 @@ import pytest
 
 from repid import Header, Message, Repid, Router
 from repid.connections.abc import MessageAction
-from repid.test_client import TestClient
+from repid.data import MessageData
+from repid.test_client import TestClient, TestMessage
 
 
 async def test_test_client_basic() -> None:
@@ -196,7 +197,7 @@ async def test_test_client_reply_queues_new_message_and_error_handling() -> None
 
     @router.actor
     async def dummy_actor(message: Message) -> None:
-        await message.reply(payload=b"", headers={"topic": "reply_actor"})
+        await message.reply(payload=b"", headers={"topic": "reply_actor"}, channel="default")
 
     @router.actor
     async def reply_actor() -> None:
@@ -437,7 +438,7 @@ async def test_test_message_action_property(
     @router.actor(confirmation_mode=confirmation_mode)
     async def myactor(m: Message) -> None:
         if action_method == "reply":
-            await m.reply(payload=b"response")
+            await m.reply(payload=b"response", channel="default")
         else:
             await getattr(m, action_method)()
 
@@ -626,7 +627,7 @@ async def test_test_client_reply_via_message_dependency() -> None:
 
     @router.actor
     async def replier_actor(message: Message) -> None:
-        await message.reply(payload=b"reply_payload")
+        await message.reply(payload=b"reply_payload", channel="default")
 
     app.include_router(router)
     app.messages.register_operation(operation_id="replier_actor", channel="default")
@@ -643,6 +644,70 @@ async def test_test_client_reply_via_message_dependency() -> None:
         # 1 original message + 1 reply
         assert len(sent) == 2
         assert sent[1].payload == b"reply_payload"
+
+
+async def test_test_client_reply_without_channel_or_reply_to_raises() -> None:
+    app = Repid()
+    router = Router()
+
+    @router.actor
+    async def replier_actor(message: Message) -> None:
+        await message.reply(payload=b"reply_payload")
+
+    app.include_router(router)
+
+    async with TestClient(app, raise_on_actor_error=False) as client:
+        await client.send_message(
+            channel="default",
+            payload=b"{}",
+            headers={"topic": "replier_actor"},
+        )
+
+        processed = client.get_processed_messages()
+        assert len(processed) == 1
+        assert isinstance(processed[0].exception, ValueError)
+
+
+async def test_test_message_reply_without_channel_does_not_set_action() -> None:
+    msg = TestMessage(
+        operation_id=None,
+        payload=b"{}",
+        headers=None,
+        content_type=None,
+        channel="default",
+        reply_to=None,
+    )
+    with pytest.raises(ValueError, match="Reply channel is not set"):
+        await msg.reply(payload=b"response")
+    assert not msg.is_acted_on
+    assert msg.action is None
+
+
+async def test_test_client_message_properties_expose_reply_to() -> None:
+    app = Repid()
+    router = Router()
+
+    @router.actor
+    async def replier_actor(message: Message) -> None:
+        await message.reply(payload=b"reply_payload", channel="default")
+
+    app.include_router(router)
+    app.messages.register_operation(operation_id="replier_actor", channel="default")
+
+    async with TestClient(app, auto_process=False) as client:
+        await client._mock_server.publish(
+            channel="default",
+            message=MessageData(
+                payload=b"{}",
+                headers={"topic": "replier_actor"},
+                content_type="application/json",
+            ),
+        )
+        await client.process_next()
+
+        sent = client.get_sent_messages(channel="default")
+        assert len(sent) == 2
+        assert sent[0].reply_to is None
 
 
 async def test_test_client_clear_with_messages() -> None:

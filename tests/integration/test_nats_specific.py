@@ -16,11 +16,13 @@ class MockSentMsgNoHeaders:
     payload = b"test2"
     headers = None
     content_type = None
+    reply_to = None
 
 
 class MockSentMsg:
     payload = b"test"
     content_type = "text/plain"
+    reply_to = None
 
     def __init__(self) -> None:
         self.headers = {"x": "y"}
@@ -52,7 +54,7 @@ async def test_nats_basic_attributes(nats_connection: NatsServer) -> None:
     assert nats_connection.tags is None
     assert nats_connection.external_docs is None
     assert nats_connection.bindings is None
-    assert nats_connection.capabilities["supports_acknowledgments"] is True
+    assert nats_connection.capabilities["supports_native_reply"] is True
 
 
 async def test_nats_publish_subscribe(nats_connection: NatsServer) -> None:
@@ -254,6 +256,7 @@ async def test_nats_received_message_properties_none() -> None:
     assert wrapped.message_id is None
     assert wrapped.headers is None
     assert wrapped.content_type is None
+    assert wrapped.reply_to is None
 
 
 async def test_nats_received_message_reply_fallback_to_core_nats() -> None:
@@ -268,7 +271,7 @@ async def test_nats_received_message_reply_fallback_to_core_nats() -> None:
 
     await wrapped.reply(payload=b"resp", content_type="text/plain")
     mock_nc.publish.assert_called_once_with(
-        "test",
+        "mock_reply",
         b"resp",
         headers={"content-type": "text/plain"},
     )
@@ -295,15 +298,72 @@ async def test_nats_received_message_nack_fallback_to_core_nats_dlq() -> None:
 
 async def test_nats_received_message_reply_connection_error_calls_nak() -> None:
     server = NatsServer("nats://localhost:4222", dlq_topic_strategy=None)
-    mock_msg = Mock(ack=AsyncMock(), nak=AsyncMock())
+    mock_msg = Mock(ack=AsyncMock(), nak=AsyncMock(), reply="test.reply")
     wrapped = NatsReceivedMessage(mock_msg, server, "test")
 
     server._js = None
     server._nc = None
     wrapped._is_acted_on = False
-    with suppress(ConnectionError):
+    with pytest.raises(ConnectionError, match="NATS connection is not initialized"):
         await wrapped.reply(payload=b"resp")
-    mock_msg.nak.assert_called_once()
+    mock_msg.nak.assert_awaited_once()
+
+
+async def test_nats_received_message_reply_requires_channel_or_reply_to() -> None:
+    server = NatsServer("nats://localhost:4222", dlq_topic_strategy=None)
+    mock_msg = Mock(ack=AsyncMock(), nak=AsyncMock())
+    wrapped = NatsReceivedMessage(mock_msg, server, "test")
+
+    server._js = None
+    server._nc = Mock(publish=AsyncMock())
+    wrapped._is_acted_on = False
+
+    with pytest.raises(ValueError, match="Reply channel is not set"):
+        await wrapped.reply(payload=b"resp")
+
+
+async def test_nats_received_message_reply_uses_js_client() -> None:
+    server = NatsServer("nats://localhost:4222", dlq_topic_strategy=None)
+    mock_msg = Mock(ack=AsyncMock(), reply="reply.target")
+    wrapped = NatsReceivedMessage(mock_msg, server, "test")
+
+    mock_js = Mock(publish=AsyncMock())
+    server._js = mock_js
+    server._nc = None
+
+    await wrapped.reply(
+        payload=b"resp",
+        headers={"content-type": "application/json"},
+    )
+
+    mock_js.publish.assert_awaited_once_with(
+        "reply.target",
+        b"resp",
+        headers={"content-type": "application/json"},
+    )
+
+
+async def test_nats_publish_with_correlation_and_reply_to() -> None:
+    server = NatsServer("nats://localhost:4222", dlq_topic_strategy=None)
+
+    class SentWithMeta:
+        def __init__(self) -> None:
+            self.payload = b"test"
+            self.headers = {"x": "1"}
+            self.content_type = "text/plain"
+            self.reply_to = "reply.topic"
+
+    server._js = None
+    mock_nc = Mock(publish=AsyncMock(), is_connected=True)
+    server._nc = mock_nc
+
+    await server.publish(channel="test_pub", message=SentWithMeta())
+    mock_nc.publish.assert_called_with(
+        "test_pub",
+        b"test",
+        reply="reply.topic",
+        headers={"x": "1", "content-type": "text/plain"},
+    )
 
 
 async def test_nats_received_message_nack_connection_error_calls_nak() -> None:
@@ -420,3 +480,10 @@ async def test_nats_subscribe_callback_exception_calls_term() -> None:
     await message_handler(fake_nats_msg)
     fake_nats_msg.term.assert_called_once()
     await sub_test.close()
+
+
+async def test_nats_received_message_reply_to_ignores_js_ack() -> None:
+    server = NatsServer("nats://localhost:4222", dlq_topic_strategy=None)
+    mock_msg = Mock(headers=None, reply="$JS.ACK.stream.consumer.1.2.3")
+    wrapped = NatsReceivedMessage(mock_msg, server, "test")
+    assert wrapped.reply_to is None

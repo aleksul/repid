@@ -4,7 +4,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable, Coroutine, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
 import nats
@@ -53,6 +53,15 @@ class NatsReceivedMessage(ReceivedMessageT):
     def content_type(self) -> str | None:
         if self._msg.headers:
             return self._msg.headers.get("content-type")
+        return None
+
+    @property
+    def reply_to(self) -> str | None:
+        reply = getattr(self._msg, "reply", None)
+        if isinstance(reply, str) and reply:
+            if reply.startswith("$JS.ACK"):
+                return None
+            return reply
         return None
 
     @property
@@ -134,17 +143,21 @@ class NatsReceivedMessage(ReceivedMessageT):
         if self._is_acted_on:
             return
 
+        reply_channel = channel or self.reply_to
+        if reply_channel is None:
+            raise ValueError(
+                "Reply channel is not set. Provide `channel` or publish with `reply_to`.",
+            )
+
         reply_headers = dict(headers) if headers else {}
         if content_type:
             reply_headers["content-type"] = content_type
 
         # Atomic reply: publish and then ack
         if self._server._js is not None:
-            reply_channel = channel or self._channel
             await self._server._js.publish(reply_channel, payload, headers=reply_headers)
             await self._msg.ack()
         elif self._server._nc is not None:
-            reply_channel = channel or self._channel
             await self._server._nc.publish(reply_channel, payload, headers=reply_headers)
             if hasattr(self._msg, "ack"):
                 await self._msg.ack()
@@ -348,9 +361,7 @@ class NatsServer(ServerT):
     @property
     def capabilities(self) -> CapabilitiesT:
         return {
-            "supports_acknowledgments": True,
-            "supports_persistence": True,
-            "supports_reply": True,
+            "supports_native_reply": True,
             "supports_lightweight_pause": False,
         }
 
@@ -391,7 +402,7 @@ class NatsServer(ServerT):
         *,
         channel: str,
         message: SentMessageT,
-        server_specific_parameters: dict[str, Any] | None = None,  # noqa: ARG002
+        server_specific_parameters: dict[str, Any] | None = None,
     ) -> None:
         if not self.is_connected:
             raise ConnectionError("NATS connection is not initialized. Call connect() first.")
@@ -399,12 +410,27 @@ class NatsServer(ServerT):
         headers = dict(message.headers) if message.headers else {}
         if message.content_type:
             headers["content-type"] = message.content_type
+        publish_params = dict(server_specific_parameters or {})
+        reply_candidate = publish_params.pop("reply", None)
+        reply_to = (
+            reply_candidate
+            if isinstance(reply_candidate, str)
+            else (message.reply_to if isinstance(message.reply_to, str) else None)
+        )
 
         if self._js is not None:
             await self._js.publish(channel, message.payload, headers=headers)
             logger.debug("channel.publish", extra={"channel": channel})
         elif self._nc is not None:
-            await self._nc.publish(channel, message.payload, headers=headers)
+            if reply_to is None:
+                await self._nc.publish(channel, message.payload, headers=headers)
+            else:
+                await self._nc.publish(
+                    channel,
+                    message.payload,
+                    reply=cast(str, reply_to),
+                    headers=headers,
+                )
             logger.debug("channel.publish.core", extra={"channel": channel})
         else:
             raise ConnectionError("NATS connection is not initialized. Cannot publish message.")

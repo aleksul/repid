@@ -32,13 +32,13 @@ class InMemorySentMessage(SentMessageT):
         *,
         payload: bytes,
         headers: dict[str, str] | None = None,
-        correlation_id: str | None = None,
+        reply_to: str | None = None,
         content_type: str | None = "text/plain",
         message_id: str | None = None,
     ) -> None:
         self._payload = payload
         self._headers = headers
-        self._correlation_id = correlation_id
+        self._reply_to = reply_to
         self._content_type = content_type
         self._message_id = message_id
 
@@ -51,8 +51,8 @@ class InMemorySentMessage(SentMessageT):
         return self._headers
 
     @property
-    def correlation_id(self) -> str | None:
-        return self._correlation_id
+    def reply_to(self) -> str | None:
+        return self._reply_to
 
     @property
     def content_type(self) -> str | None:
@@ -64,10 +64,17 @@ class InMemorySentMessage(SentMessageT):
 
 
 class InMemoryReceivedMessage(ReceivedMessageT):
-    def __init__(self, message: DummyQueue.Message, queue: DummyQueue, channel: str) -> None:
+    def __init__(
+        self,
+        message: DummyQueue.Message,
+        queue: DummyQueue,
+        channel: str,
+        queues: dict[str, DummyQueue] | None = None,
+    ) -> None:
         self._message = message
         self._queue = queue
         self._channel = channel
+        self._queues = queues if queues is not None else {channel: queue}
         self._action: MessageAction | None = None
 
     @property
@@ -81,6 +88,10 @@ class InMemoryReceivedMessage(ReceivedMessageT):
     @property
     def content_type(self) -> str | None:
         return self._message.content_type
+
+    @property
+    def reply_to(self) -> str | None:
+        return self._message.reply_to
 
     @property
     def message_id(self) -> str | None:
@@ -128,10 +139,17 @@ class InMemoryReceivedMessage(ReceivedMessageT):
     ) -> None:
         if self._action is not None:
             return
+        target_channel = channel or self._message.reply_to
+        if target_channel is None:
+            raise ValueError(
+                "Reply channel is not set. Provide `channel` or publish with `reply_to`.",
+            )
+
+        if target_channel not in self._queues:
+            self._queues[target_channel] = DummyQueue()
+
         self._action = MessageAction.replied
-        # if channel specified, send there; otherwise to original channel
-        target_channel = channel or self._channel
-        self._queue.queue.put_nowait(
+        self._queues[target_channel].queue.put_nowait(
             DummyQueue.Message(
                 payload=payload,
                 headers=headers,
@@ -139,11 +157,7 @@ class InMemoryReceivedMessage(ReceivedMessageT):
                 message_id=str(uuid4()),
             ),
         )
-        # if different channel requested and not existing create queue and enqueue
-        if target_channel != self._channel:
-            # naive cross-channel: just ensure a queue exists (cannot access server queues here)
-            # so we fallback to current queue (document limitation)
-            pass
+        self._queue.processing.remove(self._message)
 
 
 class InMemorySubscriber(SubscriberT):
@@ -230,7 +244,7 @@ class InMemorySubscriber(SubscriberT):
         while True:
             await self._paused_event.wait()
             msg = await queue.queue.get()
-            received_msg = InMemoryReceivedMessage(msg, queue, channel)
+            received_msg = InMemoryReceivedMessage(msg, queue, channel, self._queues)
             queue.processing.add(msg)
 
             if self._semaphore is not None:
@@ -322,9 +336,7 @@ class InMemoryServer(ServerT):
     @property
     def capabilities(self) -> CapabilitiesT:
         return {
-            "supports_acknowledgments": True,
-            "supports_persistence": False,
-            "supports_reply": True,
+            "supports_native_reply": True,
             "supports_lightweight_pause": True,
         }
 
@@ -377,6 +389,7 @@ class InMemoryServer(ServerT):
             payload=message.payload,
             headers=message.headers,
             content_type=message.content_type,
+            reply_to=message.reply_to,
             message_id=message_id,
         )
         self.queues[channel].queue.put_nowait(msg)
@@ -397,7 +410,7 @@ class InMemoryServer(ServerT):
 
         subscriber = InMemorySubscriber(
             channels_to_callbacks=channels_to_callbacks,
-            queues={ch: self.queues[ch] for ch in channels_to_callbacks},
+            queues=self.queues,
             concurrency_limit=concurrency_limit,
         )
         self._subscribers.add(subscriber)

@@ -10,7 +10,7 @@ from uuid import uuid4
 from typing_extensions import Self
 
 from repid._runner import _actor_run
-from repid.connections.abc import MessageAction, ServerT
+from repid.connections.abc import CapabilitiesT, MessageAction, ServerT
 from repid.data import MessageData
 from repid.message_registry import MessageRegistry
 
@@ -24,6 +24,13 @@ class _MockServer:
 
     def __init__(self, test_client: TestClient) -> None:
         self._test_client = test_client
+
+    @property
+    def capabilities(self) -> CapabilitiesT:
+        return {
+            "supports_native_reply": True,
+            "supports_lightweight_pause": False,
+        }
 
     async def publish(
         self,
@@ -39,6 +46,7 @@ class _MockServer:
             headers=message.headers,
             content_type=message.content_type,
             channel=channel,
+            reply_to=message.reply_to,
         )
         self._test_client._sent_messages.append(test_message)
         await self._test_client._message_queue.put((channel, test_message))
@@ -67,6 +75,7 @@ class TestMessage:
         "_payload",
         "_processed",
         "_reply_messages",
+        "_reply_to",
         "_result",
         "_timestamp",
     )
@@ -78,11 +87,13 @@ class TestMessage:
         headers: dict[str, str] | None,
         content_type: str | None,
         channel: str,
+        reply_to: str | None = None,
     ) -> None:
         self._operation_id = operation_id
         self._payload = payload
         self._headers = headers
         self._content_type = content_type
+        self._reply_to = reply_to
         self._channel = channel
         self._message_id = str(uuid4())
         self._timestamp = datetime.now()
@@ -111,6 +122,10 @@ class TestMessage:
     def content_type(self) -> str | None:
         """Content type of the payload."""
         return self._content_type
+
+    @property
+    def reply_to(self) -> str | None:
+        return self._reply_to
 
     @property
     def channel(self) -> str:
@@ -189,8 +204,12 @@ class TestMessage:
         server_specific_parameters: dict[str, Any] | None = None,  # noqa: ARG002
     ) -> None:
         """Reply to the message with a new message."""
+        reply_channel = channel if channel is not None else self._reply_to
+        if reply_channel is None:
+            raise ValueError(
+                "Reply channel is not set. Provide `channel` or publish with `reply_to`.",
+            )
         self._action = MessageAction.replied
-        reply_channel = channel if channel is not None else self._channel
         message = MessageData(
             payload=payload,
             headers=headers,
@@ -282,6 +301,7 @@ class TestClient:
                 headers=message.headers,
                 content_type=message.content_type,
                 channel=channel,
+                reply_to=message.reply_to,
             )
             self._sent_messages.append(test_message)
 
@@ -466,6 +486,7 @@ class TestClient:
                 headers=reply_message.headers,
                 content_type=reply_message.content_type,
                 channel=reply_channel,
+                reply_to=reply_message.reply_to,
             )
             self._sent_messages.append(reply_test_message)
             await self._message_queue.put((reply_channel, reply_test_message))

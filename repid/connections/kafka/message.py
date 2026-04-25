@@ -52,6 +52,10 @@ class KafkaReceivedMessage(ReceivedMessageT):
         return self._content_type
 
     @property
+    def reply_to(self) -> str | None:
+        return None
+
+    @property
     def channel(self) -> str:
         return str(self._channel)
 
@@ -152,34 +156,9 @@ class KafkaReceivedMessage(ReceivedMessageT):
         headers: dict[str, str] | None = None,
         content_type: str | None = None,
         channel: str | None = None,
-        server_specific_parameters: dict[str, Any] | None = None,  # noqa: ARG002
+        server_specific_parameters: dict[str, Any] | None = None,
     ) -> None:
         if self._action is not None:
             return
-
-        if self._server._producer is None:  # pragma: no cover
-            # it should be impossible to get here since subscribing requires a connection,
-            # but we'll check just in case
-            raise ConnectionError("Kafka producer is not connected.")
-
-        try:
-            reply_headers = []
-            if headers:
-                for k, v in headers.items():
-                    reply_headers.append((k, v.encode()))
-            if content_type:
-                reply_headers.append(("content-type", content_type.encode()))
-
-            reply_channel = channel or self._channel
-
-            await self._server._producer.send_and_wait(
-                topic=reply_channel,
-                value=payload,
-                headers=reply_headers,
-            )
-
-            self._action = MessageAction.replied
-            await self._mark_complete_callback(self._record)
-        except Exception:  # pragma: no cover
-            self._action = None
-            raise
+        _ = (payload, headers, content_type, channel, server_specific_parameters)
+        raise NotImplementedError("Kafka does not support native replies.")

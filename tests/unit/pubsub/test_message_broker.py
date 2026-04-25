@@ -102,7 +102,7 @@ def test_pubsub_server_properties_basic() -> None:
     )
     assert server.title == "Title"
     assert server.summary == "Summary"
-    assert server.capabilities["supports_acknowledgments"] is True
+    assert server.capabilities["supports_native_reply"] is False
 
 
 async def test_pubsub_server_disconnect() -> None:
@@ -210,6 +210,7 @@ def test_build_attributes() -> None:
     msg = MagicMock()
     msg.headers = {"h1": "v1"}
     msg.content_type = "application/json"
+    msg.reply_to = None
 
     assert server._build_attributes(msg, None) == {"h1": "v1", "content_type": "application/json"}
 
@@ -219,6 +220,7 @@ def test_build_attributes() -> None:
     msg_empty = MagicMock()
     msg_empty.headers = None
     msg_empty.content_type = None
+    msg_empty.reply_to = None
     assert server._build_attributes(msg_empty, None) is None
 
 
@@ -237,8 +239,8 @@ def test_pubsub_server_all_properties() -> None:
     assert server.bindings is None
 
     caps = server.capabilities
-    assert caps["supports_acknowledgments"] is True
-    assert caps["supports_persistence"] is True
+    assert caps["supports_native_reply"] is False
+    assert caps["supports_lightweight_pause"] is False
 
     assert server.resilience_config is not None
     assert server.resilience_state is not None
@@ -323,6 +325,7 @@ def test_build_attributes_variants() -> None:
     msg = MagicMock()
     msg.headers = {"h1": "v1"}
     msg.content_type = "json"
+    msg.reply_to = None
 
     attrs = server._build_attributes(msg, {"attributes": {"extra": 123}})
     assert attrs == {"h1": "v1", "content_type": "json", "extra": "123"}

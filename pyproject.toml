@@ -5,20 +5,20 @@ requires = ['hatchling', 'hatch-vcs']
 [dependency-groups]
 docs = [
   "mkdocs-material>=9.7.6",
-  "mike>=2.1.4",
+  "mike>=2.2.0",
   "mkdocs-glightbox>=0.5.2",
   "setuptools>=82.0.1",
   "mkdocs-llmstxt>=0.5.0",
   "pygments<2.20.0"
 ]
 lint = [
-  "mypy>=1.19.1",
+  "mypy>=1.20.2",
   "ruff>=0.15.8",
   "types-grpcio>=1.0.0.20251009",
   "types-aiobotocore[sqs]>=3.4.0"
 ]
 pre-commit = [
-  "pre-commit>=4.5.1"
+  "pre-commit>=4.6.0"
 ]
 tests = [
   "pytest>=9.0.3",
@@ -57,15 +57,15 @@ requires-python = ">=3.10"
 
 [project.optional-dependencies]
 amqp = []
-kafka = ["aiokafka>=0.13.0,<0.14.0"]
+kafka = ["aiokafka>=0.14.0,<0.15.0"]
 nats = ["nats-py>=2.14.0,<3.0.0"]
 pubsub = [
-  "google-auth>=2.43.0",
-  "grpcio>=1.76.0"
+  "google-auth>=2.43.0,<3.0.0",
+  "grpcio>=1.76.0,<2.0.0"
 ]
 pydantic = ["pydantic>=2.0.0,<3.0.0"]
-redis = ["redis<8.0.0,>=7.0.0"]
-sqs = ["aiobotocore>=2.10.0,<3.0.0"]
+redis = ["redis>=7.0.0,<8.0.0"]
+sqs = ["aiobotocore>=3.0.0,<4.0.0"]
 
 [project.urls]
 documentation = "https://repid.aleksul.space"

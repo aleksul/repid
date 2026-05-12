@@ -28,11 +28,15 @@ pip install repid
 - **AsyncAPI 3.0 out of the box** - your schema is generated automatically as you build.
   No separate spec files to maintain, no drift between code and docs.
 
-- **Broker flexibility** - works with RabbitMQ, Redis, and Google Cloud Pub/Sub.
+- **Broker flexibility** - works with RabbitMQ, Redis, AWS SQS, Kafka, NATS,
+  and Google Cloud Pub/Sub.
   Switch or run multiple brokers side by side without changing your actor code.
 
-- **FastAPI-style ergonomics** - define actors as plain async functions with dependency
-  injection and Pydantic argument validation. If you know FastAPI, you already know Repid.
+- **Extreme performance** - built for maximum throughput and minimal overhead,
+  making it the fastest async task queue in the Python ecosystem.
+
+- **Developer ergonomics** - define actors as plain async functions with dependency
+  injection and Pydantic argument validation.
 
 - **Built for testability** - a drop-in `TestClient` lets you test actors in-memory
   without a running broker, making unit tests fast and dependency-free.

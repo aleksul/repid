@@ -251,6 +251,7 @@ class PubsubSubscriber:
             channel_name=config.channel,
             write_queue=write_queue,
             server=self._server,
+            stream_ack_deadline_seconds=self._stream_ack_deadline_seconds,
         )
 
     async def _process_response(

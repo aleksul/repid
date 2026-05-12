@@ -150,10 +150,12 @@ class RedisReceivedMessage(ReceivedMessageT):
         "_action",
         "_channel",
         "_consumer_group",
+        "_consumer_name",
         "_content_type",
         "_dlq_maxlen",
         "_dlq_stream",
         "_headers",
+        "_keep_alive_interval",
         "_message_id",
         "_payload",
         "_redis",
@@ -177,6 +179,8 @@ class RedisReceivedMessage(ReceivedMessageT):
         dlq_stream: str | None,
         dlq_maxlen: int | None = None,
         server: RedisServer,
+        consumer_name: str = "",
+        min_idle_ms: int = 0,
     ) -> None:
         self._payload = payload
         self._headers = headers
@@ -191,6 +195,8 @@ class RedisReceivedMessage(ReceivedMessageT):
         self._dlq_maxlen = dlq_maxlen
         self._server = server
         self._action: MessageAction | None = None
+        self._consumer_name = consumer_name
+        self._keep_alive_interval: int | None = min_idle_ms // 3000 if min_idle_ms > 0 else None
 
     @property
     def payload(self) -> bytes:
@@ -223,6 +229,21 @@ class RedisReceivedMessage(ReceivedMessageT):
     @property
     def action(self) -> MessageAction | None:
         return self._action
+
+    @property
+    def keep_alive_interval(self) -> int | None:
+        return self._keep_alive_interval
+
+    async def keep_alive(self) -> None:
+        if self._action is not None:
+            return
+        await self._redis.xclaim(
+            self._stream_name,
+            self._consumer_group,
+            self._consumer_name,
+            min_idle_time=0,
+            message_ids=[self._message_id],
+        )
 
     async def ack(self) -> None:
         """Acknowledge the message - removes it from the pending entries list."""
@@ -494,6 +515,8 @@ class RedisSubscriber(SubscriberT):
                 dlq_stream=cfg.dlq,
                 dlq_maxlen=cfg.dlq_maxlen,
                 server=self._server,
+                consumer_name=self._consumer_name,
+                min_idle_ms=self._min_idle_ms,
             )
 
             if self._semaphore is not None:
@@ -720,6 +743,7 @@ class RedisServer(ServerT):
         return {
             "supports_native_reply": False,
             "supports_lightweight_pause": True,
+            "supports_keep_alive": True,
         }
 
     def stream_name_for(self, channel: str) -> str:

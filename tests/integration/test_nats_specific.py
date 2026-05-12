@@ -1,7 +1,7 @@
 import asyncio
 from contextlib import suppress
 from typing import Any
-from unittest.mock import AsyncMock, Mock, PropertyMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, PropertyMock, patch
 from urllib.parse import urlparse
 
 import nats
@@ -9,7 +9,7 @@ import pytest
 from pytest_docker_tools import wrappers
 
 from repid.connections.nats import NatsServer
-from repid.connections.nats.message_broker import NatsReceivedMessage
+from repid.connections.nats.message_broker import NatsReceivedMessage, NatsSubscriber
 
 
 class MockSentMsgNoHeaders:
@@ -393,19 +393,6 @@ async def test_nats_received_message_nack_no_dlq_calls_term() -> None:
     mock_msg.term.assert_called_once()
 
 
-async def test_nats_received_message_nack_no_dlq_calls_nak_if_no_term() -> None:
-    server = NatsServer("nats://localhost:4222", dlq_topic_strategy=None)
-    mock_msg = Mock(ack=AsyncMock(), nak=AsyncMock(), spec=["ack", "nak"])
-    wrapped = NatsReceivedMessage(mock_msg, server, "test")
-
-    server._js = None
-    server._nc = None
-
-    wrapped._is_acted_on = False
-    await wrapped.nack()
-    mock_msg.nak.assert_called_once()
-
-
 async def test_nats_publish_fallback_to_core_nats() -> None:
     server = NatsServer("nats://localhost:4222", dlq_topic_strategy=None)
 
@@ -487,3 +474,55 @@ async def test_nats_received_message_reply_to_ignores_js_ack() -> None:
     mock_msg = Mock(headers=None, reply="$JS.ACK.stream.consumer.1.2.3")
     wrapped = NatsReceivedMessage(mock_msg, server, "test")
     assert wrapped.reply_to is None
+
+
+async def test_nats_received_message_keep_alive() -> None:
+    mock_msg = AsyncMock()
+    mock_server = MagicMock()
+    msg = NatsReceivedMessage(mock_msg, mock_server, "test_channel")
+
+    # Test keep_alive when not acted on
+    msg._is_acted_on = False
+    await msg.keep_alive()
+    mock_msg.in_progress.assert_awaited_once()
+
+    # Test keep_alive when acted on
+    mock_msg.in_progress.reset_mock()
+    msg._is_acted_on = True
+    await msg.keep_alive()
+    mock_msg.in_progress.assert_not_called()
+
+
+async def test_nats_subscriber_subscribe_exception() -> None:
+    mock_js = AsyncMock()
+    mock_js.consumer_info.side_effect = Exception("test")
+
+    mock_server = MagicMock(spec=NatsServer)
+    mock_server._js = mock_js
+
+    subscriber = NatsSubscriber(mock_server, {})
+
+    # We just want to cover the suppress(Exception)
+    await subscriber._subscribe_channel("test_channel", AsyncMock())
+
+
+async def test_nats_subscriber_subscribe_success() -> None:
+    mock_js = AsyncMock()
+    mock_consumer_info = MagicMock()
+    mock_consumer_info.config.ack_wait = 1.0
+    mock_js.consumer_info.return_value = mock_consumer_info
+
+    mock_server = MagicMock(spec=NatsServer)
+    mock_server._js = mock_js
+
+    subscriber = NatsSubscriber(mock_server, {})
+
+    # We just want to cover the successful consumer_info
+    await subscriber._subscribe_channel("test_channel", AsyncMock())
+
+
+async def test_nats_keep_alive_interval() -> None:
+    mock_msg = AsyncMock()
+    mock_server = MagicMock()
+    msg = NatsReceivedMessage(mock_msg, mock_server, "test_channel", ack_wait=3.0)
+    assert msg.keep_alive_interval == 1

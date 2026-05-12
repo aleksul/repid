@@ -20,6 +20,27 @@ async def fetch_slow_api():
     await asyncio.sleep(20)
 ```
 
+## Keep-alive
+
+For long-running actors, Repid automatically tells the broker that the message
+is still being worked on (assuming the broker supports it). This keeps the message from
+timing out and being redelivered while it's still being processed.
+
+By default, Repid uses the broker's recommended interval for sending keep-alive signals.
+You can configure or disable this behavior per-actor:
+
+```python
+# Disable keep-alive entirely for this actor
+@router.actor(keep_alive=False)
+async def my_actor():
+    pass
+
+# Override the keep-alive interval to ping the broker every 15 seconds
+@router.actor(keep_alive=15.0)
+async def my_long_running_actor():
+    pass
+```
+
 ## Thread vs Process Execution
 
 If your actor function is purely synchronous (e.g., standard `def` instead of `async def`), Repid

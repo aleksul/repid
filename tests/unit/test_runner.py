@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import suppress
 from typing import Literal
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from repid import Repid, Router
-from repid._runner import _Runner
+from repid._runner import _keep_alive_loop, _run_with_keepalive, _Runner
 from repid.connections.in_memory import InMemoryServer
 from repid.data import MessageData
 from repid.health_check_server import HealthCheckServer, HealthCheckStatus
@@ -36,6 +37,28 @@ async def test_runner_actor_ack_first_mode() -> None:
             headers={"topic": "ack_first_actor"},
         )
         assert client.get_processed_messages()[0].acked
+
+
+async def test_runner_actor_keep_alive_disabled() -> None:
+    app = Repid()
+    router = Router(keep_alive=False)
+
+    processed = False
+
+    @router.actor()
+    async def ka_actor(arg1: str) -> None:  # noqa: ARG001
+        nonlocal processed
+        processed = True
+
+    app.include_router(router)
+
+    async with TestClient(app) as client:
+        await client.send_message_json(
+            channel="default",
+            payload={"arg1": "test"},
+            headers={"topic": "ka_actor"},
+        )
+        assert processed
 
 
 async def test_runner_actor_always_ack_mode_with_exception() -> None:
@@ -795,3 +818,139 @@ async def test_runner_unrouted_message_no_id_always_reject() -> None:
         await runner._message_handler([], msg)
         msg.reject.assert_called_once()
         msg.nack.assert_not_called()
+
+
+async def test_keep_alive_loop_calls_keep_alive() -> None:
+    message = Mock()
+    message.is_acted_on = False
+    message.keep_alive = AsyncMock()
+    message.message_id = "test-msg"
+
+    task = asyncio.create_task(_keep_alive_loop(message, interval=0))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+    assert message.keep_alive.call_count >= 1
+
+
+async def test_keep_alive_loop_exits_when_message_acted_on() -> None:
+    message = Mock()
+    message.is_acted_on = True
+    message.keep_alive = AsyncMock()
+    message.message_id = "test-msg"
+
+    task = asyncio.create_task(_keep_alive_loop(message, interval=0))
+    await asyncio.sleep(0.05)
+
+    assert task.done()
+    message.keep_alive.assert_not_called()
+
+
+async def test_keep_alive_loop_logs_error_and_continues(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    message = Mock()
+    message.is_acted_on = False
+    message.keep_alive = AsyncMock(side_effect=RuntimeError("broker error"))
+    message.message_id = "test-msg"
+
+    task = asyncio.create_task(_keep_alive_loop(message, interval=0))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+    assert message.keep_alive.call_count >= 1
+    warning = next(
+        (r for r in caplog.records if r.message == "message.keep_alive.error"),
+        None,
+    )
+    assert warning is not None
+    assert warning.levelno == logging.WARNING
+
+
+def _make_mock_actor(fn: AsyncMock | None = None) -> Mock:
+    actor = Mock()
+    actor.converter.convert_inputs = AsyncMock(return_value=([], {}))
+    actor.fn = fn if fn is not None else AsyncMock()
+    return actor
+
+
+async def test_run_with_keepalive_skipped_when_capability_false() -> None:
+    message = Mock()
+    message.keep_alive_interval = 0
+    message.keep_alive = AsyncMock()
+
+    server = Mock()
+    server.capabilities = {"supports_keep_alive": False}
+
+    await _run_with_keepalive(message, _make_mock_actor(), server, Mock())
+
+    message.keep_alive.assert_not_called()
+
+
+async def test_run_with_keepalive_skipped_when_interval_none() -> None:
+    message = Mock()
+    message.keep_alive_interval = None
+    message.keep_alive = AsyncMock()
+
+    server = Mock()
+    server.capabilities = {"supports_keep_alive": True}
+
+    await _run_with_keepalive(message, _make_mock_actor(), server, Mock())
+
+    message.keep_alive.assert_not_called()
+
+
+async def test_run_with_keepalive_fires_during_slow_actor() -> None:
+    message = Mock()
+    message.keep_alive_interval = 0
+    message.is_acted_on = False
+    message.keep_alive = AsyncMock()
+    message.message_id = "test-msg"
+
+    server = Mock()
+    server.capabilities = {"supports_keep_alive": True}
+
+    async def slow_fn() -> None:
+        await asyncio.sleep(0.1)
+
+    await _run_with_keepalive(
+        message,
+        _make_mock_actor(AsyncMock(side_effect=slow_fn)),
+        server,
+        Mock(),
+    )
+
+    assert message.keep_alive.call_count >= 1
+
+
+async def test_run_with_keepalive_task_cancelled_on_actor_timeout() -> None:
+    message = Mock()
+    message.keep_alive_interval = 0
+    message.is_acted_on = False
+    message.keep_alive = AsyncMock()
+    message.message_id = "test-msg"
+
+    server = Mock()
+    server.capabilities = {"supports_keep_alive": True}
+
+    async def very_slow_fn() -> None:
+        await asyncio.sleep(10)
+
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(
+            _run_with_keepalive(
+                message,
+                _make_mock_actor(AsyncMock(side_effect=very_slow_fn)),
+                server,
+                Mock(),
+            ),
+            timeout=0.05,
+        )
+
+    call_count_after_timeout = message.keep_alive.call_count
+    await asyncio.sleep(0.05)
+    assert message.keep_alive.call_count == call_count_after_timeout

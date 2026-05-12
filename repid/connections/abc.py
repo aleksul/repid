@@ -57,6 +57,13 @@ class ReceivedMessageT(BaseMessageT, Protocol):
 
     async def reject(self) -> None: ...
 
+    @property
+    def keep_alive_interval(self) -> int | None:
+        """Recommended seconds between keep_alive() calls, or None if not needed."""
+
+    async def keep_alive(self) -> None:
+        """Signal the broker that this message is still being processed."""
+
     async def reply(
         self,
         *,
@@ -72,6 +79,7 @@ class ReceivedMessageT(BaseMessageT, Protocol):
 class CapabilitiesT(TypedDict):
     supports_native_reply: bool
     supports_lightweight_pause: bool
+    supports_keep_alive: bool
 
 
 class SubscriberT(Protocol):

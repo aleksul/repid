@@ -98,6 +98,13 @@ class InMemoryReceivedMessage(ReceivedMessageT):
         return self._message.message_id
 
     @property
+    def keep_alive_interval(self) -> int | None:
+        return None
+
+    async def keep_alive(self) -> None:  # pragma: no cover
+        pass
+
+    @property
     def channel(self) -> str:
         return self._channel
 
@@ -338,6 +345,7 @@ class InMemoryServer(ServerT):
         return {
             "supports_native_reply": True,
             "supports_lightweight_pause": True,
+            "supports_keep_alive": False,
         }
 
     @property

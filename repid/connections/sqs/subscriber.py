@@ -95,7 +95,13 @@ class SqsSubscriber(SubscriberT):
             try:
                 # Run reject in detached task to avoid blocking loop teardown.
                 t = asyncio.create_task(
-                    SqsReceivedMessage(self._server, channel, queue_url, msg).reject(),
+                    SqsReceivedMessage(
+                        self._server,
+                        channel,
+                        queue_url,
+                        msg,
+                        self._server._visibility_timeout,
+                    ).reject(),
                 )
 
                 def _ignore_exception(task: asyncio.Task) -> None:
@@ -245,7 +251,13 @@ class SqsSubscriber(SubscriberT):
         callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
     ) -> None:
         try:
-            message = SqsReceivedMessage(self._server, channel, queue_url, msg)
+            message = SqsReceivedMessage(
+                self._server,
+                channel,
+                queue_url,
+                msg,
+                self._server._visibility_timeout,
+            )
         except Exception:
             logger.exception("message.creation_error", extra={"channel": channel})
             return

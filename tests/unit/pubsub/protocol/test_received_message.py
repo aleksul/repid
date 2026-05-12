@@ -25,6 +25,7 @@ def msg_fixture() -> received_message.PubsubReceivedMessage:
         channel_name="chan1",
         write_queue=write_queue,
         server=server,
+        stream_ack_deadline_seconds=300,
     )
 
 
@@ -129,3 +130,28 @@ async def test_received_message_reply_after_ack_is_noop(
     await msg_fixture.ack()
     await msg_fixture.reply(payload=b"ignored")
     assert msg_fixture._write_queue.qsize() == 1  # Only the ack request
+
+
+def test_keep_alive_interval(msg_fixture: received_message.PubsubReceivedMessage) -> None:
+    assert msg_fixture.keep_alive_interval == 100  # 300 // 3
+
+
+async def test_keep_alive_sends_extend_deadline(
+    msg_fixture: received_message.PubsubReceivedMessage,
+) -> None:
+    await msg_fixture.keep_alive()
+
+    assert not msg_fixture.is_acted_on
+    req = msg_fixture._write_queue.get_nowait()
+    assert isinstance(req, proto.StreamingPullRequest)
+    assert req.modify_deadline_seconds == [300]
+
+
+async def test_keep_alive_noop_after_acted_on(
+    msg_fixture: received_message.PubsubReceivedMessage,
+) -> None:
+    await msg_fixture.ack()
+    msg_fixture._write_queue.get_nowait()  # consume the ack
+
+    await msg_fixture.keep_alive()
+    assert msg_fixture._write_queue.empty()

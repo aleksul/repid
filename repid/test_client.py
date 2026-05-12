@@ -30,6 +30,7 @@ class _MockServer:
         return {
             "supports_native_reply": True,
             "supports_lightweight_pause": False,
+            "supports_keep_alive": False,
         }
 
     async def publish(
@@ -136,6 +137,13 @@ class TestMessage:
     def message_id(self) -> str:
         """Unique identifier for this message."""
         return self._message_id
+
+    @property
+    def keep_alive_interval(self) -> int | None:
+        return None
+
+    async def keep_alive(self) -> None:  # pragma: no cover
+        pass
 
     @property
     def timestamp(self) -> datetime:

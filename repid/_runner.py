@@ -4,6 +4,7 @@ import asyncio
 import logging
 import math
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
@@ -37,6 +38,36 @@ async def _actor_execution(
     return await actor.fn(*args, **kwargs)
 
 
+async def _keep_alive_loop(message: ReceivedMessageT, interval: int) -> None:
+    while True:
+        await asyncio.sleep(interval)
+        if message.is_acted_on:
+            return
+        try:
+            await message.keep_alive()
+        except Exception:  # noqa: BLE001
+            logger.warning("message.keep_alive.error", extra={"message_id": message.message_id})
+
+
+async def _run_with_keepalive(
+    message: ReceivedMessageT,
+    actor: ActorData,
+    server: ServerT,
+    default_serializer: SerializerT,
+) -> ActorResultT:
+    interval = message.keep_alive_interval
+    if not server.capabilities["supports_keep_alive"] or interval is None:
+        return await _actor_execution(message, actor, server, default_serializer)
+
+    keepalive_task = asyncio.create_task(_keep_alive_loop(message, interval))
+    try:
+        return await _actor_execution(message, actor, server, default_serializer)
+    finally:
+        keepalive_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await keepalive_task
+
+
 async def _actor_execution_with_confirmation(  # noqa: C901, PLR0912
     message: ReceivedMessageT,
     actor: ActorData,
@@ -47,10 +78,10 @@ async def _actor_execution_with_confirmation(  # noqa: C901, PLR0912
     so middlewares unwinding above this leaf can observe `message.action`."""
     try:
         if actor.timeout is None or actor.timeout <= 0 or actor.timeout == float("inf"):
-            result = await _actor_execution(message, actor, server, default_serializer)
+            result = await _run_with_keepalive(message, actor, server, default_serializer)
         else:
             result = await asyncio.wait_for(
-                _actor_execution(message, actor, server, default_serializer),
+                _run_with_keepalive(message, actor, server, default_serializer),
                 timeout=actor.timeout,
             )
     except Exception as exc:

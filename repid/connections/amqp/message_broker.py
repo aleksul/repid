@@ -142,6 +142,7 @@ class AmqpServer:
         return {
             "supports_native_reply": True,
             "supports_lightweight_pause": False,
+            "supports_keep_alive": False,
         }
 
     @property

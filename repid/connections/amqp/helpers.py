@@ -98,6 +98,13 @@ class AmqpReceivedMessage:
             return mid.decode()
         return str(mid)
 
+    @property
+    def keep_alive_interval(self) -> int | None:
+        return None
+
+    async def keep_alive(self) -> None:  # pragma: no cover
+        pass
+
     async def _do_ack(self) -> None:
         """Send the AMQP accepted disposition on the wire (does not update `_action`)."""
         disp = DispositionFrame(

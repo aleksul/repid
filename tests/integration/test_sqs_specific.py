@@ -468,44 +468,34 @@ async def test_sqs_message_properties_parsing(sqs_connection: ServerT) -> None:
 
 async def test_sqs_message_ack_action(sqs_connection: ServerT) -> None:
     server = cast(SqsServer, sqs_connection)
-
-    msg_dict = {
-        "MessageId": "mid",
-        "ReceiptHandle": "rhandle",
-        "Body": "dGVzdF9wYXlsb2Fk",
-    }
-
-    msg = SqsReceivedMessage(
-        server=server,
-        channel="my_channel",
-        queue_url="http://queue",
-        msg=msg_dict,
-    )
-
-    await msg.ack()
-    assert msg.action == "acked"
-    assert msg.is_acted_on is True
+    async with server.connection():
+        q1_url = await server._get_queue_url("default")
+        msg_dict1 = {"MessageId": "1", "ReceiptHandle": "r1", "Body": "eQ=="}
+        msg1 = SqsReceivedMessage(server, "default", q1_url, msg_dict1)
+        await msg1.ack()
+        assert msg1.action == "acked"
+        assert msg1.is_acted_on is True
 
 
 async def test_sqs_message_reject_suppresses_exceptions(sqs_connection: ServerT) -> None:
     server = cast(SqsServer, sqs_connection)
     async with server.connection():
-        q1_url = await server._get_queue_url("default")
-        msg_dict1 = {"MessageId": "1", "ReceiptHandle": "r1", "Body": "eQ=="}
-        msg1 = SqsReceivedMessage(server, "default", q1_url, msg_dict1)
-        await msg1.reject()
-        assert msg1.action is not None
-        assert msg1.is_acted_on is True
+        q2_url = await server._get_queue_url("default")
+        msg_dict2 = {"MessageId": "2", "ReceiptHandle": "r2", "Body": "eQ=="}
+        msg2 = SqsReceivedMessage(server, "default", q2_url, msg_dict2)
+        await msg2.reject()
+        assert msg2.action is not None
+        assert msg2.is_acted_on is True
 
 
 async def test_sqs_message_reply_with_server_params(sqs_connection: ServerT) -> None:
     server = cast(SqsServer, sqs_connection)
     async with server.connection():
-        q1_url = await server._get_queue_url("default")
-        msg_dict2 = {"MessageId": "2", "ReceiptHandle": "r2", "Body": "eQ=="}
-        msg2 = SqsReceivedMessage(server, "default", q1_url, msg_dict2)
+        q3_url = await server._get_queue_url("default")
+        msg_dict3 = {"MessageId": "3", "ReceiptHandle": "r3", "Body": "eQ=="}
+        msg3 = SqsReceivedMessage(server, "default", q3_url, msg_dict3)
         with pytest.raises(NotImplementedError, match=r"SQS does not support native replies\."):
-            await msg2.reply(
+            await msg3.reply(
                 payload=b"hi",
                 headers={"foo": "bar"},
                 content_type="text/plain",
@@ -516,11 +506,11 @@ async def test_sqs_message_reply_with_server_params(sqs_connection: ServerT) -> 
 async def test_sqs_message_nack_without_dlq(sqs_connection: ServerT) -> None:
     server = cast(SqsServer, sqs_connection)
     async with server.connection():
-        q1_url = await server._get_queue_url("default")
+        q4_url = await server._get_queue_url("default")
         server._dlq_queue_strategy = None
-        msg_dict3 = {"MessageId": "3", "ReceiptHandle": "r3", "Body": "eQ=="}
-        msg3 = SqsReceivedMessage(server, "default", q1_url, msg_dict3)
-        await msg3.nack()
+        msg_dict4 = {"MessageId": "4", "ReceiptHandle": "r4", "Body": "eQ=="}
+        msg4 = SqsReceivedMessage(server, "default", q4_url, msg_dict4)
+        await msg4.nack()
 
 
 async def test_sqs_subscriber_active_state(sqs_connection: ServerT) -> None:
@@ -1244,3 +1234,209 @@ async def test_subscriber_close_removes_active_subscriber(
     await subscriber.close()
 
     assert subscriber not in server._active_subscribers
+
+
+async def test_sqs_message_keep_alive_no_client() -> None:
+    mock_server = MagicMock(spec=SqsServer)
+    mock_server._client = None
+
+    msg = SqsReceivedMessage(
+        server=mock_server,
+        channel="test_channel",
+        queue_url="test_url",
+        msg={"MessageId": "test_id", "ReceiptHandle": "test_handle"},
+    )
+
+    with pytest.raises(ConnectionError, match=r"SQS client is not connected\."):
+        await msg.keep_alive()
+
+
+async def test_sqs_message_keep_alive_success() -> None:
+    mock_client = AsyncMock()
+    mock_server = MagicMock(spec=SqsServer)
+    mock_server._client = mock_client
+
+    msg = SqsReceivedMessage(
+        server=mock_server,
+        channel="test_channel",
+        queue_url="test_url",
+        msg={"MessageId": "test_id", "ReceiptHandle": "test_handle"},
+    )
+
+    await msg.keep_alive()
+    mock_client.change_message_visibility.assert_awaited_once_with(
+        QueueUrl="test_url",
+        ReceiptHandle="test_handle",
+        VisibilityTimeout=msg._visibility_timeout,
+    )
+
+
+async def test_sqs_message_keep_alive_receipt_invalid() -> None:
+    mock_client = AsyncMock()
+    error_response = {"Error": {"Code": "ReceiptHandleIsInvalid"}}
+    mock_client.change_message_visibility.side_effect = botocore.exceptions.ClientError(
+        error_response,  # type: ignore[arg-type]
+        "ChangeMessageVisibility",
+    )
+
+    mock_server = MagicMock(spec=SqsServer)
+    mock_server._client = mock_client
+
+    msg = SqsReceivedMessage(
+        server=mock_server,
+        channel="test_channel",
+        queue_url="test_url",
+        msg={"MessageId": "test_id", "ReceiptHandle": "test_handle"},
+    )
+
+    await msg.keep_alive()  # should not raise
+
+
+async def test_sqs_message_keep_alive_other_error() -> None:
+    mock_client = AsyncMock()
+    error_response_2 = {"Error": {"Code": "OtherError"}}
+    mock_client.change_message_visibility.side_effect = botocore.exceptions.ClientError(
+        error_response_2,  # type: ignore[arg-type]
+        "ChangeMessageVisibility",
+    )
+
+    mock_server = MagicMock(spec=SqsServer)
+    mock_server._client = mock_client
+
+    msg = SqsReceivedMessage(
+        server=mock_server,
+        channel="test_channel",
+        queue_url="test_url",
+        msg={"MessageId": "test_id", "ReceiptHandle": "test_handle"},
+    )
+
+    with pytest.raises(botocore.exceptions.ClientError):
+        await msg.keep_alive()
+
+
+async def test_sqs_message_ack_nack_reject_no_client() -> None:
+    mock_server = MagicMock(spec=SqsServer)
+    mock_server._client = None
+
+    msg = SqsReceivedMessage(
+        server=mock_server,
+        channel="test_channel",
+        queue_url="test_url",
+        msg={"MessageId": "test_id", "ReceiptHandle": "test_handle"},
+    )
+
+    with pytest.raises(ConnectionError, match=r"SQS client is not connected\."):
+        await msg.ack()
+
+    msg._action = None
+    with pytest.raises(ConnectionError, match=r"SQS client is not connected\."):
+        await msg.nack()
+
+    msg._action = None
+    with pytest.raises(ConnectionError, match=r"SQS client is not connected\."):
+        await msg.reject()
+
+
+async def test_sqs_process_message_cancelled() -> None:
+    mock_server = MagicMock(spec=SqsServer)
+    mock_server._visibility_timeout = 30
+
+    subscriber = SqsSubscriber(mock_server, {})
+
+    async def failing_callback(msg: ReceivedMessageT) -> None:
+        sqs_msg = cast(SqsReceivedMessage, msg)
+        sqs_msg._action = None
+        raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        await subscriber._process_message("test", "test_url", {}, failing_callback)
+
+    await asyncio.sleep(0.01)
+
+
+async def test_sqs_process_message_exception_nack_cancelled() -> None:
+    mock_server = MagicMock(spec=SqsServer)
+    mock_server._visibility_timeout = 30
+
+    subscriber = SqsSubscriber(mock_server, {})
+
+    async def failing_callback(msg: ReceivedMessageT) -> None:
+        sqs_msg = cast(SqsReceivedMessage, msg)
+        sqs_msg._action = None
+        setattr(sqs_msg, "nack", AsyncMock(side_effect=asyncio.CancelledError()))  # noqa: B010
+        raise Exception("test")
+
+    # Will not raise, just log
+    await subscriber._process_message("test", "test_url", {}, failing_callback)
+
+
+async def test_sqs_reject_unprocessed_ignore_exception() -> None:
+    mock_server = MagicMock(spec=SqsServer)
+    mock_server._visibility_timeout = 30
+    subscriber = SqsSubscriber(mock_server, {})
+
+    # It tries to initialize a SqsReceivedMessage internally
+    # So we need to patch SqsReceivedMessage or provide correct msg
+    # let's provide msg dict
+    await subscriber._reject_unprocessed(
+        "test",
+        "test_url",
+        [{"MessageId": "123", "ReceiptHandle": "abc"}],
+    )
+    await asyncio.sleep(0.01)  # let task resolve
+
+
+async def test_sqs_message_no_receipt_handle() -> None:
+    mock_client = AsyncMock()
+    mock_server = MagicMock(spec=SqsServer)
+    mock_server._client = mock_client
+
+    msg = SqsReceivedMessage(
+        server=mock_server,
+        channel="test_channel",
+        queue_url="test_url",
+        msg={"MessageId": "test_id"},  # No ReceiptHandle
+    )
+
+    # These should return immediately without calling the client
+    await msg.keep_alive()
+    mock_client.change_message_visibility.assert_not_called()
+
+    await msg.ack()
+    mock_client.delete_message.assert_not_called()
+
+    msg._action = None
+    await msg.nack()
+    mock_client.change_message_visibility.assert_not_called()
+
+    msg._action = None
+    await msg.reject()
+    mock_client.change_message_visibility.assert_not_called()
+
+
+async def test_sqs_keep_alive_interval() -> None:
+    mock_server = MagicMock(spec=SqsServer)
+    mock_server._client = None
+
+    msg = SqsReceivedMessage(
+        server=mock_server,
+        channel="test_channel",
+        queue_url="test_url",
+        msg={"MessageId": "test_id", "ReceiptHandle": "test_handle"},
+    )
+    _ = msg.keep_alive_interval
+
+
+async def test_sqs_message_keep_alive_action_not_none() -> None:
+    mock_server = MagicMock(spec=SqsServer)
+    mock_server._client = None
+
+    msg = SqsReceivedMessage(
+        server=mock_server,
+        channel="test_channel",
+        queue_url="test_url",
+        msg={"MessageId": "test_id", "ReceiptHandle": "test_handle"},
+    )
+    msg._action = MessageAction.acked
+    # Should return early without raising client not connected
+    await msg.keep_alive()

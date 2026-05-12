@@ -71,6 +71,13 @@ class KafkaReceivedMessage(ReceivedMessageT):
     def message_id(self) -> str:
         return self._message_id
 
+    @property
+    def keep_alive_interval(self) -> int | None:
+        return None
+
+    async def keep_alive(self) -> None:  # pragma: no cover
+        pass
+
     async def ack(self) -> None:
         if self._action is not None:
             return

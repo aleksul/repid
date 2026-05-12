@@ -30,6 +30,7 @@ class PubsubReceivedMessage:
         channel_name: str,
         write_queue: asyncio.Queue[StreamingPullRequest],
         server: PubsubServer,
+        stream_ack_deadline_seconds: int,
     ) -> None:
         self._raw_message = raw_message
         self._ack_id = ack_id
@@ -39,6 +40,8 @@ class PubsubReceivedMessage:
         self._write_queue = write_queue
         self._server = server
         self._action: MessageAction | None = None
+        self._stream_ack_deadline_seconds = stream_ack_deadline_seconds
+        self._keep_alive_interval: int = stream_ack_deadline_seconds // 3
 
     @property
     def payload(self) -> bytes:
@@ -77,6 +80,15 @@ class PubsubReceivedMessage:
     @property
     def delivery_attempt(self) -> int:
         return self._delivery_attempt
+
+    @property
+    def keep_alive_interval(self) -> int:
+        return self._keep_alive_interval
+
+    async def keep_alive(self) -> None:
+        if self._action is not None:
+            return
+        await self.extend_deadline(self._stream_ack_deadline_seconds)
 
     async def _send_ack_request(self) -> None:
         """Send the ack request to the write queue without updating `_action`."""

@@ -237,6 +237,7 @@ async def test_kafka_message_properties_and_double_actions(  # noqa: PLR0915
         assert kafka_connection.capabilities == {
             "supports_native_reply": False,
             "supports_lightweight_pause": False,
+            "supports_keep_alive": False,
         }
 
         await kafka_connection.publish(

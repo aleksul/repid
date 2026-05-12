@@ -142,6 +142,7 @@ class KafkaServer(ServerT):
         return {
             "supports_native_reply": False,
             "supports_lightweight_pause": False,
+            "supports_keep_alive": False,
         }
 
     @property

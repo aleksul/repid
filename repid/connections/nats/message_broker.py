@@ -32,12 +32,21 @@ logger = logging.getLogger("repid.connections.nats")
 
 
 class NatsReceivedMessage(ReceivedMessageT):
-    def __init__(self, msg: Msg, server: NatsServer, channel: str) -> None:
+    def __init__(
+        self,
+        msg: Msg,
+        server: NatsServer,
+        channel: str,
+        ack_wait: float | None = None,
+    ) -> None:
         self._msg = msg
         self._server = server
         self._channel = channel
         self._action: MessageAction | None = None
         self._is_acted_on = False
+        self._keep_alive_interval: int | None = (
+            int(ack_wait) // 3 if ack_wait is not None and ack_wait > 0 else None
+        )
 
     @property
     def payload(self) -> bytes:
@@ -57,10 +66,8 @@ class NatsReceivedMessage(ReceivedMessageT):
 
     @property
     def reply_to(self) -> str | None:
-        reply = getattr(self._msg, "reply", None)
-        if isinstance(reply, str) and reply:
-            if reply.startswith("$JS.ACK"):
-                return None
+        reply = self._msg.reply
+        if isinstance(reply, str) and reply and not reply.startswith("$JS.ACK"):
             return reply
         return None
 
@@ -82,6 +89,15 @@ class NatsReceivedMessage(ReceivedMessageT):
             return f"{self._msg.metadata.stream}:{self._msg.metadata.sequence.stream}"
         return None
 
+    @property
+    def keep_alive_interval(self) -> int | None:
+        return self._keep_alive_interval
+
+    async def keep_alive(self) -> None:
+        if self._is_acted_on:
+            return
+        await self._msg.in_progress()
+
     async def ack(self) -> None:
         if self._is_acted_on:
             return
@@ -101,10 +117,7 @@ class NatsReceivedMessage(ReceivedMessageT):
         )
 
         if dlq is None:
-            if hasattr(self._msg, "term"):
-                await self._msg.term()
-            elif hasattr(self._msg, "nak"):
-                await self._msg.nak()
+            await self._msg.term()
         else:
             headers = self.headers or {}
             headers["x-repid-original-channel"] = self._channel
@@ -125,8 +138,7 @@ class NatsReceivedMessage(ReceivedMessageT):
     async def reject(self) -> None:
         if self._is_acted_on:
             return
-        if hasattr(self._msg, "nak"):
-            await self._msg.nak()
+        await self._msg.nak()
         self._is_acted_on = True
         self._action = MessageAction.rejected
         logger.debug("message.reject", extra={"channel": self._channel})
@@ -159,8 +171,7 @@ class NatsReceivedMessage(ReceivedMessageT):
             await self._msg.ack()
         elif self._server._nc is not None:
             await self._server._nc.publish(reply_channel, payload, headers=reply_headers)
-            if hasattr(self._msg, "ack"):
-                await self._msg.ack()
+            await self._msg.ack()
         else:
             await self._msg.nak()
             raise ConnectionError("NATS connection is not initialized. Cannot send reply.")
@@ -218,8 +229,14 @@ class NatsSubscriber(SubscriberT):
         channel: str,
         callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
     ) -> None:
+        ack_wait: float | None = None
+        if self._server._js is not None:
+            with suppress(Exception):
+                consumer_info = await self._server._js.consumer_info(channel, f"{channel}_group")
+                ack_wait = consumer_info.config.ack_wait
+
         async def message_handler(msg: Msg) -> None:
-            wrapped = NatsReceivedMessage(msg, self._server, channel)
+            wrapped = NatsReceivedMessage(msg, self._server, channel, ack_wait=ack_wait)
             if self._semaphore:
                 async with self._semaphore:
                     try:
@@ -363,6 +380,7 @@ class NatsServer(ServerT):
         return {
             "supports_native_reply": True,
             "supports_lightweight_pause": False,
+            "supports_keep_alive": True,
         }
 
     @property

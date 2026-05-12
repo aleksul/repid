@@ -28,12 +28,15 @@ class SqsReceivedMessage(ReceivedMessageT):
         channel: str,
         queue_url: str,
         msg: Mapping[str, Any],
+        visibility_timeout: int = 30,
     ) -> None:
         self._server = server
         self._channel = channel
         self._queue_url = queue_url
         self._msg = msg
         self._action: MessageAction | None = None
+        self._visibility_timeout = visibility_timeout
+        self._keep_alive_interval: int = visibility_timeout // 3
 
         self._message_id = msg.get("MessageId")
         self._receipt_handle = msg.get("ReceiptHandle")
@@ -94,91 +97,128 @@ class SqsReceivedMessage(ReceivedMessageT):
     def message_id(self) -> str | None:
         return self._message_id
 
+    @property
+    def keep_alive_interval(self) -> int:
+        return self._keep_alive_interval
+
+    async def keep_alive(self) -> None:
+        if self._action is not None:
+            return
+        if self._server._client is None:
+            raise ConnectionError("SQS client is not connected.")
+        if not self._receipt_handle:
+            return
+        try:
+            await self._server._client.change_message_visibility(
+                QueueUrl=self._queue_url,
+                ReceiptHandle=self._receipt_handle,
+                VisibilityTimeout=self._visibility_timeout,
+            )
+        except botocore.exceptions.ClientError as exc:
+            if (
+                not (error_dict := exc.response.get("Error"))
+                or not isinstance(error_dict, dict)
+                or error_dict.get("Code") != "ReceiptHandleIsInvalid"
+            ):
+                raise
+
     async def ack(self) -> None:
         if self._action is not None:
             return
-
-        if self._server._client is not None and self._receipt_handle:
-            try:
-                await self._server._client.delete_message(
-                    QueueUrl=self._queue_url,
-                    ReceiptHandle=self._receipt_handle,
-                )
-            except botocore.exceptions.ClientError as e:
-                error_response = getattr(e, "response", {})
-                err = error_response.get("Error", {}) if isinstance(error_response, dict) else {}
-                if isinstance(err, dict) and err.get("Code") != "ReceiptHandleIsInvalid":
-                    raise
+        if self._server._client is None:
+            raise ConnectionError("SQS client is not connected.")
+        if not self._receipt_handle:
+            return
+        try:
+            await self._server._client.delete_message(
+                QueueUrl=self._queue_url,
+                ReceiptHandle=self._receipt_handle,
+            )
+        except botocore.exceptions.ClientError as exc:
+            if (
+                not (error_dict := exc.response.get("Error"))
+                or not isinstance(error_dict, dict)
+                or error_dict.get("Code") != "ReceiptHandleIsInvalid"
+            ):
+                raise
 
         self._action = MessageAction.acked
 
     async def nack(self) -> None:
         if self._action is not None:
             return
+        if self._server._client is None:
+            raise ConnectionError("SQS client is not connected.")
+        if not self._receipt_handle:
+            return
 
-        if self._server._client is not None and self._receipt_handle:
-            dlq_strategy = self._server._dlq_queue_strategy
-            if dlq_strategy:
-                dlq_channel = dlq_strategy(self._channel)
-                dlq_queue_url = await self._server._get_queue_url(dlq_channel)
+        dlq_strategy = self._server._dlq_queue_strategy
+        if dlq_strategy:
+            dlq_channel = dlq_strategy(self._channel)
+            dlq_queue_url = await self._server._get_queue_url(dlq_channel)
 
-                message_attributes: dict[str, Any] = {}
-                for k, v in self._headers.items():
-                    message_attributes[k] = {"DataType": "String", "StringValue": v}
-                if self._content_type:
-                    message_attributes["content-type"] = {
-                        "DataType": "String",
-                        "StringValue": self._content_type,
-                    }
+            message_attributes: dict[str, Any] = {}
+            for k, v in self._headers.items():
+                message_attributes[k] = {"DataType": "String", "StringValue": v}
+            if self._content_type:
+                message_attributes["content-type"] = {
+                    "DataType": "String",
+                    "StringValue": self._content_type,
+                }
 
-                await self._server._client.send_message(
-                    QueueUrl=dlq_queue_url,
-                    MessageBody=self._msg.get("Body", ""),
-                    MessageAttributes=message_attributes,
-                )
+            await self._server._client.send_message(
+                QueueUrl=dlq_queue_url,
+                MessageBody=self._msg.get("Body", ""),
+                MessageAttributes=message_attributes,
+            )
 
-            try:
-                await self._server._client.delete_message(
-                    QueueUrl=self._queue_url,
-                    ReceiptHandle=self._receipt_handle,
-                )
-            except botocore.exceptions.ClientError as e:
-                error_response = getattr(e, "response", {})
-                err = error_response.get("Error", {}) if isinstance(error_response, dict) else {}
-                if isinstance(err, dict) and err.get("Code") != "ReceiptHandleIsInvalid":
-                    raise
+        try:
+            await self._server._client.delete_message(
+                QueueUrl=self._queue_url,
+                ReceiptHandle=self._receipt_handle,
+            )
+        except botocore.exceptions.ClientError as exc:
+            if (
+                not (error_dict := exc.response.get("Error"))
+                or not isinstance(error_dict, dict)
+                or error_dict.get("Code") != "ReceiptHandleIsInvalid"
+            ):
+                raise
 
         self._action = MessageAction.nacked
 
     async def reject(self) -> None:
         if self._action is not None:
             return
-
-        if self._server._client is not None and self._receipt_handle:
-            try:
-                await self._server._client.change_message_visibility(
-                    QueueUrl=self._queue_url,
-                    ReceiptHandle=self._receipt_handle,
-                    VisibilityTimeout=0,
-                )
-            except botocore.exceptions.ClientError as e:
-                error_response = getattr(e, "response", {})
-                err = error_response.get("Error", {}) if isinstance(error_response, dict) else {}
-                if isinstance(err, dict) and err.get("Code") != "ReceiptHandleIsInvalid":
-                    raise
+        if self._server._client is None:
+            raise ConnectionError("SQS client is not connected.")
+        if not self._receipt_handle:
+            return
+        try:
+            await self._server._client.change_message_visibility(
+                QueueUrl=self._queue_url,
+                ReceiptHandle=self._receipt_handle,
+                VisibilityTimeout=0,
+            )
+        except botocore.exceptions.ClientError as exc:
+            if (
+                not (error_dict := exc.response.get("Error"))
+                or not isinstance(error_dict, dict)
+                or error_dict.get("Code") != "ReceiptHandleIsInvalid"
+            ):
+                raise
 
         self._action = MessageAction.rejected
 
     async def reply(
         self,
         *,
-        payload: bytes,
-        headers: dict[str, str] | None = None,
-        content_type: str | None = None,
-        channel: str | None = None,
-        server_specific_parameters: dict[str, Any] | None = None,
+        payload: bytes,  # noqa: ARG002
+        headers: dict[str, str] | None = None,  # noqa: ARG002
+        content_type: str | None = None,  # noqa: ARG002
+        channel: str | None = None,  # noqa: ARG002
+        server_specific_parameters: dict[str, Any] | None = None,  # noqa: ARG002
     ) -> None:
         if self._action is not None:
             return
-        _ = (payload, headers, content_type, channel, server_specific_parameters)
         raise NotImplementedError("SQS does not support native replies.")

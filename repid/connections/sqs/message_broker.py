@@ -37,6 +37,7 @@ class SqsServer(ServerT):
         dlq_queue_strategy: Callable[[str], str] | None = lambda channel: f"repid_{channel}_dlq",
         receive_wait_time_seconds: int = 20,
         batch_size: int = 10,
+        visibility_timeout: int = 30,
         title: str | None = None,
         summary: str | None = None,
         description: str | None = None,
@@ -61,6 +62,7 @@ class SqsServer(ServerT):
         self._dlq_queue_strategy = dlq_queue_strategy
         self._receive_wait_time_seconds = receive_wait_time_seconds
         self._batch_size = batch_size
+        self._visibility_timeout = visibility_timeout
 
         self._session = get_session()
         self._client: SQSClient | None = None
@@ -132,6 +134,7 @@ class SqsServer(ServerT):
         return {
             "supports_native_reply": False,
             "supports_lightweight_pause": False,
+            "supports_keep_alive": True,
         }
 
     @property

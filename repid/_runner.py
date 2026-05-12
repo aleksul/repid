@@ -38,7 +38,7 @@ async def _actor_execution(
     return await actor.fn(*args, **kwargs)
 
 
-async def _keep_alive_loop(message: ReceivedMessageT, interval: int) -> None:
+async def _keep_alive_loop(message: ReceivedMessageT, interval: float) -> None:
     while True:
         await asyncio.sleep(interval)
         if message.is_acted_on:
@@ -55,7 +55,14 @@ async def _run_with_keepalive(
     server: ServerT,
     default_serializer: SerializerT,
 ) -> ActorResultT:
-    interval = message.keep_alive_interval
+    if actor.keep_alive is False:
+        return await _actor_execution(message, actor, server, default_serializer)
+
+    interval = (
+        actor.keep_alive
+        if isinstance(actor.keep_alive, (int, float)) and not isinstance(actor.keep_alive, bool)
+        else message.keep_alive_interval
+    )
     if not server.capabilities["supports_keep_alive"] or interval is None:
         return await _actor_execution(message, actor, server, default_serializer)
 

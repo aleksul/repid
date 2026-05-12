@@ -41,6 +41,7 @@ class ActorData:
     converter: ConverterT
     on_error: OnErrorT = "nack"
     timeout: float = 300.0
+    keep_alive: bool | float | None = True
     title: str | None = None
     summary: str | None = None
     description: str | None = None

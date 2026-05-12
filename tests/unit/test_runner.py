@@ -39,6 +39,28 @@ async def test_runner_actor_ack_first_mode() -> None:
         assert client.get_processed_messages()[0].acked
 
 
+async def test_runner_actor_keep_alive_disabled() -> None:
+    app = Repid()
+    router = Router(keep_alive=False)
+
+    processed = False
+
+    @router.actor()
+    async def ka_actor(arg1: str) -> None:  # noqa: ARG001
+        nonlocal processed
+        processed = True
+
+    app.include_router(router)
+
+    async with TestClient(app) as client:
+        await client.send_message_json(
+            channel="default",
+            payload={"arg1": "test"},
+            headers={"topic": "ka_actor"},
+        )
+        assert processed
+
+
 async def test_runner_actor_always_ack_mode_with_exception() -> None:
     app = Repid()
     router = Router()

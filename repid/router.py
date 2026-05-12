@@ -64,6 +64,7 @@ class _ActorDefinition:
     channel: Channel | str | None
     middlewares: Sequence[ActorMiddlewareT] | None
     timeout: float | None
+    keep_alive: bool | float | None
     title: str | None
     summary: str | None
     description: str | None
@@ -86,6 +87,7 @@ class Router:
         "_definitions",
         "channel",
         "converter",
+        "keep_alive",
         "middlewares",
         "pool_executor",
         "run_in_process",
@@ -98,6 +100,7 @@ class Router:
         channel: str | Channel = NotSet,
         middlewares: Sequence[ActorMiddlewareT] | None = None,
         timeout: float = NotSet,
+        keep_alive: bool | float | None = NotSet,
         run_in_process: bool = NotSet,
         pool_executor: Executor | None = NotSet,
         converter: type[ConverterT] = NotSet,
@@ -106,6 +109,7 @@ class Router:
         self.channel = channel
         self.middlewares = middlewares
         self.timeout = timeout
+        self.keep_alive = keep_alive
         self.run_in_process = run_in_process
         self.pool_executor = pool_executor
         self.converter = converter
@@ -126,6 +130,9 @@ class Router:
 
         if router.timeout is NotSet and self.timeout is not NotSet:
             router.timeout = self.timeout
+
+        if router.keep_alive is NotSet and self.keep_alive is not NotSet:
+            router.keep_alive = self.keep_alive
 
         if router.run_in_process is NotSet and self.run_in_process is not NotSet:
             router.run_in_process = self.run_in_process
@@ -185,7 +192,7 @@ class Router:
         return list(channels.values())
 
     @property
-    def actors(self) -> list[ActorData]:
+    def actors(self) -> list[ActorData]:  # noqa: PLR0915
         actors: list[ActorData] = []
         for definition in self._definitions:
             fn = definition.fn
@@ -195,6 +202,7 @@ class Router:
             channel = definition.channel
             middlewares = definition.middlewares
             timeout = definition.timeout
+            keep_alive = definition.keep_alive
             title = definition.title
             summary = definition.summary
             description = definition.description
@@ -256,6 +264,12 @@ class Router:
                     300.0 if definition.router.timeout is NotSet else definition.router.timeout
                 )
 
+            keep_alive_val = keep_alive
+            if keep_alive_val is None:
+                keep_alive_val = (
+                    True if definition.router.keep_alive is NotSet else definition.router.keep_alive
+                )
+
             run_in_process_val = run_in_process
             if run_in_process_val is None:
                 run_in_process_val = (
@@ -284,6 +298,7 @@ class Router:
                 middleware_pipeline=middleware_pipeline,
                 channel_address=channel_address,
                 timeout=timeout_val,
+                keep_alive=keep_alive_val,
                 converter=converter(fn, fn_locals=fn_locals, correlation_id=correlation_id),
                 title=title,
                 summary=summary or " ".join([part.capitalize() for part in fn.__name__.split("_")]),
@@ -311,6 +326,7 @@ class Router:
         channel: Channel | str | None = None,
         middlewares: Sequence[ActorMiddlewareT] | None = None,
         timeout: float | None = None,
+        keep_alive: bool | float | None = None,
         title: str | None = None,
         summary: str | None = None,
         description: str | None = None,
@@ -339,6 +355,7 @@ class Router:
         channel: Channel | str | None = None,
         middlewares: Sequence[ActorMiddlewareT] | None = None,
         timeout: float | None = None,
+        keep_alive: bool | float | None = None,
         title: str | None = None,
         summary: str | None = None,
         description: str | None = None,
@@ -367,6 +384,7 @@ class Router:
         channel: Channel | str | None = None,
         middlewares: Sequence[ActorMiddlewareT] | None = None,
         timeout: float | None = None,
+        keep_alive: bool | float | None = None,
         title: str | None = None,
         summary: str | None = None,
         description: str | None = None,
@@ -394,6 +412,7 @@ class Router:
         channel: Channel | str | None = None,
         middlewares: Sequence[ActorMiddlewareT] | None = None,
         timeout: float | None = None,
+        keep_alive: bool | float | None = None,
         title: str | None = None,
         summary: str | None = None,
         description: str | None = None,
@@ -421,6 +440,7 @@ class Router:
         channel: Channel | str | None = None,
         middlewares: Sequence[ActorMiddlewareT] | None = None,
         timeout: float | None = None,
+        keep_alive: bool | float | None = None,
         title: str | None = None,
         summary: str | None = None,
         description: str | None = None,
@@ -449,6 +469,7 @@ class Router:
         channel: Channel | str | None = None,
         middlewares: Sequence[ActorMiddlewareT] | None = None,
         timeout: float | None = None,
+        keep_alive: bool | float | None = None,
         title: str | None = None,
         summary: str | None = None,
         description: str | None = None,
@@ -477,6 +498,7 @@ class Router:
         channel: Channel | str | None = None,
         middlewares: Sequence[ActorMiddlewareT] | None = None,
         timeout: float | None = None,
+        keep_alive: bool | float | None = None,
         title: str | None = None,
         summary: str | None = None,
         description: str | None = None,
@@ -505,6 +527,7 @@ class Router:
         channel: Channel | str | None = None,
         middlewares: Sequence[ActorMiddlewareT] | None = None,
         timeout: float | None = None,
+        keep_alive: bool | float | None = None,
         title: str | None = None,
         summary: str | None = None,
         description: str | None = None,
@@ -538,6 +561,7 @@ class Router:
         channel: Channel | str | None = None,
         middlewares: Sequence[ActorMiddlewareT] | None = None,
         timeout: float | None = None,
+        keep_alive: bool | float | None = None,
         title: str | None = None,
         summary: str | None = None,
         description: str | None = None,
@@ -592,6 +616,10 @@ class Router:
                 If the actor does not complete within this time, the message will be rejected.
                 If zero or inf+, no time limit is applied.
                 Defaults to Router's default timeout.
+            keep_alive (bool | float | None, optional):
+                Whether the actor should periodically inform the broker that it's still alive.
+                If a float is provided, it will override the broker's default keep-alive interval.
+                Defaults to True, meaning the broker's default interval will be used.
             title (str | None, optional):
                 Human-readable title for the actor.
             summary (str | None, optional):
@@ -646,6 +674,7 @@ class Router:
                 channel=channel,
                 middlewares=middlewares,
                 timeout=timeout,
+                keep_alive=keep_alive,
                 title=title,
                 summary=summary,
                 description=description,
@@ -701,6 +730,7 @@ class Router:
                 channel=channel,
                 middlewares=middlewares,
                 timeout=timeout,
+                keep_alive=keep_alive,
                 title=title,
                 summary=summary,
                 description=description,

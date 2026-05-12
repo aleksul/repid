@@ -152,6 +152,15 @@ def test_include_router_propagates_timeout() -> None:
     assert router2.timeout == 30.0
 
 
+def test_include_router_propagates_keep_alive() -> None:
+    router1 = Router(keep_alive=15.0)
+    router2 = Router()
+
+    router1.include_router(router2)
+
+    assert router2.keep_alive == 15.0
+
+
 def test_include_router_propagates_run_in_process() -> None:
     router1 = Router(run_in_process=True)
     router2 = Router()

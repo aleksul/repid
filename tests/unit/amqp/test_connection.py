@@ -1129,6 +1129,25 @@ async def test_connection_create_session_success() -> None:
         assert len(conn._sessions) > 0
 
 
+async def test_connection_create_session_uses_configured_session_window() -> None:
+    config = ConnectionConfig(host="localhost", port=5672, session_window=12345)
+    conn = AmqpConnection(config)
+    conn._state_machine._state = ConnectionState.OPENED
+
+    with patch.object(conn._transport, "send_performative", new_callable=AsyncMock) as mock_send:
+        session = await conn.create_session()
+
+    assert session._incoming_window == 12345
+    begin = mock_send.call_args.args[1]
+    assert isinstance(begin, BeginFrame)
+    assert begin.incoming_window == 12345
+
+
+def test_connection_config_rejects_invalid_session_window() -> None:
+    with pytest.raises(ValueError, match="session_window must be greater than 0"):
+        ConnectionConfig(host="localhost", port=5672, session_window=0)
+
+
 async def test_connection_do_connect_with_sasl_auth() -> None:
     config = ConnectionConfig(
         host="localhost",

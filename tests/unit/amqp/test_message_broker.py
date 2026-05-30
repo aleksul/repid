@@ -599,6 +599,41 @@ async def test_message_broker_connection_context(monkeypatch: Any) -> None:
     assert broker.is_connected is False
 
 
+async def test_message_broker_passes_session_window_to_connection(monkeypatch: Any) -> None:
+    configs: list[ConnectionConfig] = []
+
+    class DummyConnection:
+        def __init__(self, config: ConnectionConfig):
+            configs.append(config)
+            self.is_connected = False
+
+        async def connect(self) -> None:
+            self.is_connected = True
+
+        async def close(self) -> None:
+            self.is_connected = False
+
+    class DummyManagedSession:
+        def __init__(self, _connection: Any):
+            pass
+
+        async def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("repid.connections.amqp.message_broker.AmqpConnection", DummyConnection)
+    monkeypatch.setattr("repid.connections.amqp.message_broker.ManagedSession", DummyManagedSession)
+
+    broker = AmqpServer("amqp://localhost:5672", session_window=12345)
+    await broker.connect()
+
+    assert configs[0].session_window == 12345
+
+
+def test_message_broker_rejects_invalid_session_window() -> None:
+    with pytest.raises(ValueError, match="session_window must be greater than 0"):
+        AmqpServer("amqp://localhost:5672", session_window=0)
+
+
 async def test_message_broker_default_subscribe_naming() -> None:
     strategy = AmqpServer._default_subscribe_naming_strategy
     result = strategy("test-queue")

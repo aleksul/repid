@@ -522,6 +522,65 @@ async def test_session_begin_and_end() -> None:
     await session.end()
 
 
+async def test_session_begin_uses_configured_incoming_window() -> None:
+    connection = FakeConnection()
+    session = Session(cast(AmqpConnection, connection), channel=1, incoming_window=12345)
+
+    await session.begin()
+
+    begin = connection.sent[0][1]
+    assert isinstance(begin, BeginFrame)
+    assert begin.incoming_window == 12345
+
+
+async def test_session_receiver_prefetch_raises_incoming_window(monkeypatch: Any) -> None:
+    @dataclass(slots=True)
+    class MockReceiverLink:
+        session: Session
+        name: str
+        _address: str
+        _handle: int
+        _callback: Any
+        prefetch: int = 0
+        _remote_handle: int | None = None
+
+        async def attach(self) -> None:
+            pass
+
+        async def wait_ready(self) -> None:
+            pass
+
+        async def detach(self) -> None:
+            pass
+
+    connection = FakeConnection()
+    session = Session(cast(AmqpConnection, connection), channel=1, incoming_window=4)
+    await session.begin()
+    session._state_machine.transition_sync("recv_begin")
+    connection.sent.clear()
+
+    def fake_receiver_link(
+        session: Session,
+        name: str,
+        address: str,
+        handle: int,
+        callback: Any,
+        prefetch: int = 100,
+    ) -> MockReceiverLink:
+        return MockReceiverLink(session, name, address, handle, callback, prefetch)
+
+    monkeypatch.setattr(links, "ReceiverLink", fake_receiver_link)
+
+    await session.create_receiver("test-address", lambda *_args: None, prefetch=10)
+
+    assert session._incoming_window == 10
+    assert len(connection.sent) == 1
+    flow = connection.sent[0][1]
+    assert isinstance(flow, FlowFrame)
+    assert flow.handle is None
+    assert flow.incoming_window == 10
+
+
 async def test_session_handle_attach_detach_flow_disposition() -> None:
     connection = FakeConnection()
     session = Session(cast(AmqpConnection, connection), channel=1)
@@ -656,6 +715,110 @@ async def test_session_handle_transfer_and_invalidate(monkeypatch: Any) -> None:
     session.invalidate()
     assert session.state == SessionState.UNMAPPED
     assert fake_receiver.detached
+
+
+async def test_session_sends_flow_before_incoming_window_exhaustion(monkeypatch: Any) -> None:
+    connection = FakeConnection()
+    session = Session(cast(AmqpConnection, connection), channel=1)
+    session._incoming_window = 4
+    session._incoming_flow_threshold = 2
+
+    await session.begin()
+    session._state_machine.transition_sync("recv_begin")
+    connection.sent.clear()
+
+    class FakeReceiverForFlow:
+        async def _handle_transfer(self, _frame: TransferFrame) -> None:
+            return None
+
+    fake_receiver = FakeReceiverForFlow()
+    original_isinstance = isinstance
+
+    def mock_isinstance(obj: Any, classinfo: Any) -> bool:
+        if obj is fake_receiver and classinfo is ReceiverLink:
+            return True
+        return original_isinstance(obj, classinfo)
+
+    monkeypatch.setattr("builtins.isinstance", mock_isinstance)
+    session._links_by_remote_handle[3] = cast(SenderLink | ReceiverLink, fake_receiver)
+
+    await session.handle_performative(TransferFrame(handle=3, delivery_id=1, delivery_tag=b"1"))
+    assert connection.sent == []
+
+    await session.handle_performative(TransferFrame(handle=3, delivery_id=2, delivery_tag=b"2"))
+
+    assert len(connection.sent) == 1
+    channel, flow = connection.sent[0]
+    assert channel == 1
+    assert isinstance(flow, FlowFrame)
+    assert flow.handle is None
+    assert flow.next_incoming_id == 2
+    assert flow.incoming_window == 4
+
+
+async def test_session_remote_incoming_window_clamps_when_exhausted() -> None:
+    connection = FakeConnection()
+    session = Session(cast(AmqpConnection, connection), channel=1)
+    session._next_outgoing_id = 11
+
+    flow = FlowFrame(
+        next_incoming_id=10,
+        incoming_window=1,
+        next_outgoing_id=0,
+        outgoing_window=100,
+    )
+    await session._handle_flow(flow)
+
+    assert session._remote_incoming_window == 0
+
+
+async def test_session_wait_for_remote_incoming_window_timeout_clears_event() -> None:
+    connection = FakeConnection()
+    session = Session(cast(AmqpConnection, connection), channel=1)
+    session._remote_incoming_window = 0
+    session._remote_incoming_window_available.set()
+
+    with pytest.raises(asyncio.TimeoutError):
+        await session.wait_for_remote_incoming_window(timeout=0.01)
+
+    assert not session._remote_incoming_window_available.is_set()
+
+
+def test_session_consume_remote_incoming_window_clears_empty_event() -> None:
+    connection = FakeConnection()
+    session = Session(cast(AmqpConnection, connection), channel=1)
+    session._remote_incoming_window = 0
+    session._remote_incoming_window_available.set()
+
+    session.consume_remote_incoming_window()
+
+    assert not session._remote_incoming_window_available.is_set()
+
+
+def test_session_consume_remote_incoming_window_decrements_available_window() -> None:
+    connection = FakeConnection()
+    session = Session(cast(AmqpConnection, connection), channel=1)
+    session._remote_incoming_window = 2
+    session._remote_incoming_window_available.set()
+
+    session.consume_remote_incoming_window()
+
+    assert session._remote_incoming_window == 1
+    assert session._remote_incoming_window_available.is_set()
+
+
+async def test_session_handle_begin_clears_empty_remote_incoming_window() -> None:
+    connection = FakeConnection()
+    session = Session(cast(AmqpConnection, connection), channel=1)
+    await session.begin()
+    session._remote_incoming_window_available.set()
+
+    await session.handle_performative(
+        BeginFrame(next_outgoing_id=0, incoming_window=0, outgoing_window=100),
+    )
+
+    assert session._remote_incoming_window == 0
+    assert not session._remote_incoming_window_available.is_set()
 
 
 async def test_session_wait_ready_timeout() -> None:

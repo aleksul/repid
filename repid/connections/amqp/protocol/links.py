@@ -344,11 +344,6 @@ class SenderLink(Link):
             except asyncio.TimeoutError as e:
                 raise LinkError("Timeout waiting for link credit") from e
 
-        # Consume one credit
-        self._link_credit -= 1
-        if self._link_credit <= 0:
-            self._credit_available.clear()
-
         # Build message
         msg = Message(
             data=payload,
@@ -375,13 +370,27 @@ class SenderLink(Link):
             ),
         )
 
-        # Send all frames
+        # Send all frames. Session flow control is per transfer frame, while link
+        # credit is per delivery.
+        credit_consumed = False
         for frame in frames:
+            try:
+                await self._session.wait_for_remote_incoming_window(_timeout)
+            except asyncio.TimeoutError as e:
+                raise LinkError("Timeout waiting for session window") from e
+
+            if not credit_consumed:
+                self._link_credit -= 1
+                if self._link_credit <= 0:
+                    self._credit_available.clear()
+                credit_consumed = True
+
             await self._session.connection.send_performative(
                 self._session.channel,
                 frame,
             )
             self._session._next_outgoing_id = (self._session._next_outgoing_id + 1) & 0xFFFFFFFF
+            self._session.consume_remote_incoming_window()
 
         self._delivery_count = (self._delivery_count + 1) & 0xFFFFFFFF
 
@@ -487,6 +496,9 @@ class ReceiverLink(Link):
         """Handle ATTACH response and send initial flow."""
         await super()._handle_attach(_attach)
 
+        if _attach.initial_delivery_count is not None:
+            self._delivery_count = _attach.initial_delivery_count
+
         # Send initial FLOW to grant credit
         await self._send_flow()
 
@@ -536,10 +548,10 @@ class ReceiverLink(Link):
             # Decode message from transfer frames
             msg = transfer_frames_to_message(self._incoming_transfers)
 
-            # Get the last transfer for delivery info
-            last_transfer = self._incoming_transfers[-1]
-            delivery_id = last_transfer.delivery_id or 0
-            delivery_tag = last_transfer.delivery_tag or b""
+            # Continuation transfers may omit delivery metadata.
+            first_transfer = self._incoming_transfers[0]
+            delivery_id = first_transfer.delivery_id or 0
+            delivery_tag = first_transfer.delivery_tag or b""
 
             # Extract body
             body = msg.body

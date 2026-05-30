@@ -34,6 +34,7 @@ from repid.connections.amqp._uamqp.performatives import (
 
 from .events import ConnectionEvent, EventData, EventEmitter, MetricsCollector
 from .reconnect import ReconnectConfig, ReconnectStrategy
+from .session import DEFAULT_SESSION_WINDOW
 from .states import ConnectionState, ConnectionStateMachine
 from .transport import (
     SASL_HEADER,
@@ -92,12 +93,18 @@ class ConnectionConfig:
     # Frame settings
     max_frame_size: int = MAX_FRAME_SIZE_BYTES
     channel_max: int = 65535
+    session_window: int = DEFAULT_SESSION_WINDOW
 
     # Reconnection settings
     reconnect: ReconnectConfig = field(default_factory=ReconnectConfig)
 
     # Container ID (unique identifier for this connection)
     container_id: str = field(default_factory=lambda: f"repid-{uuid.uuid4().hex[:8]}")
+
+    def __post_init__(self) -> None:
+        if self.session_window <= 0:
+            msg = "session_window must be greater than 0"
+            raise ValueError(msg)
 
 
 # =============================================================================
@@ -712,7 +719,7 @@ class AmqpConnection:
         # Import here to avoid circular import
         from .session import Session  # noqa: PLC0415
 
-        session = Session(self, channel)
+        session = Session(self, channel, incoming_window=self._config.session_window)
         self._sessions[channel] = session
 
         await session.begin()

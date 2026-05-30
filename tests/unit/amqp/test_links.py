@@ -229,6 +229,46 @@ async def test_sender_link_send_waits_for_credit(sender: SenderLink) -> None:
     assert isinstance(frame, TransferFrame)
 
 
+async def test_sender_link_send_waits_for_remote_session_window(sender: SenderLink) -> None:
+    sender._state_machine.transition_sync("send_attach")
+    sender._state_machine.transition_sync("recv_attach")
+    sender._link_credit = 1
+    sender._credit_available.set()
+    sender.session._remote_incoming_window = 0
+
+    send_task = asyncio.create_task(sender.send(b"hello", _timeout=0.05))
+    await asyncio.sleep(0.01)
+    assert not send_task.done()
+
+    sender.session._remote_incoming_window = 1
+    sender.session._remote_incoming_window_available.set()
+
+    await send_task
+    assert sender.session._remote_incoming_window == 0
+    assert len(cast(Any, sender.session.connection).sent) == 1
+    assert isinstance(cast(Any, sender.session.connection).sent[0][1], TransferFrame)
+
+
+async def test_sender_link_send_timeout_waiting_for_session_window(sender: SenderLink) -> None:
+    sender._state_machine.transition_sync("send_attach")
+    sender._state_machine.transition_sync("recv_attach")
+    sender._link_credit = 1
+    sender._credit_available.set()
+
+    with (
+        patch.object(
+            sender.session,
+            "wait_for_remote_incoming_window",
+            side_effect=asyncio.TimeoutError,
+        ),
+        pytest.raises(LinkError, match="Timeout waiting for session window"),
+    ):
+        await sender.send(b"hello", _timeout=0.01)
+
+    assert sender.link_credit == 1
+    assert sender._credit_available.is_set()
+
+
 async def test_sender_link_send_timeout_waiting_for_credit(sender: SenderLink) -> None:
     # Setup link as attached and ready
     sender._state_machine.transition_sync("send_attach")
@@ -332,6 +372,24 @@ async def test_receiver_link_attach(receiver: ReceiverLink) -> None:
     assert isinstance(receiver.session.connection.sent[1][1], FlowFrame)
 
 
+async def test_receiver_link_uses_remote_initial_delivery_count(receiver: ReceiverLink) -> None:
+    receiver._state_machine.transition_sync("send_attach")
+    attach_response = AttachFrame(
+        name="test-receiver",
+        handle=1,
+        role=False,
+        source=None,
+        target=None,
+        initial_delivery_count=42,
+    )
+    await receiver._handle_attach(attach_response)
+
+    assert receiver._delivery_count == 42
+    flow = cast(Any, receiver.session.connection).sent[-1][1]
+    assert isinstance(flow, FlowFrame)
+    assert flow.delivery_count == 42
+
+
 async def test_receiver_link_receive_message(receiver: ReceiverLink) -> None:
     received = []
 
@@ -355,6 +413,43 @@ async def test_receiver_link_receive_message(receiver: ReceiverLink) -> None:
 
     assert len(received) == 1
     assert received[0][0] == b"test-data"
+
+
+async def test_receiver_link_multi_frame_uses_first_transfer_delivery_metadata(
+    receiver: ReceiverLink,
+) -> None:
+    received: list[tuple[int, bytes]] = []
+
+    def on_message(
+        _body: bytes,
+        _headers: dict[str, Any] | None,
+        delivery_id: int,
+        delivery_tag: bytes,
+        _link: ReceiverLink,
+        _properties: Properties | None,
+    ) -> None:
+        received.append((delivery_id, delivery_tag))
+
+    receiver._callback = on_message
+    msg = Message(data=b"x" * 200)
+    frames = list(
+        message_to_transfer_frames(
+            msg,
+            64,
+            0,
+            b"first-tag",
+            123,
+            settled=True,
+        ),
+    )
+    assert len(frames) > 1
+    assert frames[-1].delivery_id is None
+    assert frames[-1].delivery_tag is None
+
+    for frame in frames:
+        await receiver._handle_transfer(frame)
+
+    assert received == [(123, b"first-tag")]
 
 
 async def test_receiver_link_flow_echo(receiver: ReceiverLink) -> None:

@@ -40,6 +40,7 @@ class AmqpServer:
         bindings: ServerBindingsObject | None = None,
         publish_naming_strategy: Callable[[str, str | None], str] | None = None,
         subscribe_naming_strategy: Callable[[str], str] | None = None,
+        session_window: int | None = None,
     ) -> None:
         self.dsn = dsn
         self._connection: AmqpConnection | None = None
@@ -71,6 +72,10 @@ class AmqpServer:
         self._conn_port = parsed.port or 5672
         self._conn_username = parsed.username
         self._conn_password = parsed.password
+        if session_window is not None and session_window <= 0:
+            msg = "session_window must be greater than 0"
+            raise ValueError(msg)
+        self._session_window = session_window
 
         # Active subscribers
         self._active_subscribers: list[AmqpSubscriber] = []
@@ -157,14 +162,22 @@ class AmqpServer:
 
     async def connect(self) -> None:
         if self._connection is None or not self._connection.is_connected:
-            self._connection = AmqpConnection(
-                ConnectionConfig(
+            if self._session_window is None:
+                config = ConnectionConfig(
                     host=self._conn_host,
                     port=self._conn_port,
                     username=self._conn_username,
                     password=self._conn_password,
-                ),
-            )
+                )
+            else:
+                config = ConnectionConfig(
+                    host=self._conn_host,
+                    port=self._conn_port,
+                    username=self._conn_username,
+                    password=self._conn_password,
+                    session_window=self._session_window,
+                )
+            self._connection = AmqpConnection(config)
             await self._connection.connect()
             # Create managed session that handles reconnection automatically
             self._managed_session = ManagedSession(self._connection)

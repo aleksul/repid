@@ -1,8 +1,7 @@
 import asyncio
-import contextlib
 from collections.abc import AsyncIterator
 from typing import Any
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import grpc.aio
 import pytest
@@ -54,8 +53,7 @@ async def test_streaming_pull_loop_normal_execution() -> None:
     with patch.object(subscriber, "_run_streaming_pull", side_effect=run_once) as mock_run:
         await subscriber._streaming_pull_loop(config)
 
-        mock_run.assert_called_once_with(config, ANY)
-        assert "sub1" in subscriber._write_queues
+        mock_run.assert_called_once_with(config)
 
 
 async def test_streaming_pull_loop_retry_logic() -> None:
@@ -101,8 +99,6 @@ async def test_run_streaming_pull_logic() -> None:
         resilience_state=MagicMock(spec=ResilienceState, record_success=AsyncMock()),
     )
 
-    write_queue: asyncio.Queue[proto.StreamingPullRequest] = asyncio.Queue()
-
     msg1 = proto.ReceivedMessage(
         message=proto.PubsubMessage(data=b"data"),
         ack_id="ack1",
@@ -127,7 +123,7 @@ async def test_run_streaming_pull_logic() -> None:
 
     stream_mock.side_effect = side_effect
 
-    task = asyncio.create_task(subscriber._run_streaming_pull(config, write_queue))
+    task = asyncio.create_task(subscriber._run_streaming_pull(config))
 
     await asyncio.sleep(0.1)
 
@@ -142,12 +138,6 @@ async def test_run_streaming_pull_logic() -> None:
     assert not subscriber._delivery_queue.empty()
     item = subscriber._delivery_queue.get_nowait()
     assert item.message.payload == b"data"
-
-    req_out = proto.StreamingPullRequest(ack_ids=["ack1"])
-    write_queue.put_nowait(req_out)
-
-    req2 = await anext(gen)
-    assert req2.ack_ids == ["ack1"]
 
     continue_stream.set()
     await task
@@ -197,54 +187,9 @@ async def test_lifecycle_control() -> None:
     assert subscriber._task.cancelled()
 
 
-async def test_heartbeat_loop_sends_heartbeats() -> None:
-    subscriber = _make_subscriber(
-        heartbeat_interval=0.02,
-        stream_ack_deadline_seconds=10,
-    )
-
-    queue: asyncio.Queue[proto.StreamingPullRequest] = asyncio.Queue()
-    task = asyncio.create_task(subscriber._heartbeat_loop(queue))
-
-    await asyncio.sleep(0.07)
-
-    subscriber._shutdown_event.set()
-    task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await task
-
-    assert queue.qsize() >= 2
-    hb = queue.get_nowait()
-    assert hb.stream_ack_deadline_seconds == 10
-    assert not hb.ack_ids
-
-
-async def test_heartbeat_loop_immediate_shutdown() -> None:
-    subscriber = _make_subscriber(heartbeat_interval=0.01)
-    queue: asyncio.Queue[proto.StreamingPullRequest] = asyncio.Queue()
-
-    subscriber._shutdown_event.set()
-    await subscriber._heartbeat_loop(queue)
-    assert queue.qsize() == 0
-
-
-async def test_subscriber_close_logic_flushes_queues() -> None:
-    subscriber = _make_subscriber()
-
-    mock_q = MagicMock(spec=asyncio.Queue)
-    mock_q.join = AsyncMock()
-
-    subscriber._write_queues = {"sub1": mock_q}
-
-    await subscriber.close()
-
-    mock_q.join.assert_called_once()
-
-
 async def test_process_response_directly() -> None:
     subscriber = _make_subscriber()
     config = _make_config()
-    queue: asyncio.Queue[proto.StreamingPullRequest] = asyncio.Queue()
 
     msg = proto.PubsubMessage(data=b"test-data")
     response = proto.StreamingPullResponse(
@@ -254,21 +199,10 @@ async def test_process_response_directly() -> None:
         ],
     )
 
-    await subscriber._process_response(response, config, queue)
+    await subscriber._process_response(response, config)
 
     assert subscriber._delivery_queue.qsize() == 1
     assert len(subscriber._in_flight_messages) == 1
-
-
-async def test_drain_write_queues_timeout() -> None:
-    subscriber = _make_subscriber()
-
-    q: asyncio.Queue[Any] = asyncio.Queue()
-    q.put_nowait("item")  # not marked done, join hangs
-    subscriber._write_queues["s1"] = q
-
-    await subscriber._drain_write_queues(timeout=0.01)
-    # Should not hang
 
 
 async def test_cancel_callback_tasks() -> None:

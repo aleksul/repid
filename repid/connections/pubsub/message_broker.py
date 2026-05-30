@@ -18,14 +18,14 @@ from .protocol import (
     GoogleDefaultCredentials,
     InsecureCredentials,
     PublishRequest,
-    PublishResponse,
+    PubsubControlBatcher,
     PubsubMessage,
+    PubsubProtocolClient,
     PubsubSubscriber,
     ResilienceConfig,
     ResilienceState,
     create_channel,
     parse_dsn,
-    with_retry,
 )
 
 if TYPE_CHECKING:
@@ -34,9 +34,6 @@ if TYPE_CHECKING:
     from repid.data import ExternalDocs, Tag
 
 logger = logging.getLogger("repid.connections.pubsub")
-
-# gRPC method paths
-PUBLISH_METHOD = "/google.pubsub.v1.Publisher/Publish"
 
 
 class PubsubServer:
@@ -175,6 +172,8 @@ class PubsubServer:
         self._channel: grpc.aio.Channel | None = None
         self._active_subscribers: list[PubsubSubscriber] = []
         self._client_id = str(uuid.uuid4())
+        self._protocol_client: PubsubProtocolClient | None = None
+        self._control_batcher: PubsubControlBatcher | None = None
 
     # ServerT properties
     @property
@@ -262,6 +261,16 @@ class PubsubServer:
             credentials_provider=self._credentials_provider,
             options=self._channel_options,
         )
+
+        # Start protocol client and control batcher for Pub/Sub control RPCs
+        self._protocol_client = PubsubProtocolClient(
+            channel=self._channel,
+            credentials_provider=self._credentials_provider,
+            resilience_state=self._resilience_state,
+        )
+        self._control_batcher = PubsubControlBatcher(self._protocol_client)
+        await self._control_batcher.start()
+
         logger.debug("server.connect")
 
     async def disconnect(self) -> None:
@@ -272,10 +281,16 @@ class PubsubServer:
             with suppress(Exception):
                 await subscriber.close()
 
+        # Stop control batcher (flush any pending operations)
+        if self._control_batcher is not None:
+            await self._control_batcher.stop()
+            self._control_batcher = None
+
         # Close gRPC channel
         if self._channel is not None:
             await self._channel.close()
             self._channel = None
+        self._protocol_client = None
 
         logger.debug("server.disconnect")
 
@@ -312,7 +327,8 @@ class PubsubServer:
             ConnectionError: If not connected.
             ReconnectionExhaustedError: If all retry attempts fail.
         """
-        if not self.is_connected or self._channel is None:
+        protocol_client = self._protocol_client
+        if not self.is_connected or self._channel is None or protocol_client is None:
             raise ConnectionError("PubSub server is not connected.")
 
         topic_path = self._resolve_topic_path(channel, server_specific_parameters)
@@ -336,23 +352,7 @@ class PubsubServer:
             extra={"topic": topic_path, "channel": channel},
         )
 
-        async def _do_publish() -> None:
-            # Ensure credentials are still valid
-            await self._credentials_provider.ensure_valid()
-
-            # Make the gRPC call
-            publish_call = self._channel.unary_unary(  # type: ignore[var-annotated, union-attr]
-                PUBLISH_METHOD,
-                request_serializer=lambda req: req.serialize(),
-                response_deserializer=PublishResponse.deserialize,
-            )
-            await publish_call(request, timeout=timeout)
-
-        await with_retry(
-            self._resilience_state,
-            _do_publish,
-            operation_name="publish",
-        )
+        await protocol_client.publish(request, timeout)
 
     # Message receiving
     async def subscribe(

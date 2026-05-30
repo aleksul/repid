@@ -1,5 +1,5 @@
-import asyncio
-from unittest.mock import MagicMock
+from typing import cast
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -7,15 +7,21 @@ from repid.connections.abc import MessageAction
 from repid.connections.pubsub.protocol import proto, received_message
 
 
+class _FakeBatcher:
+    def __init__(self) -> None:
+        self.add_ack = AsyncMock()
+        self.add_modify_deadline = AsyncMock()
+
+
 @pytest.fixture
-def msg_fixture() -> received_message.PubsubReceivedMessage:
+def msg() -> received_message.PubsubReceivedMessage:
     raw = proto.PubsubMessage(
         data=b"data",
         attributes={"key": "val", "content_type": "json"},
         message_id="msg1",
     )
     server = MagicMock()
-    write_queue: asyncio.Queue[proto.StreamingPullRequest] = asyncio.Queue()
+    server._control_batcher = _FakeBatcher()
 
     return received_message.PubsubReceivedMessage(
         raw_message=raw,
@@ -23,135 +29,190 @@ def msg_fixture() -> received_message.PubsubReceivedMessage:
         delivery_attempt=1,
         subscription_path="sub1",
         channel_name="chan1",
-        write_queue=write_queue,
         server=server,
         stream_ack_deadline_seconds=300,
     )
 
 
-def test_received_message_properties(msg_fixture: received_message.PubsubReceivedMessage) -> None:
-    assert msg_fixture.payload == b"data"
-    assert msg_fixture.headers == {"key": "val", "content_type": "json"}
-    assert msg_fixture.content_type == "json"
-    assert msg_fixture.reply_to is None
-    assert msg_fixture.channel == "chan1"
-    assert not msg_fixture.is_acted_on
-    assert msg_fixture.message_id == "msg1"
-    assert msg_fixture.delivery_attempt == 1
+def _batcher(m: received_message.PubsubReceivedMessage) -> _FakeBatcher:
+    return cast(_FakeBatcher, m._server._control_batcher)
 
 
-async def test_received_message_ack(msg_fixture: received_message.PubsubReceivedMessage) -> None:
-    await msg_fixture.ack()
-
-    assert msg_fixture.is_acted_on
-    assert msg_fixture.action == MessageAction.acked
-
-    req = msg_fixture._write_queue.get_nowait()
-    assert isinstance(req, proto.StreamingPullRequest)
-    assert req.ack_ids == ["ack1"]
-
-    # Second ack should be ignored
-    await msg_fixture.ack()
-    assert msg_fixture._write_queue.empty()
+def test_basic_properties(msg: received_message.PubsubReceivedMessage) -> None:
+    assert msg.payload == b"data"
+    assert msg.headers == {"key": "val", "content_type": "json"}
+    assert msg.content_type == "json"
+    assert msg.reply_to is None
+    assert msg.channel == "chan1"
+    assert not msg.is_acted_on
+    assert msg.message_id == "msg1"
+    assert msg.delivery_attempt == 1
 
 
-async def test_received_message_nack(msg_fixture: received_message.PubsubReceivedMessage) -> None:
-    await msg_fixture.nack()
+async def test_ack_calls_batcher_add_ack(msg: received_message.PubsubReceivedMessage) -> None:
+    await msg.ack()
 
-    assert msg_fixture.is_acted_on
-
-    req = msg_fixture._write_queue.get_nowait()
-    assert isinstance(req, proto.StreamingPullRequest)
-    assert req.modify_deadline_seconds == [0]
-    assert req.modify_deadline_ack_ids == ["ack1"]
-
-    # Second nack should be ignored
-    await msg_fixture.nack()
-    assert msg_fixture._write_queue.empty()
+    assert msg.is_acted_on
+    assert msg.action == MessageAction.acked
+    _batcher(msg).add_ack.assert_awaited_once_with("sub1", "ack1")
 
 
-async def test_received_message_reject(msg_fixture: received_message.PubsubReceivedMessage) -> None:
-    await msg_fixture.reject()
+async def test_second_ack_is_noop(msg: received_message.PubsubReceivedMessage) -> None:
+    await msg.ack()
+    _batcher(msg).add_ack.reset_mock()
 
-    assert msg_fixture.is_acted_on
+    await msg.ack()
 
-    req = msg_fixture._write_queue.get_nowait()
-    assert isinstance(req, proto.StreamingPullRequest)
-    assert req.modify_deadline_seconds == [1]
-    assert req.modify_deadline_ack_ids == ["ack1"]
-
-    # Second reject should be ignored
-    await msg_fixture.reject()
-    assert msg_fixture._write_queue.empty()
+    _batcher(msg).add_ack.assert_not_called()
 
 
-async def test_received_message_extend_deadline(
-    msg_fixture: received_message.PubsubReceivedMessage,
+async def test_nack_calls_batcher_add_modify_with_zero(
+    msg: received_message.PubsubReceivedMessage,
 ) -> None:
-    await msg_fixture.extend_deadline(30)
+    await msg.nack()
 
-    assert not msg_fixture.is_acted_on  # Should not be marked as acted on
-
-    req = msg_fixture._write_queue.get_nowait()
-    assert isinstance(req, proto.StreamingPullRequest)
-    assert req.modify_deadline_seconds == [30]
-
-    # Check clamping
-    await msg_fixture.extend_deadline(1)
-    req = msg_fixture._write_queue.get_nowait()
-    assert req.modify_deadline_seconds == [10]
-
-    await msg_fixture.extend_deadline(1000)
-    req = msg_fixture._write_queue.get_nowait()
-    assert req.modify_deadline_seconds == [600]
-
-    # If acted on, should do nothing
-    msg_fixture._action = MessageAction.acked
-    await msg_fixture.extend_deadline(30)
-    assert msg_fixture._write_queue.empty()
+    assert msg.is_acted_on
+    _batcher(msg).add_modify_deadline.assert_awaited_once_with("sub1", "ack1", 0)
 
 
-async def test_received_message_reply(msg_fixture: received_message.PubsubReceivedMessage) -> None:
+async def test_reject_calls_batcher_add_modify_with_one(
+    msg: received_message.PubsubReceivedMessage,
+) -> None:
+    await msg.reject()
+
+    assert msg.is_acted_on
+    _batcher(msg).add_modify_deadline.assert_awaited_once_with("sub1", "ack1", 1)
+
+
+async def test_second_nack_is_noop(
+    msg: received_message.PubsubReceivedMessage,
+) -> None:
+    await msg.nack()
+    _batcher(msg).add_modify_deadline.reset_mock()
+
+    await msg.nack()
+
+    _batcher(msg).add_modify_deadline.assert_not_called()
+
+
+async def test_second_reject_is_noop(
+    msg: received_message.PubsubReceivedMessage,
+) -> None:
+    await msg.reject()
+    _batcher(msg).add_modify_deadline.reset_mock()
+
+    await msg.reject()
+
+    _batcher(msg).add_modify_deadline.assert_not_called()
+
+
+async def test_extend_deadline_clamps_and_calls_batcher(
+    msg: received_message.PubsubReceivedMessage,
+) -> None:
+    await msg.extend_deadline(30)
+
+    assert not msg.is_acted_on
+    _batcher(msg).add_modify_deadline.assert_awaited_once_with("sub1", "ack1", 30)
+
+    _batcher(msg).add_modify_deadline.reset_mock()
+    await msg.extend_deadline(1)
+    _batcher(msg).add_modify_deadline.assert_awaited_once_with("sub1", "ack1", 10)
+
+    _batcher(msg).add_modify_deadline.reset_mock()
+    await msg.extend_deadline(1000)
+    _batcher(msg).add_modify_deadline.assert_awaited_once_with("sub1", "ack1", 600)
+
+
+async def test_extend_deadline_is_noop_after_action(
+    msg: received_message.PubsubReceivedMessage,
+) -> None:
+    msg._action = MessageAction.acked
+    await msg.extend_deadline(30)
+    _batcher(msg).add_modify_deadline.assert_not_called()
+
+
+async def test_reply_raises_not_implemented(
+    msg: received_message.PubsubReceivedMessage,
+) -> None:
     with pytest.raises(NotImplementedError, match=r"PubSub does not support native replies\."):
-        await msg_fixture.reply(payload=b"response")
+        await msg.reply(payload=b"response")
 
 
-def test_received_message_no_attributes(
-    msg_fixture: received_message.PubsubReceivedMessage,
+def test_headers_none_when_attributes_empty(msg: received_message.PubsubReceivedMessage) -> None:
+    msg._raw_message.attributes = {}
+    assert msg.headers is None
+    assert msg.content_type is None
+
+
+async def test_reply_after_ack_is_noop(msg: received_message.PubsubReceivedMessage) -> None:
+    await msg.ack()
+    _batcher(msg).add_ack.reset_mock()
+
+    await msg.reply(payload=b"ignored")
+
+    _batcher(msg).add_ack.assert_not_called()
+    _batcher(msg).add_modify_deadline.assert_not_called()
+
+
+def test_keep_alive_interval_is_one_third_of_stream_deadline(
+    msg: received_message.PubsubReceivedMessage,
 ) -> None:
-    msg_fixture._raw_message.attributes = {}
-    assert msg_fixture.headers is None
-    assert msg_fixture.content_type is None
+    assert msg.keep_alive_interval == 100
 
 
-async def test_received_message_reply_after_ack_is_noop(
-    msg_fixture: received_message.PubsubReceivedMessage,
+async def test_keep_alive_calls_batcher_add_modify_with_stream_deadline(
+    msg: received_message.PubsubReceivedMessage,
 ) -> None:
-    await msg_fixture.ack()
-    await msg_fixture.reply(payload=b"ignored")
-    assert msg_fixture._write_queue.qsize() == 1  # Only the ack request
+    await msg.keep_alive()
+
+    assert not msg.is_acted_on
+    _batcher(msg).add_modify_deadline.assert_awaited_once_with("sub1", "ack1", 300)
 
 
-def test_keep_alive_interval(msg_fixture: received_message.PubsubReceivedMessage) -> None:
-    assert msg_fixture.keep_alive_interval == 100  # 300 // 3
+async def test_keep_alive_noop_after_ack(msg: received_message.PubsubReceivedMessage) -> None:
+    await msg.ack()
+
+    _batcher(msg).add_modify_deadline.reset_mock()
+    await msg.keep_alive()
+
+    _batcher(msg).add_modify_deadline.assert_not_called()
 
 
-async def test_keep_alive_sends_extend_deadline(
-    msg_fixture: received_message.PubsubReceivedMessage,
+async def test_ack_failure_does_not_set_action(msg: received_message.PubsubReceivedMessage) -> None:
+    _batcher(msg).add_ack.side_effect = RuntimeError("RPC failed")
+
+    with pytest.raises(RuntimeError):
+        await msg.ack()
+
+    assert not msg.is_acted_on
+
+
+async def test_nack_failure_does_not_set_action(
+    msg: received_message.PubsubReceivedMessage,
 ) -> None:
-    await msg_fixture.keep_alive()
+    _batcher(msg).add_modify_deadline.side_effect = RuntimeError("RPC failed")
 
-    assert not msg_fixture.is_acted_on
-    req = msg_fixture._write_queue.get_nowait()
-    assert isinstance(req, proto.StreamingPullRequest)
-    assert req.modify_deadline_seconds == [300]
+    with pytest.raises(RuntimeError):
+        await msg.nack()
+
+    assert not msg.is_acted_on
 
 
-async def test_keep_alive_noop_after_acted_on(
-    msg_fixture: received_message.PubsubReceivedMessage,
-) -> None:
-    await msg_fixture.ack()
-    msg_fixture._write_queue.get_nowait()  # consume the ack
+async def test_ack_raises_connection_error_when_batcher_missing() -> None:
+    raw = proto.PubsubMessage(data=b"x")
+    server = MagicMock()
+    server._control_batcher = None
+    msg = received_message.PubsubReceivedMessage(
+        raw_message=raw,
+        ack_id="ack1",
+        delivery_attempt=1,
+        subscription_path="sub1",
+        channel_name="chan1",
+        server=server,
+        stream_ack_deadline_seconds=300,
+    )
 
-    await msg_fixture.keep_alive()
-    assert msg_fixture._write_queue.empty()
+    with pytest.raises(ConnectionError, match=r"Control batcher not available\."):
+        await msg.ack()
+
+    assert not msg.is_acted_on

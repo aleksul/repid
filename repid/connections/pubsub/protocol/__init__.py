@@ -9,6 +9,11 @@ from ._helpers import ChannelConfig as ChannelConfig
 from ._helpers import QueuedDelivery as QueuedDelivery
 from .channel import create_channel as create_channel
 from .channel import parse_dsn as parse_dsn
+from .client import ACKNOWLEDGE_METHOD as ACKNOWLEDGE_METHOD
+from .client import MODIFY_ACK_DEADLINE_METHOD as MODIFY_ACK_DEADLINE_METHOD
+from .client import PUBLISH_METHOD as PUBLISH_METHOD
+from .client import PubsubProtocolClient as PubsubProtocolClient
+from .control_batcher import PubsubControlBatcher as PubsubControlBatcher
 from .credentials import CredentialsProvider as CredentialsProvider
 from .credentials import GoogleDefaultCredentials as GoogleDefaultCredentials
 from .credentials import InsecureCredentials as InsecureCredentials

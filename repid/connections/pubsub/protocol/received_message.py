@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING, Any
 
 from repid.connections.abc import MessageAction
 
-from .proto import PubsubMessage, StreamingPullRequest
+from .control_batcher import PubsubControlBatcher
+from .proto import PubsubMessage
 
 if TYPE_CHECKING:
     from repid.connections.pubsub.message_broker import PubsubServer
@@ -16,8 +16,8 @@ if TYPE_CHECKING:
 class PubsubReceivedMessage:
     """A received message from Pub/Sub via StreamingPull.
 
-    Ack/nack operations are sent via the streaming pull write queue
-    for efficiency.
+    Ack/nack operations are sent via unary Acknowledge/ModifyAckDeadline
+    RPCs for reliability (not via the streaming pull write queue).
     """
 
     def __init__(
@@ -28,7 +28,6 @@ class PubsubReceivedMessage:
         delivery_attempt: int,
         subscription_path: str,
         channel_name: str,
-        write_queue: asyncio.Queue[StreamingPullRequest],
         server: PubsubServer,
         stream_ack_deadline_seconds: int,
     ) -> None:
@@ -37,7 +36,6 @@ class PubsubReceivedMessage:
         self._delivery_attempt = delivery_attempt
         self._subscription_path = subscription_path
         self._channel_name = channel_name
-        self._write_queue = write_queue
         self._server = server
         self._action: MessageAction | None = None
         self._stream_ack_deadline_seconds = stream_ack_deadline_seconds
@@ -85,44 +83,37 @@ class PubsubReceivedMessage:
     def keep_alive_interval(self) -> int:
         return self._keep_alive_interval
 
+    @property
+    def _batcher(self) -> PubsubControlBatcher:
+        batcher = self._server._control_batcher
+        if batcher is None:
+            raise ConnectionError("Control batcher not available.")
+        return batcher
+
     async def keep_alive(self) -> None:
         if self._action is not None:
             return
         await self.extend_deadline(self._stream_ack_deadline_seconds)
 
-    async def _send_ack_request(self) -> None:
-        """Send the ack request to the write queue without updating `_action`."""
-        request = StreamingPullRequest(ack_ids=[self._ack_id])
-        await self._write_queue.put(request)
-
     async def ack(self) -> None:
-        """Acknowledge the message."""
+        """Acknowledge the message via batched unary Acknowledge RPC."""
         if self._action is not None:
             return
-        await self._send_ack_request()
+        await self._batcher.add_ack(self._subscription_path, self._ack_id)
         self._action = MessageAction.acked
 
     async def nack(self) -> None:
-        """Negative acknowledge the message."""
+        """Negative acknowledge the message (set deadline to 0 for redelivery)."""
         if self._action is not None:
             return
-        request = StreamingPullRequest(
-            modify_deadline_seconds=[0],
-            modify_deadline_ack_ids=[self._ack_id],
-        )
-        await self._write_queue.put(request)
+        await self._batcher.add_modify_deadline(self._subscription_path, self._ack_id, 0)
         self._action = MessageAction.nacked
 
     async def reject(self) -> None:
-        """Reject the message."""
+        """Reject the message (set deadline to 1 second)."""
         if self._action is not None:
             return
-        # Set a short ack to reject message asap (pubsub doesn't have explicit reject)
-        request = StreamingPullRequest(
-            modify_deadline_seconds=[1],
-            modify_deadline_ack_ids=[self._ack_id],
-        )
-        await self._write_queue.put(request)
+        await self._batcher.add_modify_deadline(self._subscription_path, self._ack_id, 1)
         self._action = MessageAction.rejected
 
     async def extend_deadline(self, seconds: int) -> None:
@@ -135,11 +126,11 @@ class PubsubReceivedMessage:
             return
 
         seconds = max(10, min(600, seconds))
-        request = StreamingPullRequest(
-            modify_deadline_seconds=[seconds],
-            modify_deadline_ack_ids=[self._ack_id],
+        await self._batcher.add_modify_deadline(
+            self._subscription_path,
+            self._ack_id,
+            seconds,
         )
-        await self._write_queue.put(request)
 
     async def reply(
         self,

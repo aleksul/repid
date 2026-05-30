@@ -29,9 +29,8 @@ STREAMING_PULL_METHOD = "/google.pubsub.v1.Subscriber/StreamingPull"
 class PubsubSubscriber:
     """Pub/Sub subscriber using StreamingPull with resilience.
 
-    Uses bidirectional gRPC streaming for efficient message delivery
-    and ack/nack via the stream. Implements flow control via
-    max_outstanding_messages.
+    Uses StreamingPull for efficient message delivery and flow control via
+    max_outstanding_messages. Ack/nack/deadline operations use unary RPCs.
     """
 
     def __init__(
@@ -47,7 +46,6 @@ class PubsubSubscriber:
         server: PubsubServer,
         heartbeat_interval: float = 25.0,
         error_retry_delay: float = 1.0,
-        poll_interval: float = 1.0,
     ) -> None:
         self._channel = channel
         self._channel_configs = channel_configs
@@ -59,7 +57,6 @@ class PubsubSubscriber:
         self._server = server
         self._heartbeat_interval = heartbeat_interval
         self._error_retry_delay = error_retry_delay
-        self._poll_interval = poll_interval
 
         self._pause_event = asyncio.Event()
         self._pause_event.set()
@@ -70,9 +67,6 @@ class PubsubSubscriber:
         self._delivery_queue: asyncio.Queue[QueuedDelivery] = asyncio.Queue()
         self._callback_tasks: set[asyncio.Task[None]] = set()
         self._task: asyncio.Task[None] | None = None
-
-        # Per-subscription write queues for ack/nack
-        self._write_queues: dict[str, asyncio.Queue[StreamingPullRequest]] = {}
 
         # Track in-flight messages for nacking on close
         self._in_flight_messages: set[PubsubReceivedMessage] = set()
@@ -122,22 +116,16 @@ class PubsubSubscriber:
 
     async def _streaming_pull_loop(self, config: ChannelConfig) -> None:
         """StreamingPull loop for a single subscription with resilience."""
-        subscription_path = config.subscription_path
-
-        # Create write queue for this subscription
-        write_queue: asyncio.Queue[StreamingPullRequest] = asyncio.Queue()
-        self._write_queues[subscription_path] = write_queue
-
         while not self._shutdown_event.is_set():
             await self._pause_event.wait()
 
             try:
-                await self._run_streaming_pull(config, write_queue)
+                await self._run_streaming_pull(config)
             except grpc.aio.AioRpcError as e:
                 if self._is_expected_stream_close(e):
                     logger.debug(
                         "streaming_pull.reconnect.expected_close",
-                        extra={"subscription": subscription_path},
+                        extra={"subscription": config.subscription_path},
                     )
                     continue
 
@@ -146,7 +134,7 @@ class PubsubSubscriber:
                 if not self._resilience_state.is_retryable(e):
                     logger.exception(
                         "streaming_pull.error.non_retryable",
-                        extra={"subscription": subscription_path},
+                        extra={"subscription": config.subscription_path},
                         exc_info=e,
                     )
                     raise
@@ -154,14 +142,14 @@ class PubsubSubscriber:
                 if not self._resilience_state.should_retry():
                     logger.error(
                         "streaming_pull.reconnect.exhausted",
-                        extra={"subscription": subscription_path},
+                        extra={"subscription": config.subscription_path},
                     )
                     raise
 
                 delay = self._resilience_state.calculate_delay()
                 logger.warning(
                     "streaming_pull.reconnect.retry",
-                    extra={"subscription": subscription_path, "delay": delay},
+                    extra={"subscription": config.subscription_path, "delay": delay},
                     exc_info=e,
                 )
                 await asyncio.sleep(delay)
@@ -170,14 +158,14 @@ class PubsubSubscriber:
             except Exception as exc:
                 logger.exception(
                     "streaming_pull.error.unexpected",
-                    extra={"subscription": subscription_path},
+                    extra={"subscription": config.subscription_path},
                     exc_info=exc,
                 )
                 await asyncio.sleep(self._error_retry_delay)
 
         logger.debug(
             "streaming_pull.stop",
-            extra={"subscription": subscription_path},
+            extra={"subscription": config.subscription_path},
         )
 
     @staticmethod
@@ -193,13 +181,8 @@ class PubsubSubscriber:
     async def _request_iterator(
         self,
         config: ChannelConfig,
-        write_queue: asyncio.Queue[StreamingPullRequest],
     ) -> AsyncIterator[StreamingPullRequest]:
-        """Generate requests for the stream.
-
-        Yields the initial subscription request, then forwards
-        ack/nack/heartbeat requests from the write queue.
-        """
+        """Generate requests for the stream and keep it open after initialization."""
         # Send initial request with subscription info
         yield StreamingPullRequest(
             subscription=config.subscription_path,
@@ -209,38 +192,19 @@ class PubsubSubscriber:
             max_outstanding_bytes=0,
         )
 
-        # Forward requests from the queue (acks, nacks, heartbeats)
-        while not self._shutdown_event.is_set():
-            try:
-                request = await asyncio.wait_for(
-                    write_queue.get(),
-                    timeout=self._poll_interval,
-                )
-                yield request
-            except asyncio.TimeoutError:
-                continue
-
-    async def _heartbeat_loop(
-        self,
-        write_queue: asyncio.Queue[StreamingPullRequest],
-    ) -> None:
-        """Send periodic heartbeats to keep the stream alive."""
         while not self._shutdown_event.is_set():
             await asyncio.sleep(self._heartbeat_interval)
             if self._shutdown_event.is_set():
                 break
             logger.debug("heartbeat.send")
-            write_queue.put_nowait(
-                StreamingPullRequest(
-                    stream_ack_deadline_seconds=self._stream_ack_deadline_seconds,
-                ),
+            yield StreamingPullRequest(
+                stream_ack_deadline_seconds=self._stream_ack_deadline_seconds,
             )
 
     def _create_received_message(
         self,
         received_msg: ReceivedMessage,
         config: ChannelConfig,
-        write_queue: asyncio.Queue[StreamingPullRequest],
     ) -> PubsubReceivedMessage:
         """Create a PubsubReceivedMessage from a raw received message."""
         return PubsubReceivedMessage(
@@ -249,7 +213,6 @@ class PubsubSubscriber:
             delivery_attempt=received_msg.delivery_attempt,
             subscription_path=config.subscription_path,
             channel_name=config.channel,
-            write_queue=write_queue,
             server=self._server,
             stream_ack_deadline_seconds=self._stream_ack_deadline_seconds,
         )
@@ -258,13 +221,12 @@ class PubsubSubscriber:
         self,
         response: StreamingPullResponse,
         config: ChannelConfig,
-        write_queue: asyncio.Queue[StreamingPullRequest],
     ) -> None:
         """Process a single StreamingPull response."""
         for received_msg in response.received_messages:
             if received_msg.message is None:
                 continue
-            message = self._create_received_message(received_msg, config, write_queue)
+            message = self._create_received_message(received_msg, config)
             self._in_flight_messages.add(message)
             await self._delivery_queue.put(
                 QueuedDelivery(callback=config.callback, message=message),
@@ -273,7 +235,6 @@ class PubsubSubscriber:
     async def _run_streaming_pull(
         self,
         config: ChannelConfig,
-        write_queue: asyncio.Queue[StreamingPullRequest],
     ) -> None:
         """Run a single StreamingPull session."""
         # Ensure credentials are valid
@@ -286,25 +247,19 @@ class PubsubSubscriber:
             response_deserializer=StreamingPullResponse.deserialize,
         )
 
-        iterator = self._request_iterator(config, write_queue)
-        heartbeat_task = asyncio.create_task(self._heartbeat_loop(write_queue))
+        iterator = self._request_iterator(config)
 
-        try:
-            # Start the stream
-            call = stream_method(iterator)
+        # Start the stream
+        call = stream_method(iterator)
 
-            # Process responses
-            async for response in call:
-                await self._resilience_state.record_success()
+        # Process responses
+        async for response in call:
+            await self._resilience_state.record_success()
 
-                if self._shutdown_event.is_set():
-                    break
+            if self._shutdown_event.is_set():
+                break
 
-                await self._process_response(response, config, write_queue)
-        finally:
-            heartbeat_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await heartbeat_task
+            await self._process_response(response, config)
 
     async def _dispatch_loop(self) -> None:
         """Dispatch messages to callbacks."""
@@ -325,12 +280,18 @@ class PubsubSubscriber:
         try:
             await delivery.callback(delivery.message)
         except asyncio.CancelledError:
+            if not delivery.message.is_acted_on:
+                with suppress(Exception):
+                    await delivery.message.reject()
             raise
         except Exception as exc:
             logger.exception(
                 "message.callback.error",
                 exc_info=exc,
             )
+            if not delivery.message.is_acted_on:
+                with suppress(Exception):
+                    await delivery.message.nack()
         finally:
             # Remove from in-flight tracking (message was either acked/nacked by callback)
             self._in_flight_messages.discard(cast(PubsubReceivedMessage, delivery.message))
@@ -361,22 +322,6 @@ class PubsubSubscriber:
         self._pause_event.set()
         self._is_active = True
 
-    async def _drain_write_queues(self, timeout: float = 1.0) -> None:
-        """Drain pending write queue items before shutdown."""
-        if not self._write_queues:
-            return
-        tasks = [
-            asyncio.create_task(write_queue.join()) for write_queue in self._write_queues.values()
-        ]
-        _, unfinished = await asyncio.wait(
-            tasks,
-            return_when=asyncio.ALL_COMPLETED,
-            timeout=timeout,
-        )
-        for task in unfinished:
-            logger.warning("write_queue.flush.timeout")
-            task.cancel()
-
     def _cancel_callback_tasks(self) -> list[asyncio.Task[None]]:
         """Cancel all pending callback tasks and return them."""
         if not self._callback_tasks:
@@ -400,9 +345,6 @@ class PubsubSubscriber:
         # First, pause to stop receiving new messages
         self._pause_event.clear()
 
-        # Give a brief moment for current requests to finish
-        await self._drain_write_queues()
-
         # Now signal shutdown
         self._shutdown_event.set()
 
@@ -413,8 +355,22 @@ class PubsubSubscriber:
 
         self._is_active = False
 
+        # Reject any messages still sitting in the delivery queue
+        while not self._delivery_queue.empty():
+            delivery = self._delivery_queue.get_nowait()
+            if not delivery.message.is_acted_on:
+                with suppress(Exception):
+                    await delivery.message.reject()
+            self._delivery_queue.task_done()
+
         # Clean up remaining callback tasks
         callbacks = self._cancel_callback_tasks()
         if callbacks:
             with suppress(asyncio.CancelledError):
                 await asyncio.wait(callbacks)
+
+        # Final safety pass after callbacks had a chance to ack/reject on cancellation.
+        for msg in list(self._in_flight_messages):
+            if not msg.is_acted_on:
+                with suppress(Exception):
+                    await msg.reject()

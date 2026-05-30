@@ -1,16 +1,21 @@
 from datetime import timedelta
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import grpc.aio
 import pytest
 
 from repid.connections.pubsub import message_broker
 from repid.connections.pubsub.helpers import ChannelOverride
-from repid.connections.pubsub.message_broker import PUBLISH_METHOD
-from repid.connections.pubsub.protocol import GoogleDefaultCredentials, InsecureCredentials
+from repid.connections.pubsub.protocol import (
+    GoogleDefaultCredentials,
+    InsecureCredentials,
+    ResilienceConfig,
+    ResilienceState,
+)
+from repid.connections.pubsub.protocol.client import PubsubProtocolClient
 
 
-def test_pubsub_server_init_defaults() -> None:
+def test_init_defaults() -> None:
     server = message_broker.PubsubServer(default_project="my-project")
 
     assert server._default_project == "my-project"
@@ -20,7 +25,7 @@ def test_pubsub_server_init_defaults() -> None:
     assert server.protocol == "googlepubsub"
 
 
-def test_pubsub_server_init_dsn_insecure() -> None:
+def test_init_with_dsn_uses_insecure_credentials() -> None:
     server = message_broker.PubsubServer(
         dsn="http://localhost:8085",
         default_project="my-project",
@@ -29,31 +34,56 @@ def test_pubsub_server_init_dsn_insecure() -> None:
     assert server.host == "localhost:8085"
 
 
-def test_pubsub_server_init_explicit_auth_flags() -> None:
-    server = message_broker.PubsubServer(
+def test_init_explicit_auth_flags() -> None:
+    dsn_auth = message_broker.PubsubServer(
         dsn="http://localhost:8085",
         default_project="p",
         use_google_auth=True,
     )
-    assert isinstance(server._credentials_provider, GoogleDefaultCredentials)
+    assert isinstance(dsn_auth._credentials_provider, GoogleDefaultCredentials)
 
-    server2 = message_broker.PubsubServer(
-        default_project="p",
-        use_google_auth=False,
-    )
-    assert isinstance(server2._credentials_provider, InsecureCredentials)
+    no_dsn_no_auth = message_broker.PubsubServer(default_project="p", use_google_auth=False)
+    assert isinstance(no_dsn_no_auth._credentials_provider, InsecureCredentials)
 
 
-def test_pubsub_server_init_custom_provider() -> None:
+def test_init_custom_credentials_provider() -> None:
     provider = InsecureCredentials()
     server = message_broker.PubsubServer(
         default_project="p",
         credentials_provider=provider,
     )
-    assert server._credentials_provider == provider
+    assert server._credentials_provider is provider
 
 
-async def test_pubsub_server_connect_idempotent() -> None:
+def test_all_properties() -> None:
+    server = message_broker.PubsubServer(
+        default_project="p",
+        title="T",
+        summary="S",
+        description="D",
+    )
+
+    assert server.host == "pubsub.googleapis.com:443"
+    assert server.pathname is None
+    assert server.title == "T"
+    assert server.summary == "S"
+    assert server.description == "D"
+    assert server.protocol_version == "v1"
+    assert server.variables is None
+    assert server.security is None
+    assert server.tags is None
+    assert server.external_docs is None
+    assert server.bindings is None
+    assert server.capabilities["supports_native_reply"] is False
+    assert server.capabilities["supports_lightweight_pause"] is False
+    assert server.resilience_config is not None
+    assert server.resilience_state is not None
+
+    with_dsn = message_broker.PubsubServer(dsn="http://localhost:8085", default_project="p")
+    assert with_dsn.host == "localhost:8085"
+
+
+async def test_connect_is_idempotent() -> None:
     server = message_broker.PubsubServer(default_project="p", use_google_auth=False)
 
     with patch(
@@ -65,47 +95,7 @@ async def test_pubsub_server_connect_idempotent() -> None:
         await server.connect()
 
 
-async def test_pubsub_server_publish() -> None:
-    server = message_broker.PubsubServer(default_project="p", use_google_auth=False)
-    server._channel = MagicMock(spec=grpc.aio.Channel)
-    mock_unary = AsyncMock(return_value=MagicMock(message_ids=["123"]))
-    server._channel.unary_unary.return_value = mock_unary
-
-    message = MagicMock()
-    message.payload = b"payload"
-
-    await server.publish(channel="topic1", message=message)
-
-    server._channel.unary_unary.assert_called_with(
-        PUBLISH_METHOD,
-        request_serializer=ANY,
-        response_deserializer=ANY,
-    )
-    mock_unary.assert_called_once()
-    assert mock_unary.call_args[0][0].topic == "projects/p/topics/topic1"
-    assert mock_unary.call_args[0][0].messages[0].data == b"payload"
-
-
-async def test_pubsub_server_publish_not_connected() -> None:
-    server = message_broker.PubsubServer(default_project="p")
-    message = MagicMock()
-
-    with pytest.raises(ConnectionError, match="not connected"):
-        await server.publish(channel="t", message=message)
-
-
-def test_pubsub_server_properties_basic() -> None:
-    server = message_broker.PubsubServer(
-        default_project="p",
-        title="Title",
-        summary="Summary",
-    )
-    assert server.title == "Title"
-    assert server.summary == "Summary"
-    assert server.capabilities["supports_native_reply"] is False
-
-
-async def test_pubsub_server_disconnect() -> None:
+async def test_disconnect_closes_subscribers_and_channel() -> None:
     server = message_broker.PubsubServer(default_project="p")
     mock_channel = MagicMock(spec=grpc.aio.Channel)
     server._channel = mock_channel
@@ -120,7 +110,7 @@ async def test_pubsub_server_disconnect() -> None:
     assert server._channel is None
 
 
-async def test_pubsub_server_context_manager() -> None:
+async def test_connection_context_calls_connect_on_entry_and_disconnect_on_exit() -> None:
     server = message_broker.PubsubServer(default_project="p")
 
     with (
@@ -134,7 +124,37 @@ async def test_pubsub_server_context_manager() -> None:
         mock_disconnect.assert_called_once()
 
 
-async def test_pubsub_server_subscribe() -> None:
+async def test_publish_delegates_to_protocol_client() -> None:
+    server = message_broker.PubsubServer(default_project="p", use_google_auth=False)
+    server._channel = MagicMock(spec=grpc.aio.Channel)
+    mock_unary = AsyncMock()
+    server._channel.unary_unary.return_value = mock_unary
+    server._protocol_client = PubsubProtocolClient(
+        channel=server._channel,
+        credentials_provider=InsecureCredentials(),
+        resilience_state=ResilienceState(ResilienceConfig(max_attempts=1)),
+    )
+
+    message = MagicMock()
+    message.payload = b"payload"
+
+    await server.publish(channel="topic1", message=message)
+
+    mock_unary.assert_awaited_once()
+    request = mock_unary.call_args[0][0]
+    assert request.topic == "projects/p/topics/topic1"
+    assert request.messages[0].data == b"payload"
+
+
+async def test_publish_raises_error_when_disconnected() -> None:
+    server = message_broker.PubsubServer(default_project="p")
+    message = MagicMock()
+
+    with pytest.raises(ConnectionError, match="not connected"):
+        await server.publish(channel="t", message=message)
+
+
+async def test_subscribe_creates_subscriber_via_factory() -> None:
     server = message_broker.PubsubServer(default_project="p")
     server._channel = MagicMock(spec=grpc.aio.Channel)
 
@@ -153,6 +173,13 @@ async def test_pubsub_server_subscribe() -> None:
             mock_create.call_args.kwargs["channel_configs"][0].subscription_path
             == "projects/p/subscriptions/chan1"
         )
+
+
+async def test_subscribe_raises_error_when_disconnected() -> None:
+    server = message_broker.PubsubServer(default_project="p")
+
+    with pytest.raises(Exception, match=r"PubSub server is not connected\."):
+        await server.subscribe(channels_to_callbacks={"c": MagicMock()})
 
 
 def test_resolve_topic_path() -> None:
@@ -178,6 +205,7 @@ def test_resolve_subscription_path() -> None:
         default_project="def-proj",
         channel_overrides={
             "overridden": ChannelOverride(subscription="new-sub", project="new-proj"),
+            "partial_sub": ChannelOverride(subscription="s2"),
         },
     )
 
@@ -185,13 +213,16 @@ def test_resolve_subscription_path() -> None:
     assert (
         server._resolve_subscription_path("overridden") == "projects/new-proj/subscriptions/new-sub"
     )
+    assert server._resolve_subscription_path("partial_sub") == "projects/def-proj/subscriptions/s2"
 
 
 def test_extract_timeout() -> None:
     server = message_broker.PubsubServer(default_project="p")
 
     assert server._extract_timeout(None) == 10
+    assert server._extract_timeout({}) == 10
     assert server._extract_timeout({"timeout": 5}) == 5
+    assert server._extract_timeout({"timeout": 10.5}) == 10
     assert server._extract_timeout({"timeout": timedelta(seconds=20)}) == 20
     assert server._extract_timeout({"timeout": None}) == 10
 
@@ -207,6 +238,7 @@ def test_extract_ordering_key() -> None:
 
 def test_build_attributes() -> None:
     server = message_broker.PubsubServer(default_project="p")
+
     msg = MagicMock()
     msg.headers = {"h1": "v1"}
     msg.content_type = "application/json"
@@ -214,130 +246,15 @@ def test_build_attributes() -> None:
 
     assert server._build_attributes(msg, None) == {"h1": "v1", "content_type": "application/json"}
 
-    attrs2 = server._build_attributes(msg, {"attributes": {"extra": "val"}})
-    assert attrs2 == {"h1": "v1", "content_type": "application/json", "extra": "val"}
+    msg2 = MagicMock()
+    msg2.headers = None
+    msg2.content_type = None
+    msg2.reply_to = None
+    assert server._build_attributes(msg2, None) is None
 
-    msg_empty = MagicMock()
-    msg_empty.headers = None
-    msg_empty.content_type = None
-    msg_empty.reply_to = None
-    assert server._build_attributes(msg_empty, None) is None
-
-
-def test_pubsub_server_all_properties() -> None:
-    server = message_broker.PubsubServer(default_project="p")
-
-    assert server.pathname is None
-    assert server.title is None
-    assert server.summary is None
-    assert server.description is None
-    assert server.protocol_version == "v1"
-    assert server.variables is None
-    assert server.security is None
-    assert server.tags is None
-    assert server.external_docs is None
-    assert server.bindings is None
-
-    caps = server.capabilities
-    assert caps["supports_native_reply"] is False
-    assert caps["supports_lightweight_pause"] is False
-
-    assert server.resilience_config is not None
-    assert server.resilience_state is not None
-
-
-def test_pubsub_server_custom_dsn_properties() -> None:
-    server = message_broker.PubsubServer(dsn="http://localhost:8085", default_project="p")
-    assert server.host == "localhost:8085"
-    assert server.pathname is None
-
-
-async def test_pubsub_server_all_properties_coverage() -> None:
-    server = message_broker.PubsubServer(default_project="p")
-    # Coverage for properties
-    assert server.protocol_version == "v1"
-    assert server.title is None
-    assert server.summary is None
-    assert server.description is None
-    assert server.variables is None
-    assert server.security is None
-    assert server.tags is None
-    assert server.external_docs is None
-    assert server.bindings is None
-    assert server.capabilities
-    assert server.resilience_config
-    assert server.resilience_state
-
-
-def test_extract_timeout_variants() -> None:
-    server = message_broker.PubsubServer(default_project="p")
-
-    assert server._extract_timeout({"timeout": 10}) == 10
-    assert server._extract_timeout({"timeout": 10.5}) == 10
-    assert server._extract_timeout({"timeout": timedelta(seconds=20)}) == 20
-    assert server._extract_timeout({}) == message_broker.PubsubServer.DEFAULT_PUBLISH_TIMEOUT
-    assert server._extract_timeout(None) == message_broker.PubsubServer.DEFAULT_PUBLISH_TIMEOUT
-
-
-def test_resolve_topic_path_logic() -> None:
-    server = message_broker.PubsubServer(
-        default_project="default_p",
-        channel_overrides={
-            "my_channel": ChannelOverride(topic="t1", project="p1"),
-            "partial_channel": ChannelOverride(topic="t2"),
-        },
-    )
-
-    path = server._resolve_topic_path("any", {"topic": "custom_t", "project": "custom_p"})
-    assert path == "projects/custom_p/topics/custom_t"
-
-    path = server._resolve_topic_path("my_channel", None)
-    assert path == "projects/p1/topics/t1"
-
-    path = server._resolve_topic_path("partial_channel", None)
-    assert path == "projects/default_p/topics/t2"
-
-    path = server._resolve_topic_path("fresh", None)
-    assert path == "projects/default_p/topics/fresh"
-
-
-def test_resolve_subscription_path_logic() -> None:
-    server = message_broker.PubsubServer(
-        default_project="default_p",
-        channel_overrides={
-            "sub_channel": ChannelOverride(subscription="s1", project="p1"),
-            "partial_sub": ChannelOverride(subscription="s2"),
-        },
-    )
-
-    path = server._resolve_subscription_path("sub_channel")
-    assert path == "projects/p1/subscriptions/s1"
-
-    path = server._resolve_subscription_path("partial_sub")
-    assert path == "projects/default_p/subscriptions/s2"
-
-    path = server._resolve_subscription_path("fresh")
-    assert path == "projects/default_p/subscriptions/fresh"
-
-
-def test_build_attributes_variants() -> None:
-    server = message_broker.PubsubServer(default_project="p")
-    msg = MagicMock()
-    msg.headers = {"h1": "v1"}
-    msg.content_type = "json"
-    msg.reply_to = None
-
-    attrs = server._build_attributes(msg, {"attributes": {"extra": 123}})
-    assert attrs == {"h1": "v1", "content_type": "json", "extra": "123"}
-
-    msg.headers = None
-    msg.content_type = None
-    attrs = server._build_attributes(msg, None)
-    assert attrs is None
-
-
-async def test_subscribe_not_connected() -> None:
-    server = message_broker.PubsubServer(default_project="p")
-
-    with pytest.raises(Exception, match=r"PubSub server is not connected."):
-        await server.subscribe(channels_to_callbacks={"c": MagicMock()})
+    msg3 = MagicMock()
+    msg3.headers = {"h1": "v1"}
+    msg3.content_type = "application/json"
+    msg3.reply_to = None
+    attrs3 = server._build_attributes(msg3, {"attributes": {"extra": "val"}})
+    assert attrs3 == {"h1": "v1", "content_type": "application/json", "extra": "val"}

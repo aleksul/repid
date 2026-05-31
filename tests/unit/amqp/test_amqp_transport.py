@@ -12,6 +12,7 @@ from repid.connections.amqp._uamqp.performatives import (
     CloseFrame,
     EmptyFrame,
     OpenFrame,
+    SASLMechanism,
 )
 from repid.connections.amqp.protocol.events import (
     EventEmitter,
@@ -152,6 +153,69 @@ async def test_amqp_transport_read_frame_invalid_size() -> None:
         await transport.read_frame()
 
 
+async def test_amqp_transport_read_frame_rejects_invalid_doff() -> None:
+    transport = AmqpTransport(TransportConfig(host="localhost", port=5672))
+    mock_reader = AsyncMock()
+    mock_reader.readexactly.return_value = struct.pack(">IBBH", 8, 1, 0, 0)
+    transport._reader = mock_reader
+
+    with pytest.raises(FrameError, match="data offset"):
+        await transport.read_frame()
+
+
+async def test_amqp_transport_read_frame_rejects_size_smaller_than_doff() -> None:
+    transport = AmqpTransport(TransportConfig(host="localhost", port=5672))
+    mock_reader = AsyncMock()
+    mock_reader.readexactly.return_value = struct.pack(">IBBH", 8, 3, 0, 0)
+    transport._reader = mock_reader
+
+    with pytest.raises(FrameError, match="smaller than data offset"):
+        await transport.read_frame()
+
+
+async def test_amqp_transport_read_frame_rejects_unknown_frame_type() -> None:
+    transport = AmqpTransport(TransportConfig(host="localhost", port=5672))
+    mock_reader = AsyncMock()
+    mock_reader.readexactly.return_value = struct.pack(">IBBH", 8, 2, 2, 0)
+    transport._reader = mock_reader
+
+    with pytest.raises(FrameError, match="Unknown frame type"):
+        await transport.read_frame()
+
+
+async def test_amqp_transport_read_frame_rejects_oversized_frame() -> None:
+    transport = AmqpTransport(TransportConfig(host="localhost", port=5672))
+    transport.set_max_frame_size(512)
+    mock_reader = AsyncMock()
+    mock_reader.readexactly.return_value = struct.pack(">IBBH", 513, 2, 0, 0)
+    transport._reader = mock_reader
+
+    with pytest.raises(FrameError, match="Frame too large"):
+        await transport.read_frame()
+
+
+async def test_amqp_transport_read_frame_uses_inbound_limit() -> None:
+    transport = AmqpTransport(TransportConfig(host="localhost", port=5672))
+    transport.set_frame_size_limits(inbound=2048, outbound=512)
+    mock_reader = AsyncMock()
+    mock_reader.readexactly.side_effect = [
+        struct.pack(">IBBH", 1024, 2, 0, 0),
+        asyncio.IncompleteReadError(b"", 1016),
+    ]
+    transport._reader = mock_reader
+
+    with pytest.raises(ConnectionClosedError, match="Connection closed mid-frame"):
+        await transport.read_frame()
+
+
+async def test_amqp_transport_send_performative_uses_outbound_limit() -> None:
+    transport = AmqpTransport(TransportConfig(host="localhost", port=5672))
+    transport.set_frame_size_limits(inbound=4096, outbound=512)
+
+    with pytest.raises(FrameError, match="Frame too large"):
+        await transport.send_performative(0, OpenFrame(container_id="x" * 600))
+
+
 async def test_amqp_transport_read_frame_incomplete_body() -> None:
     config = TransportConfig(host="localhost", port=5672)
     transport = AmqpTransport(config)
@@ -212,6 +276,33 @@ async def test_amqp_transport_read_frame_header_only() -> None:
     channel, performative = await transport.read_frame()
     assert channel == 0
     assert isinstance(performative, EmptyFrame)
+
+
+async def test_amqp_transport_read_frame_rejects_sasl_in_amqp_frame() -> None:
+    transport = AmqpTransport(TransportConfig(host="localhost", port=5672))
+    frame_bytes = performative_to_bytes(
+        SASLMechanism(sasl_server_mechanisms=["ANONYMOUS"]),
+        channel=0,
+    )
+    frame_bytes = frame_bytes[:5] + b"\x00" + frame_bytes[6:]
+    mock_reader = AsyncMock()
+    mock_reader.readexactly.side_effect = [frame_bytes[:8], frame_bytes[8:]]
+    transport._reader = mock_reader
+
+    with pytest.raises(FrameError, match="SASL performative received in AMQP frame"):
+        await transport.read_frame()
+
+
+async def test_amqp_transport_read_frame_rejects_amqp_in_sasl_frame() -> None:
+    transport = AmqpTransport(TransportConfig(host="localhost", port=5672))
+    frame_bytes = performative_to_bytes(OpenFrame(container_id="test"), channel=0)
+    frame_bytes = frame_bytes[:5] + b"\x01" + frame_bytes[6:]
+    mock_reader = AsyncMock()
+    mock_reader.readexactly.side_effect = [frame_bytes[:8], frame_bytes[8:]]
+    transport._reader = mock_reader
+
+    with pytest.raises(FrameError, match="AMQP performative received in SASL frame"):
+        await transport.read_frame()
 
 
 async def test_transport_properties() -> None:

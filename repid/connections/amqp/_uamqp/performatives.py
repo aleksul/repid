@@ -5,6 +5,19 @@ from typing import Annotated, Any, ClassVar
 from .amqptypes import AMQPTAnnotation, AMQPTypes, FieldDefinition, ObjDefinition
 
 
+@dataclass(slots=True, kw_only=True)
+class Error:
+    """AMQP error composite."""
+
+    CODE: ClassVar[int] = 0x0000001D
+    FRAME_TYPE: ClassVar[bytes] = b"\x00"
+    FRAME_OFFSET: ClassVar[bytes] = b"\x02"
+
+    condition: Annotated[str, AMQPTAnnotation(AMQPTypes.symbol)]
+    description: Annotated[str | None, AMQPTAnnotation(AMQPTypes.string)] = None
+    info: Annotated[dict | None, AMQPTAnnotation(FieldDefinition.fields)] = None
+
+
 class SenderSettleMode(IntEnum):
     unsettled = 0
     settled = 1

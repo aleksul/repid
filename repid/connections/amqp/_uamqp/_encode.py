@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import calendar
+import decimal
 import struct
 import uuid
 from collections.abc import Callable, Generator, Iterable, Sequence, Sized
@@ -20,6 +21,16 @@ from .amqptypes import (
 )
 from .constants import INT32_MAX, INT32_MIN, MIN_MAX_LIST_SIZE
 from .message import Message, MessageBodyType
+
+UINT8_MAX = 2**8 - 1
+UINT16_MAX = 2**16 - 1
+UINT32_MAX = 2**32 - 1
+UINT64_MAX = 2**64 - 1
+DECIMAL32_WIDTH = 4
+DECIMAL64_WIDTH = 8
+DECIMAL128_WIDTH = 16
+MAX_UNICODE_CODE_POINT = 0x10FFFF
+MAX_ASCII_BYTE = 0x7F
 
 
 class EncodableT(Protocol):
@@ -76,7 +87,14 @@ def _encode_boolean(
         output.extend(b"\x01" if value else b"\x00")
         return
 
-    output.extend(ConstructorBytes.bool_true if value else ConstructorBytes.bool_false)
+    output.extend(b"\x01" if value else b"\x00")
+
+
+def _require_unsigned(value: int, max_value: int, name: str) -> int:
+    value = int(value)
+    if value < 0 or value > max_value:
+        raise ValueError(f"{name} value must be 0-{max_value}")
+    return value
 
 
 def _encode_ubyte(
@@ -97,9 +115,10 @@ def _encode_ubyte(
     except ValueError:  # pragma: no cover
         value = cast(bytes, value)
         value = ord(value)
+    value = _require_unsigned(value, UINT8_MAX, "Unsigned byte")
     try:
         output.extend(_construct(ConstructorBytes.ubyte, with_constructor))
-        output.extend(struct.pack(">B", abs(value)))
+        output.extend(struct.pack(">B", value))
     except struct.error as exc:  # pragma: no cover
         raise ValueError("Unsigned byte value must be 0-255") from exc
 
@@ -117,10 +136,10 @@ def _encode_ushort(
     :param int value: The ushort to encode.
     :param bool with_constructor: Whether to include the constructor byte.
     """
-    value = int(value)
+    value = _require_unsigned(value, UINT16_MAX, "Unsigned short")
     try:
         output.extend(_construct(ConstructorBytes.ushort, with_constructor))
-        output.extend(struct.pack(">H", abs(value)))
+        output.extend(struct.pack(">H", value))
     except struct.error as exc:  # pragma: no cover
         raise ValueError("Unsigned byte value must be 0-65535") from exc
 
@@ -142,17 +161,17 @@ def _encode_uint(
     :param bool with_constructor: Whether to include the constructor byte.
     :param bool use_smallest: Whether to use the smallest possible encoding.
     """
-    value = int(value)
-    if value == 0:
+    value = _require_unsigned(value, UINT32_MAX, "Unsigned int")
+    if with_constructor and use_smallest and value == 0:
         output.extend(ConstructorBytes.uint_0)
         return
     try:
         if use_smallest and value <= 255:  # noqa: PLR2004
             output.extend(_construct(ConstructorBytes.uint_small, with_constructor))
-            output.extend(struct.pack(">B", abs(value)))
+            output.extend(struct.pack(">B", value))
             return
         output.extend(_construct(ConstructorBytes.uint_large, with_constructor))
-        output.extend(struct.pack(">I", abs(value)))
+        output.extend(struct.pack(">I", value))
     except struct.error as exc:  # pragma: no cover
         raise ValueError(f"Value supplied for unsigned int invalid: {value}") from exc
 
@@ -174,17 +193,17 @@ def _encode_ulong(
     :param bool with_constructor: Whether to include the constructor byte.
     :param bool use_smallest: Whether to use the smallest possible encoding.
     """
-    value = int(value)
-    if value == 0:
+    value = _require_unsigned(value, UINT64_MAX, "Unsigned long")
+    if with_constructor and use_smallest and value == 0:
         output.extend(ConstructorBytes.ulong_0)
         return
     try:
         if use_smallest and value <= 255:  # noqa: PLR2004
             output.extend(_construct(ConstructorBytes.ulong_small, with_constructor))
-            output.extend(struct.pack(">B", abs(value)))
+            output.extend(struct.pack(">B", value))
             return
         output.extend(_construct(ConstructorBytes.ulong_large, with_constructor))
-        output.extend(struct.pack(">Q", abs(value)))
+        output.extend(struct.pack(">Q", value))
     except struct.error as exc:  # pragma: no cover
         raise ValueError(f"Value supplied for unsigned long invalid: {value}") from exc
 
@@ -344,6 +363,65 @@ def _encode_timestamp(
     output.extend(struct.pack(">q", value))
 
 
+def _encode_decimal32(
+    output: bytearray,
+    value: bytes | bytearray | decimal.Decimal,
+    with_constructor: bool = True,
+    **kwargs: Any,  # noqa: ARG001
+) -> None:
+    if isinstance(value, decimal.Decimal):
+        raise TypeError("decimal.Decimal AMQP decimal encoding is not implemented")
+    if len(value) != DECIMAL32_WIDTH:
+        raise ValueError("Decimal32 value must be 4 bytes")
+    output.extend(_construct(b"\x74", with_constructor))
+    output.extend(value)
+
+
+def _encode_char(
+    output: bytearray,
+    value: str | int,
+    with_constructor: bool = True,
+    **kwargs: Any,  # noqa: ARG001
+) -> None:
+    if isinstance(value, str):
+        if len(value) != 1:
+            raise ValueError("Char value must be a single Unicode character")
+        value = ord(value)
+    value = int(value)
+    if value < 0 or value > MAX_UNICODE_CODE_POINT:
+        raise ValueError("Char code point out of range")
+    output.extend(_construct(b"\x73", with_constructor))
+    output.extend(struct.pack(">I", value))
+
+
+def _encode_decimal64(
+    output: bytearray,
+    value: bytes | bytearray | decimal.Decimal,
+    with_constructor: bool = True,
+    **kwargs: Any,  # noqa: ARG001
+) -> None:
+    if isinstance(value, decimal.Decimal):
+        raise TypeError("decimal.Decimal AMQP decimal encoding is not implemented")
+    if len(value) != DECIMAL64_WIDTH:
+        raise ValueError("Decimal64 value must be 8 bytes")
+    output.extend(_construct(b"\x84", with_constructor))
+    output.extend(value)
+
+
+def _encode_decimal128(
+    output: bytearray,
+    value: bytes | bytearray | decimal.Decimal,
+    with_constructor: bool = True,
+    **kwargs: Any,  # noqa: ARG001
+) -> None:
+    if isinstance(value, decimal.Decimal):
+        raise TypeError("decimal.Decimal AMQP decimal encoding is not implemented")
+    if len(value) != DECIMAL128_WIDTH:
+        raise ValueError("Decimal128 value must be 16 bytes")
+    output.extend(_construct(b"\x94", with_constructor))
+    output.extend(value)
+
+
 def _encode_uuid(
     output: bytearray,
     value: uuid.UUID | str | bytes,
@@ -449,7 +527,15 @@ def _encode_symbol(
     :param bool use_smallest: Whether to use the smallest possible encoding.
     """
     if isinstance(value, str):
-        value = value.encode("utf-8")
+        value = value.encode("ascii")
+    elif any(byte > MAX_ASCII_BYTE for byte in value):
+        raise UnicodeEncodeError(
+            "ascii",
+            bytes(value).decode("latin1"),
+            0,
+            1,
+            "ordinal not in range(128)",
+        )
     length = len(value)
     if use_smallest and length <= 255:  # noqa: PLR2004
         output.extend(_construct(ConstructorBytes.symbol_small, with_constructor))
@@ -608,6 +694,28 @@ def _encode_array(
     output.extend(encoded_values)
 
 
+def _encode_typed_array(
+    output: bytearray,
+    value: Sequence[Any],
+    amqp_type: AMQPTypes,
+    with_constructor: bool = True,
+) -> None:
+    encoder = _ENCODE_MAP[amqp_type.value]
+    encoded_values = bytearray()
+    for index, item in enumerate(value):
+        encoder(encoded_values, item, with_constructor=index == 0, use_smallest=False)
+    count = len(value)
+    if count <= MIN_MAX_LIST_SIZE and len(encoded_values) < MIN_MAX_LIST_SIZE:
+        output.extend(_construct(ConstructorBytes.array_small, with_constructor))
+        output.extend(struct.pack(">B", len(encoded_values) + 1))
+        output.extend(struct.pack(">B", count))
+    else:
+        output.extend(_construct(ConstructorBytes.array_large, with_constructor))
+        output.extend(struct.pack(">L", len(encoded_values) + 4))
+        output.extend(struct.pack(">L", count))
+    output.extend(encoded_values)
+
+
 def _encode_described(
     output: bytearray,
     value: tuple[Any, Any],
@@ -673,6 +781,10 @@ _ENCODE_MAP: dict[str | None, Callable] = {
     AMQPTypes.long.value: _encode_long,
     AMQPTypes.float.value: _encode_float,
     AMQPTypes.double.value: _encode_double,
+    AMQPTypes.decimal32.value: _encode_decimal32,
+    AMQPTypes.decimal64.value: _encode_decimal64,
+    AMQPTypes.decimal128.value: _encode_decimal128,
+    AMQPTypes.char.value: _encode_char,
     AMQPTypes.timestamp.value: _encode_timestamp,
     AMQPTypes.uuid.value: _encode_uuid,
     AMQPTypes.binary.value: _encode_binary,
@@ -710,6 +822,50 @@ _FIELD_DEFINITION_TO_AMQP_TYPE = {
 }
 
 
+def _encode_message_id(output: bytearray, value: Any) -> None:
+    if isinstance(value, uuid.UUID):
+        _encode_uuid(output, value)
+    elif isinstance(value, str):
+        _encode_string(output, value)
+    elif isinstance(value, (bytes, bytearray)):
+        _encode_binary(output, value)
+    elif isinstance(value, int) and not isinstance(value, bool):
+        _encode_ulong(output, value)
+    else:
+        raise TypeError("message-id must be ulong, uuid, binary, or string")
+
+
+def _encode_annotations(
+    output: bytearray,
+    value: dict[Any, Any] | Iterable[tuple[Any, Any]],
+) -> None:
+    items = value.items() if isinstance(value, dict) else value
+    typed_items: list[tuple[dict[str, Any], Any]] = []
+    for key, data in items:
+        if isinstance(key, str):
+            typed_items.append(({TYPE: AMQPTypes.symbol.value, VALUE: key}, data))
+        elif isinstance(key, int) and not isinstance(key, bool):
+            typed_items.append(({TYPE: AMQPTypes.ulong.value, VALUE: key}, data))
+        else:
+            raise TypeError("annotation keys must be symbol or ulong")
+    _encode_map(output, typed_items)
+
+
+def _encode_application_properties(
+    output: bytearray,
+    value: dict[Any, Any] | Iterable[tuple[Any, Any]],
+) -> None:
+    items = value.items() if isinstance(value, dict) else value
+    normalized = []
+    for key, data in items:
+        if not isinstance(key, str):
+            raise TypeError("application-properties keys must be strings")
+        if isinstance(data, (dict, list, tuple)):
+            raise TypeError("application-properties values must be simple AMQP types")
+        normalized.append((key, data))
+    _encode_map(output, normalized)
+
+
 def _encode_value(output: bytearray, value: Any, **kwargs: Any) -> None:
     try:
         cast(Callable, _ENCODE_MAP[value[TYPE]])(output, value[VALUE], **kwargs)
@@ -745,6 +901,38 @@ def _encode_performative_field(output: bytearray, value: Any) -> None:
     output.extend(_encode_performative_body(value))
 
 
+def _encode_performative_value(
+    output: bytearray,
+    value: Any,
+    type_: AMQPTypes | FieldDefinition | ObjDefinition | None,
+) -> None:
+    if type_ == FieldDefinition.message_id:
+        _encode_message_id(output, value)
+        return
+    if type_ == FieldDefinition.annotations:
+        _encode_annotations(output, value)
+        return
+    if type_ == FieldDefinition.app_properties:
+        _encode_application_properties(output, value)
+        return
+    if isinstance(type_, AMQPTypes) and isinstance(value, list):
+        _encode_typed_array(output, value, type_)
+        return
+
+    encoder = _ENCODE_MAP.get(type_.value if type_ is not None else None)
+    if encoder is None and isinstance(type_, FieldDefinition):
+        field_definition_type = _FIELD_DEFINITION_TO_AMQP_TYPE.get(type_)
+        encoder = _ENCODE_MAP.get(
+            field_definition_type.value if field_definition_type is not None else None,
+        )
+    elif encoder is None and isinstance(type_, ObjDefinition):
+        encoder = _encode_performative_field
+
+    if encoder is None:
+        raise ValueError(f"No encoder for type {type_} value {value}")
+    encoder(output, value)
+
+
 def _encode_performative_body(performative: EncodableT) -> bytes:
     output = bytearray()
 
@@ -771,21 +959,7 @@ def _encode_performative_body(performative: EncodableT) -> bytes:
         if val is None:
             _encode_null(list_body)
         else:
-            encoder = _ENCODE_MAP.get(type_.value if type_ is not None else None)
-            if not encoder:
-                # Try FieldDefinition mapping
-                if isinstance(type_, FieldDefinition):
-                    field_definition_type = _FIELD_DEFINITION_TO_AMQP_TYPE.get(type_)
-                    encoder = _ENCODE_MAP.get(
-                        field_definition_type.value if field_definition_type is not None else None,
-                    )
-                elif isinstance(type_, ObjDefinition):
-                    encoder = _encode_performative_field
-
-            if encoder:
-                encoder(list_body, val)
-            else:
-                raise ValueError(f"No encoder for type {amqp_type} value {val}")
+            _encode_performative_value(list_body, val, type_)
 
     if len(list_body) + 1 < MIN_MAX_LIST_SIZE and len(field_values) < MIN_MAX_LIST_SIZE:
         output.extend(ConstructorBytes.list_small)
@@ -852,13 +1026,13 @@ def message_to_transfer_frames(  # noqa: C901, PLR0912, PLR0915
     if message.delivery_annotations:
         payload.extend(b"\x00")
         _encode_ulong(payload, 0x00000071)
-        _encode_map(payload, message.delivery_annotations)
+        _encode_annotations(payload, message.delivery_annotations)
 
     # Message Annotations
     if message.message_annotations:
         payload.extend(b"\x00")
         _encode_ulong(payload, 0x00000072)
-        _encode_map(payload, message.message_annotations)
+        _encode_annotations(payload, message.message_annotations)
 
     # Properties
     if message.properties:
@@ -869,7 +1043,7 @@ def message_to_transfer_frames(  # noqa: C901, PLR0912, PLR0915
     if message.application_properties:
         payload.extend(b"\x00")
         _encode_ulong(payload, 0x00000074)
-        _encode_map(payload, message.application_properties)
+        _encode_application_properties(payload, message.application_properties)
 
     # Body
     if message.body_type == MessageBodyType.DATA:
@@ -889,7 +1063,7 @@ def message_to_transfer_frames(  # noqa: C901, PLR0912, PLR0915
     if isinstance(message, Message) and message.footer:
         payload.extend(b"\x00")
         _encode_ulong(payload, 0x00000078)
-        _encode_map(payload, message.footer)
+        _encode_annotations(payload, message.footer)
 
     # Split into frames
     remaining_payload = payload

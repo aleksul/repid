@@ -6,7 +6,6 @@ from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
 from repid.connections.amqp._uamqp.message import Properties
-from repid.connections.amqp._uamqp.performatives import DetachFrame
 from repid.connections.amqp.helpers import AmqpReceivedMessage
 from repid.connections.amqp.protocol import ManagedSession, ReceiverLink
 
@@ -167,10 +166,3 @@ class AmqpSubscriber:
         for queue in self._queues_to_callbacks:
             address = self._naming_strategy(queue)
             await receiver_pool.unsubscribe(address)
-
-        # Also try to detach links directly (graceful shutdown)
-        for link in self._links:
-            detach = DetachFrame(handle=link.handle, closed=True)
-            with contextlib.suppress(Exception):
-                session = await self._managed_session.get_session()
-                await session.connection.send_performative(session.channel, detach)

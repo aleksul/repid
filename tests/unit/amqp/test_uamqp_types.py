@@ -171,6 +171,15 @@ def test_decode_compounds() -> None:
     # Array Large (0xf0)
     assert decode(0xF0, b"\x00\x00\x00\x04" + b"\x00\x00\x00\x01" + b"\xa1\x01A") == ["A"]
 
+    # Described array of accepted outcomes.
+    assert decode(0xE0, b"\x04\x01\x00\x53\x24\x45")[0].__class__.__name__ == "Accepted"
+
+    # Required primitive decoders present.
+    assert decode(0x73, b"\x00\x00\x00A") == "A"
+    assert decode(0x74, b"1234") == b"1234"
+    assert decode(0x84, b"12345678") == b"12345678"
+    assert decode(0x94, b"1234567890123456") == b"1234567890123456"
+
 
 def test_decode_errors() -> None:
     # Invalid frame body (not 0x00)
@@ -242,6 +251,10 @@ def test_construct_message_coverage() -> None:
     data = build_section(0x75, b"\xa0\x01A")
     msg = _construct_message(data)
     assert msg.data == b"A"
+
+    data2 = data + build_section(0x75, b"\xa0\x01B")
+    msg = _construct_message(data2)
+    assert msg.data == b"AB"
 
     # Sequence (0x76) - List - Empty \x45
     seq = build_section(0x76, b"\x45")

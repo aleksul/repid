@@ -25,6 +25,7 @@ from repid.connections.amqp._uamqp.message import Header, Message, Properties
 from repid.connections.amqp._uamqp.performatives import (
     AttachFrame,
     DetachFrame,
+    DispositionFrame,
     FlowFrame,
     TransferFrame,
 )
@@ -462,6 +463,7 @@ class ReceiverLink(Link):
 
         # Multi-frame transfer handling
         self._incoming_transfers: list[TransferFrame] = []
+        self._delivery_settled_by_callback = False
 
     @property
     def link_credit(self) -> int:
@@ -536,6 +538,12 @@ class ReceiverLink(Link):
 
     async def _handle_transfer(self, transfer: TransferFrame) -> None:
         """Handle TRANSFER frame (incoming message)."""
+        if transfer.aborted:
+            self._incoming_transfers.clear()
+            self._delivery_count = (self._delivery_count + 1) & 0xFFFFFFFF
+            await self._consume_credit()
+            return
+
         self._incoming_transfers.append(transfer)
 
         # Check if this is the last frame of the message
@@ -568,6 +576,7 @@ class ReceiverLink(Link):
                 headers = dict(headers)
 
             # Call the callback
+            self._delivery_settled_by_callback = False
             result = self._callback(body, headers, delivery_id, delivery_tag, self, msg.properties)
             if inspect.iscoroutine(result):
                 await result
@@ -575,18 +584,32 @@ class ReceiverLink(Link):
             # Update delivery count
             self._delivery_count = (self._delivery_count + 1) & 0xFFFFFFFF
 
-            # Check if we need to replenish credit
-            if self._link_credit > 0:
-                self._link_credit -= 1
-                if self._link_credit < self._prefetch // 2:
-                    # Replenish credit
-                    self._link_credit = self._prefetch
-                    await self._send_flow()
+            await self._consume_credit()
 
         except Exception:
             logger.exception("receiver_link.message.error", extra={"link": self._name})
         finally:
+            self._delivery_settled_by_callback = False
             self._incoming_transfers.clear()
+
+    async def _send_disposition(self, delivery_id: int, state: Any) -> None:
+        disp = DispositionFrame(
+            role=True,
+            first=delivery_id,
+            last=delivery_id,
+            settled=True,
+            state=state,
+        )
+        await self._session.connection.send_performative(self._session.channel, disp)
+        self._delivery_settled_by_callback = True
+
+    async def _consume_credit(self) -> None:
+        if self._link_credit <= 0:
+            return
+        self._link_credit -= 1
+        if self._link_credit < self._prefetch // 2:
+            self._link_credit = self._prefetch
+            await self._send_flow()
 
     async def set_credit(self, credit: int) -> None:
         """

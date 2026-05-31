@@ -23,6 +23,7 @@ from typing_extensions import Self
 
 from repid.connections.amqp._uamqp.constants import MAX_FRAME_SIZE_BYTES, MIN_MAX_FRAME_SIZE
 from repid.connections.amqp._uamqp.performatives import (
+    BeginFrame,
     CloseFrame,
     EmptyFrame,
     OpenFrame,
@@ -348,7 +349,16 @@ class AmqpConnection:
             await self._do_sasl_auth()
 
         # 3. AMQP protocol negotiation
-        await self._do_amqp_open()
+        try:
+            await self._do_amqp_open()
+        except ProtocolError as exc:
+            if self._config.username is not None or "requires SASL" not in str(exc):
+                raise
+            await self._transport.close()
+            self._state_machine.reset(ConnectionState.START)
+            await self._transport.connect()
+            await self._do_sasl_auth()
+            await self._do_amqp_open()
 
         # 4. Start read loop
         self._read_task = asyncio.create_task(
@@ -476,12 +486,16 @@ class AmqpConnection:
             raise ProtocolError(f"Expected OPEN, got {type(response_frame)}")
 
         # Store remote parameters
-        if response_frame.max_frame_size:
+        if response_frame.max_frame_size is not None:
             self._remote_max_frame_size = response_frame.max_frame_size
-        if response_frame.channel_max:
+        if response_frame.channel_max is not None:
             self._remote_channel_max = response_frame.channel_max
         self._remote_container_id = response_frame.container_id
         self._remote_idle_timeout = response_frame.idle_timeout
+        self._transport.set_frame_size_limits(
+            inbound=self._config.max_frame_size,
+            outbound=self._remote_max_frame_size,
+        )
 
         await self._state_machine.transition("recv_open")
 
@@ -561,11 +575,17 @@ class AmqpConnection:
                     await self._handle_performative(channel, performative)
                 except ConnectionClosedError:
                     logger.info("connection.closed_by_server")
+                    if not self._stop_event.is_set():
+                        with contextlib.suppress(ValueError):
+                            await self._state_machine.transition("fatal_error")
                     break
                 except asyncio.CancelledError:
                     raise
                 except Exception:
                     logger.exception("connection.read_loop.error")
+                    if not self._stop_event.is_set():
+                        with contextlib.suppress(ValueError):
+                            await self._state_machine.transition("fatal_error")
                     break
 
         except asyncio.CancelledError:
@@ -659,6 +679,10 @@ class AmqpConnection:
             pass
         elif isinstance(performative, CloseFrame):
             await self._handle_close(performative)
+        elif isinstance(performative, BeginFrame) and performative.remote_channel in self._sessions:
+            session = self._sessions[performative.remote_channel]
+            self._sessions[channel] = session
+            await session.handle_performative(performative)
         elif channel in self._sessions:
             # Dispatch to session
             await self._sessions[channel].handle_performative(performative)
@@ -727,8 +751,12 @@ class AmqpConnection:
 
     def _remove_session(self, channel: int) -> None:
         """Remove a session from the connection."""
-        if channel in self._sessions:
-            del self._sessions[channel]
+        session = self._sessions.get(channel)
+        if session is None:
+            return
+        for existing_channel, existing_session in list(self._sessions.items()):
+            if existing_session is session:
+                del self._sessions[existing_channel]
 
     # -------------------------------------------------------------------------
     # Frame Sending

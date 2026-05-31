@@ -64,6 +64,8 @@ class FakeTransport:
     amqp_headers_sent: int = 0
     sasl_headers_sent: int = 0
     closed: bool = False
+    inbound_max_frame_size: int | None = None
+    outbound_max_frame_size: int | None = None
 
     async def connect(self) -> None:
         return None
@@ -91,6 +93,13 @@ class FakeTransport:
 
     async def send_performative(self, channel: int, performative: Any) -> None:
         self.sent_frames.append((channel, performative))
+
+    def set_max_frame_size(self, _max_frame_size: int) -> None:
+        return None
+
+    def set_frame_size_limits(self, inbound: int, outbound: int) -> None:
+        self.inbound_max_frame_size = inbound
+        self.outbound_max_frame_size = outbound
 
 
 @dataclass(slots=True)

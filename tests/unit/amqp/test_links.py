@@ -9,9 +9,11 @@ import pytest
 
 from repid.connections.amqp._uamqp._encode import message_to_transfer_frames
 from repid.connections.amqp._uamqp.message import Message, Properties
+from repid.connections.amqp._uamqp.outcomes import Accepted
 from repid.connections.amqp._uamqp.performatives import (
     AttachFrame,
     DetachFrame,
+    DispositionFrame,
     FlowFrame,
     TransferFrame,
 )
@@ -415,6 +417,61 @@ async def test_receiver_link_receive_message(receiver: ReceiverLink) -> None:
     assert received[0][0] == b"test-data"
 
 
+async def test_receiver_link_discards_aborted_transfer(receiver: ReceiverLink) -> None:
+    receiver._callback = Mock()
+    transfer = TransferFrame(
+        handle=0,
+        delivery_id=1,
+        delivery_tag=b"1",
+        aborted=True,
+        payload=b"bad",
+    )
+
+    await receiver._handle_transfer(transfer)
+
+    receiver._callback.assert_not_called()
+    assert receiver._incoming_transfers == []
+
+
+async def test_receiver_link_aborted_transfer_replenishes_credit(receiver: ReceiverLink) -> None:
+    receiver._state_machine.transition_sync("send_attach")
+    receiver._state_machine.transition_sync("recv_attach")
+    cast(Any, receiver.session.connection).sent.clear()
+    receiver._prefetch = 10
+    receiver._link_credit = 5
+
+    transfer = TransferFrame(
+        handle=0,
+        delivery_id=1,
+        delivery_tag=b"1",
+        aborted=True,
+    )
+
+    await receiver._handle_transfer(transfer)
+
+    assert receiver.link_credit == 10
+    assert isinstance(cast(Any, receiver.session.connection).sent[-1][1], FlowFrame)
+
+
+async def test_receiver_link_aborted_transfer_with_no_credit(receiver: ReceiverLink) -> None:
+    receiver._callback = Mock()
+    receiver._link_credit = 0
+
+    await receiver._handle_transfer(TransferFrame(handle=0, delivery_id=1, aborted=True))
+
+    assert receiver.link_credit == 0
+    assert cast(Any, receiver.session.connection).sent == []
+
+
+async def test_receiver_link_send_disposition(receiver: ReceiverLink) -> None:
+    await receiver._send_disposition(42, Accepted())
+
+    sent = cast(Any, receiver.session.connection).sent
+    assert isinstance(sent[-1][1], DispositionFrame)
+    assert sent[-1][1].first == 42
+    assert receiver._delivery_settled_by_callback is True
+
+
 async def test_receiver_link_multi_frame_uses_first_transfer_delivery_metadata(
     receiver: ReceiverLink,
 ) -> None:
@@ -504,7 +561,7 @@ async def test_receiver_link_credit_replenish(receiver: ReceiverLink) -> None:
     # Credit decreases to 4, which is < 5, so replenish should trigger
     assert receiver.link_credit == 10  # Reset to prefetch
     assert len(receiver.session.connection.sent) == 1  # type: ignore[attr-defined]
-    assert isinstance(receiver.session.connection.sent[0][1], FlowFrame)  # type: ignore[attr-defined]
+    assert isinstance(receiver.session.connection.sent[-1][1], FlowFrame)  # type: ignore[attr-defined]
 
 
 async def test_receiver_process_message_callback_async(receiver: ReceiverLink) -> None:

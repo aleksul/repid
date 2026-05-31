@@ -16,7 +16,7 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from repid.connections.amqp._uamqp._decode import transfer_frames_to_message
 from repid.connections.amqp._uamqp._encode import message_to_transfer_frames
@@ -347,7 +347,7 @@ class SenderLink(Link):
 
         # Build message
         msg = Message(
-            data=payload,
+            data=[payload],
             application_properties=headers,
             header=message_header,
             properties=message_properties,
@@ -563,11 +563,17 @@ class ReceiverLink(Link):
 
             # Extract body
             body = msg.body
-            if isinstance(body, str):
+            if isinstance(body, list):
+                if body and isinstance(body[0], bytes):
+                    body = b"".join(cast(list[bytes], body))
+                elif body:
+                    body = json.dumps(body).encode()
+            elif isinstance(body, str):
                 body = body.encode()
             elif not isinstance(body, bytes) and body is not None:
                 body = json.dumps(body).encode()
-            body = body or b""
+            if not isinstance(body, bytes):
+                body = b""
 
             # Get headers
             headers = msg.application_properties

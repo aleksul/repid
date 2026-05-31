@@ -570,8 +570,9 @@ def _encode_list(
     :param bool use_smallest: Whether to use the smallest possible encoding.
     """
     count = len(cast(Sized, value))
-    if use_smallest and count == 0:
-        output.extend(ConstructorBytes.list_0)
+    if count == 0:
+        if with_constructor:
+            output.extend(ConstructorBytes.list_0)
         return
     encoded_size = 0
     encoded_values = bytearray()
@@ -1047,13 +1048,15 @@ def message_to_transfer_frames(  # noqa: C901, PLR0912, PLR0915
 
     # Body
     if message.body_type == MessageBodyType.DATA:
-        payload.extend(b"\x00")
-        _encode_ulong(payload, 0x00000075)
-        _encode_binary(payload, cast(bytes, message.data))
+        for data_section in cast(list[bytes], message.data):
+            payload.extend(b"\x00")
+            _encode_ulong(payload, 0x00000075)
+            _encode_binary(payload, data_section)
     elif message.body_type == MessageBodyType.SEQUENCE:
-        payload.extend(b"\x00")
-        _encode_ulong(payload, 0x00000076)
-        _encode_list(payload, cast(list, message.sequence))
+        for seq_section in cast(list[list[Any]], message.sequence):
+            payload.extend(b"\x00")
+            _encode_ulong(payload, 0x00000076)
+            _encode_list(payload, seq_section)
     elif message.body_type == MessageBodyType.VALUE:
         payload.extend(b"\x00")
         _encode_ulong(payload, 0x00000077)

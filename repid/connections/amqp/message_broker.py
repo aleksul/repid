@@ -256,11 +256,13 @@ class AmqpServer:
         header = params.get("header")
         properties = params.get("properties")
         message_reply_to = getattr(message, "reply_to", None)
+        message_content_type = getattr(message, "content_type", None)
         if properties is None:
             properties = Properties(
                 message_id=str(uuid4()),
                 correlation_id=None,
                 reply_to=message_reply_to,
+                content_type=message_content_type,
             )
         else:
             # Create a shallow copy to avoid mutating user-provided dictionary
@@ -275,7 +277,9 @@ class AmqpServer:
                 if properties.reply_to is not None
                 else message_reply_to,
                 correlation_id=properties.correlation_id,
-                content_type=properties.content_type,
+                content_type=properties.content_type
+                if properties.content_type is not None
+                else message_content_type,
                 content_encoding=properties.content_encoding,
                 absolute_expiry_time=properties.absolute_expiry_time,
                 creation_time=properties.creation_time,

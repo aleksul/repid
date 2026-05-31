@@ -32,6 +32,9 @@ from repid.connections.amqp._uamqp.performatives import (
     SASLMechanism,
     SASLOutcome,
 )
+from repid.connections.amqp._uamqp.performatives import (
+    Error as AmqpFrameError,
+)
 
 from .events import ConnectionEvent, EventData, EventEmitter, MetricsCollector
 from .reconnect import ReconnectConfig, ReconnectStrategy
@@ -41,6 +44,7 @@ from .transport import (
     SASL_HEADER,
     AmqpTransport,
     ConnectionClosedError,
+    FrameError,
     TransportConfig,
 )
 
@@ -481,7 +485,9 @@ class AmqpConnection:
         await self._state_machine.transition("send_open")
 
         # Wait for OPEN response
-        _, response_frame = await self._transport.read_frame()
+        channel, response_frame = await self._transport.read_frame()
+        if channel != 0:
+            raise ProtocolError(f"OPEN frame received on channel {channel}, expected 0")
         if not isinstance(response_frame, OpenFrame):
             raise ProtocolError(f"Expected OPEN, got {type(response_frame)}")
 
@@ -578,6 +584,9 @@ class AmqpConnection:
                     if not self._stop_event.is_set():
                         with contextlib.suppress(ValueError):
                             await self._state_machine.transition("fatal_error")
+                    break
+                except FrameError as exc:
+                    await self._handle_frame_error(exc)
                     break
                 except asyncio.CancelledError:
                     raise
@@ -689,6 +698,24 @@ class AmqpConnection:
         else:
             logger.warning("session.not_found", extra={"channel": channel})
 
+    async def _handle_frame_error(self, exc: FrameError) -> None:
+        """Handle a framing error by sending CLOSE and transitioning to error state."""
+        logger.warning("connection.frame_error", extra={"error": str(exc)})
+        if self._state_machine.is_usable():
+            with contextlib.suppress(OSError, asyncio.TimeoutError, ValueError):
+                await self._transport.send_performative(
+                    0,
+                    CloseFrame(
+                        error=AmqpFrameError(
+                            condition="amqp:internal-error",
+                            description=str(exc),
+                        ),
+                    ),
+                )
+        if not self._stop_event.is_set():
+            with contextlib.suppress(ValueError):
+                await self._state_machine.transition("fatal_error")
+
     async def _handle_close(self, close_frame: CloseFrame) -> None:
         """Handle CLOSE from server."""
         error = getattr(close_frame, "error", None)
@@ -706,13 +733,50 @@ class AmqpConnection:
                 await self._transport.send_performative(0, CloseFrame())
                 await self._state_machine.transition("send_close")
 
-        # If server closed with an error, treat as unexpected and reconnect
+        # Ensure terminal state
+        if not self._state_machine.is_terminal():
+            with contextlib.suppress(ValueError):
+                await self._state_machine.transition("fatal_error")
+
+        # Cancel heartbeat task
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._heartbeat_task
+            self._heartbeat_task = None
+
+        # Close transport
+        await self._transport.close()
+
+        # Invalidate sessions
+        for session in list(self._sessions.values()):
+            session.invalidate()
+        self._sessions.clear()
+
+        # Stop the connection
+        self._stop_event.set()
+
+        await self._emit(
+            ConnectionEvent.DISCONNECTED,
+            {"error": str(error) if error else None},
+        )
+
+        # If server closed with an error and reconnection is enabled, reconnect
         if error and self._reconnect.config.enabled:
-            # Call _handle_unexpected_close directly to reconnect before returning
-            # This ensures the connection is restored before any waiters can proceed
-            await self._handle_unexpected_close()
-        else:
-            await self.close()
+            task = asyncio.create_task(self._reconnect_after_close())
+            task.add_done_callback(lambda _t: None)
+
+    async def _reconnect_after_close(self) -> None:
+        """Attempt reconnection after peer-initiated close with error."""
+        self._state_machine.reset(ConnectionState.START)
+        self._stop_event.clear()
+        try:
+            await self.connect()
+            await self._emit(ConnectionEvent.RECONNECTED)
+        except ConnectionError as exc:
+            logger.error("connection.reconnect.failed", extra={"error": str(exc)})
+        except Exception:
+            logger.exception("connection.reconnect.unexpected_error")
 
     # -------------------------------------------------------------------------
     # Session Management

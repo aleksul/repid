@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from typing import Any, ClassVar, cast
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -288,9 +289,30 @@ async def test_amqp_received_message_properties() -> None:
     assert msg.channel == "test-channel"
     assert msg.message_id is None
     assert msg.is_acted_on is False
+    assert msg.keep_alive_interval is None
 
     await msg.ack()
     assert msg.is_acted_on is True
+
+
+async def test_amqp_received_message_uses_link_send_disposition() -> None:
+    class FakeLinkWithDisposition:
+        _send_disposition = AsyncMock()
+
+    msg = AmqpReceivedMessage(
+        payload=b"test",
+        headers=None,
+        link=cast(Any, FakeLinkWithDisposition()),
+        delivery_id=123,
+        delivery_tag=b"tag",
+        channel_name="test-channel",
+        managed_session=cast(ManagedSession, object()),
+        publish_fn=lambda: asyncio.sleep(0),
+    )
+
+    await msg.ack()
+
+    FakeLinkWithDisposition._send_disposition.assert_awaited_once()
 
 
 async def test_amqp_received_message_bytes_message_id() -> None:
@@ -342,6 +364,30 @@ async def test_amqp_received_message_reply_to() -> None:
     )
 
     assert msg.reply_to == "reply-to"
+
+
+async def test_amqp_received_message_properties_content_type_none() -> None:
+    connection = FakeConnection()
+    fake_session = FakeSession(connection=connection, channel=2)
+
+    class FakeReceiverLinkWithSession:
+        handle: int = 7
+        session: FakeSession = fake_session
+
+    link = FakeReceiverLinkWithSession()
+    msg = AmqpReceivedMessage(
+        payload=b"test",
+        headers=None,
+        link=cast(Any, link),
+        delivery_id=1,
+        delivery_tag=b"tag",
+        channel_name="q",
+        managed_session=cast(ManagedSession, object()),
+        publish_fn=lambda: asyncio.sleep(0),
+        properties=Properties(content_type=None),
+    )
+
+    assert msg.content_type is None
 
 
 async def test_amqp_received_message_bytes_properties() -> None:

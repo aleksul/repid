@@ -253,7 +253,7 @@ def _decode_described(buffer: memoryview) -> tuple[memoryview, object]:
 def _construct_described_value(descriptor: Any, value: Any) -> object:
     cls = DESCRIBED_TYPES_MAP.get(descriptor)
     if cls is None:
-        return value
+        return (descriptor, value)
     if isinstance(value, list):
         return _list_to_dataclass(cls, value)
     return value
@@ -452,9 +452,13 @@ def _construct_message(payload: bytes) -> Message:  # noqa: C901, PLR0912
         elif descriptor == 0x00000074:  # Application Properties  # noqa: PLR2004
             message.application_properties = value
         elif descriptor == 0x00000075:  # Data  # noqa: PLR2004
-            message.data = (message.data or b"") + value
+            if message.data is None:
+                message.data = []
+            message.data.append(value)
         elif descriptor == 0x00000076:  # Sequence  # noqa: PLR2004
-            message.sequence = value
+            if message.sequence is None:
+                message.sequence = []
+            message.sequence.append(value)
         elif descriptor == 0x00000077:  # Value  # noqa: PLR2004
             message.value = value
         elif descriptor == 0x00000078:  # Footer  # noqa: PLR2004

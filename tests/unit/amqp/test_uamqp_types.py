@@ -16,17 +16,27 @@ from repid.connections.amqp._uamqp._decode import (
     transfer_frames_to_message,
 )
 from repid.connections.amqp._uamqp._encode import message_to_transfer_frames
-from repid.connections.amqp._uamqp.message import Message, MessageBodyType
+from repid.connections.amqp._uamqp.message import _ABSENT, Message, MessageBodyType
 from repid.connections.amqp._uamqp.performatives import OpenFrame, TransferFrame
 
 
 def test_message_body_types() -> None:
-    # 1. Sequence (Line 237, 247)
-    msg_seq = Message(sequence=[1, 2, 3])
-    assert msg_seq.body == [1, 2, 3]
+    # 1. Data (list of bytes)
+    msg_data = Message(data=[b"hello"])
+    assert msg_data.body == [b"hello"]
+    assert msg_data.body_type == MessageBodyType.DATA
+
+    # 2. Sequence (list of lists)
+    msg_seq = Message(sequence=[[1, 2, 3]])
+    assert msg_seq.body == [[1, 2, 3]]
     assert msg_seq.body_type == MessageBodyType.SEQUENCE
 
-    # 2. None (Line 240)
+    # 3. Value
+    msg_val = Message(value=42)
+    assert msg_val.body == 42
+    assert msg_val.body_type == MessageBodyType.VALUE
+
+    # 4. Empty (no body sections)
     msg_empty = Message()
     assert msg_empty.body is None
     assert msg_empty.body_type == MessageBodyType.EMPTY
@@ -250,16 +260,16 @@ def test_construct_message_coverage() -> None:
     # Data (0x75)
     data = build_section(0x75, b"\xa0\x01A")
     msg = _construct_message(data)
-    assert msg.data == b"A"
+    assert msg.data == [b"A"]
 
     data2 = data + build_section(0x75, b"\xa0\x01B")
     msg = _construct_message(data2)
-    assert msg.data == b"AB"
+    assert msg.data == [b"A", b"B"]
 
     # Sequence (0x76) - List - Empty \x45
     seq = build_section(0x76, b"\x45")
     msg = _construct_message(seq)
-    assert msg.sequence == []
+    assert msg.sequence == [[]]
 
     # Value (0x77) - Any value - ubyte 1
     val = build_section(0x77, b"\x50\x01")
@@ -305,14 +315,19 @@ def test_decode_described_returns_value() -> None:
         return value
 
     # Fixed-size descriptor (ulong small, 0x53), value is null (0x40).
-    assert decode(0x00, b"\x53\x64\x40") is None
+    # Unknown descriptor (0x64) should be preserved as tuple
+    result = decode(0x00, b"\x53\x64\x40")
+    assert result == (0x64, None)
 
     # Fixed-size descriptor (ulong zero, 0x44), value is ubyte 7 (0x50 0x07).
-    assert decode(0x00, b"\x44\x50\x07") == 7
+    # Unknown descriptor (0) should be preserved as tuple
+    result = decode(0x00, b"\x44\x50\x07")
+    assert result == (0, 7)
 
-    # Variable-length descriptor (symbol small, 0xA3): fall back to decode-and-discard.
+    # Variable-length descriptor (symbol small, 0xA3): preserve descriptor.
     # Symbol "x" (0xA3 0x01 0x78), value is null (0x40).
-    assert decode(0x00, b"\xa3\x01\x78\x40") is None
+    result = decode(0x00, b"\xa3\x01\x78\x40")
+    assert result == ("x", None)
 
 
 def test_transfer_frames_to_message_coverage() -> None:
@@ -371,26 +386,26 @@ def test_decode_frame_coverage() -> None:
 
 
 def round_trip(value: Any) -> Any:
-    msg = Message(value=value)
-
-    if value is not None:
-        # Ensure body_type is VALUE
-        assert msg.body_type == MessageBodyType.VALUE
-    else:
-        # Check empty if none
+    if value is _ABSENT:
+        msg = Message()
         assert msg.body_type == MessageBodyType.EMPTY
-
+        return None
+    msg = Message(value=value)
+    assert msg.body_type == MessageBodyType.VALUE
     frames = list(message_to_transfer_frames(msg, 4096, 0, b"0", True))
     decoded_msg = transfer_frames_to_message(frames)
-
-    if value is not None:
-        assert decoded_msg.body_type == MessageBodyType.VALUE
-
+    assert decoded_msg.body_type == MessageBodyType.VALUE
     return decoded_msg.value
 
 
 def test_amqp_types_none() -> None:
-    assert round_trip(None) is None
+    # None as a value should round-trip as amqp-value(null), not be lost as EMPTY
+    msg = Message(value=None)
+    assert msg.body_type == MessageBodyType.VALUE
+    frames = list(message_to_transfer_frames(msg, 4096, 0, b"0", True))
+    decoded_msg = transfer_frames_to_message(frames)
+    assert decoded_msg.body_type == MessageBodyType.VALUE
+    assert decoded_msg.value is None
 
 
 def test_amqp_types_bool() -> None:

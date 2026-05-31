@@ -120,6 +120,20 @@ async def test_receiver_process_message_types() -> None:
         args = link._callback.call_args[0]
         assert args[1] == {"h": "v"}
 
+        # Sequence sections are encoded as JSON
+        msg_seq = Message(sequence=[["x", 1]])
+        mock_conv.return_value = msg_seq
+        link._incoming_transfers = [TransferFrame(handle=0, delivery_id=4, delivery_tag=b"4")]
+        await link._process_message()
+        link._callback.assert_called_with(b'[["x", 1]]', None, 4, b"4", link, None)
+
+        # Empty body is delivered as empty bytes
+        msg_empty = Message()
+        mock_conv.return_value = msg_empty
+        link._incoming_transfers = [TransferFrame(handle=0, delivery_id=5, delivery_tag=b"5")]
+        await link._process_message()
+        link._callback.assert_called_with(b"", None, 5, b"5", link, None)
+
 
 async def test_transport_configure_keepalive_no_writer() -> None:
     config = TransportConfig("localhost", 5672)
@@ -408,7 +422,7 @@ async def test_receiver_link_receive_message(receiver: ReceiverLink) -> None:
     receiver._callback = on_message
 
     # Pre-calculate transfer frame
-    msg = Message(data=b"test-data")
+    msg = Message(data=[b"test-data"])
     frames = list(message_to_transfer_frames(msg, 512, 0, b"0", True))
 
     await receiver._handle_transfer(frames[0])
@@ -488,7 +502,7 @@ async def test_receiver_link_multi_frame_uses_first_transfer_delivery_metadata(
         received.append((delivery_id, delivery_tag))
 
     receiver._callback = on_message
-    msg = Message(data=b"x" * 200)
+    msg = Message(data=[b"x" * 200])
     frames = list(
         message_to_transfer_frames(
             msg,
@@ -544,7 +558,7 @@ async def test_receiver_link_credit_replenish(receiver: ReceiverLink) -> None:
     receiver._link_credit = 6
 
     # Process message
-    msg = Message(data=b"test")
+    msg = Message(data=[b"test"])
     frames = list(message_to_transfer_frames(msg, 512, 0, b"0", True))
 
     await receiver._handle_transfer(frames[0])
@@ -572,7 +586,7 @@ async def test_receiver_process_message_callback_async(receiver: ReceiverLink) -
 
     receiver._callback = on_message
 
-    msg = Message(data=b"async-test")
+    msg = Message(data=[b"async-test"])
     frames = list(message_to_transfer_frames(msg, 512, 0, b"0", True))
 
     await receiver._handle_transfer(frames[0])
@@ -587,7 +601,7 @@ async def test_receiver_process_message_json_body(receiver: ReceiverLink) -> Non
 
     # Body is dict (json) - must be bytes
     data = json.dumps({"key": "value"}).encode()
-    msg = Message(data=data)
+    msg = Message(data=[data])
     frames = list(message_to_transfer_frames(msg, 512, 0, b"0", True))
 
     await receiver._handle_transfer(frames[0])
@@ -600,7 +614,7 @@ async def test_receiver_process_message_str_body(receiver: ReceiverLink) -> None
     received = []
     receiver._callback = lambda body, *_: received.append(body)
 
-    msg = Message(data=b"string-body")
+    msg = Message(data=[b"string-body"])
     frames = list(message_to_transfer_frames(msg, 512, 0, b"0", True))
 
     await receiver._handle_transfer(frames[0])
@@ -612,7 +626,7 @@ async def test_receiver_process_message_error(receiver: ReceiverLink) -> None:
     # Callback raises exception
     receiver._callback = Mock(side_effect=ValueError("Callback error"))
 
-    msg = Message(data=b"data")
+    msg = Message(data=[b"data"])
     frames = list(message_to_transfer_frames(msg, 512, 0, b"0", True))
 
     # Should catch exception and clear transfers

@@ -104,7 +104,7 @@ def test_performative_encoding_various_types() -> None:
 
 def test_decode_frame_round_trip() -> None:
     payload = b"payload"
-    msg = Message(data=payload)
+    msg = Message(data=[payload])
     frames = list(
         message_to_transfer_frames(
             message=msg,
@@ -122,7 +122,7 @@ def test_decode_frame_round_trip() -> None:
     assert isinstance(performative, TransferFrame)
 
     decoded_msg = transfer_frames_to_message(frames)
-    assert decoded_msg.data == payload
+    assert decoded_msg.data == [payload]
 
 
 def test_decode_described_known_descriptor_with_non_list_value() -> None:
@@ -519,7 +519,7 @@ def test_encode_multiple_symbol_field_as_array() -> None:
 def test_encode_annotation_keys_as_symbols() -> None:
     frames = list(
         message_to_transfer_frames(
-            Message(data=b"x", message_annotations={"x-opt-key": "v"}),
+            Message(data=[b"x"], message_annotations={"x-opt-key": "v"}),
             512,
             0,
             b"tag",
@@ -534,7 +534,7 @@ def test_application_properties_reject_nested_values() -> None:
     with pytest.raises(TypeError, match="simple AMQP types"):
         list(
             message_to_transfer_frames(
-                Message(data=b"x", application_properties={"nested": {"x": 1}}),
+                Message(data=[b"x"], application_properties={"nested": {"x": 1}}),
                 512,
                 0,
                 b"tag",
@@ -546,7 +546,7 @@ def test_application_properties_reject_nested_values() -> None:
 def test_message_id_int_encodes_as_ulong() -> None:
     frames = list(
         message_to_transfer_frames(
-            Message(properties=Properties(message_id=1), data=b"x"),
+            Message(properties=Properties(message_id=1), data=[b"x"]),
             512,
             0,
             b"tag",
@@ -561,7 +561,7 @@ def test_message_id_rejects_float() -> None:
     with pytest.raises(TypeError, match="message-id"):
         list(
             message_to_transfer_frames(
-                Message(properties=Properties(message_id=1.2), data=b"x"),
+                Message(properties=Properties(message_id=1.2), data=[b"x"]),
                 512,
                 0,
                 b"tag",
@@ -786,7 +786,7 @@ def test_message_to_transfer_frames_full() -> None:
     msg.properties = Properties(message_id="1")
     msg.application_properties = {"ap": 1}
     msg.footer = {"footer": 1}
-    msg.data = b"data"
+    msg.data = [b"data"]
 
     frames = list(encode.message_to_transfer_frames(msg, max_frame_size=4096, handle=1))
     assert len(frames) >= 1
@@ -794,7 +794,7 @@ def test_message_to_transfer_frames_full() -> None:
 
 def test_message_to_transfer_frames_split() -> None:
     # Test splitting message into multiple frames
-    msg = Message(data=b"x" * 1000)
+    msg = Message(data=[b"x" * 1000])
     frames = list(encode.message_to_transfer_frames(msg, max_frame_size=200, handle=1))
     assert len(frames) > 1
     assert frames[0].more is True
@@ -803,12 +803,12 @@ def test_message_to_transfer_frames_split() -> None:
 
 def test_message_to_transfer_frames() -> None:
     msg = Message()
-    msg.data = b"data"
+    msg.data = [b"data"]
 
     frames = list(encode.message_to_transfer_frames(msg, max_frame_size=1024, handle=1))
     assert len(frames) >= 1
 
-    msg = Message(sequence=[1, 2])
+    msg = Message(sequence=[[1, 2]])
     frames = list(encode.message_to_transfer_frames(msg, max_frame_size=1024, handle=1))
 
     msg = Message(value="val")

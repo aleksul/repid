@@ -65,33 +65,47 @@ if __name__ == "__main__":
 
 ## Install
 
-**Repid** supports Python versions 3.10 and up and is installable via `pip`.
+**Repid** supports Python 3.10 and later. Install it with `pip`:
 
 ```bash
 pip install repid
 ```
 
-There are also a couple of additional dependencies you may want to install,
-depending on your use case:
+Or with `uv`:
 
 ```bash
-pip install repid[amqp, redis, pubsub, pydantic]
+uv add repid
+```
+
+Install extras for the integrations you use:
+
+- `pydantic` - Pydantic deserialization support
+- `amqp` - AMQP 1.0 broker support
+- `nats` - NATS broker support
+- `redis` - Redis broker support
+- `pubsub` - GCP Pub/Sub broker support
+- `kafka` - Apache Kafka broker support
+- `sqs` - Amazon SQS broker support
+
+```bash
+pip install "repid[pydantic,amqp,nats,redis,pubsub,kafka,sqs]"
 ```
 
 ## Why Repid?
 
-**Repid** brings modern Python developer experience (DX) to background tasks, moving away from
-legacy patterns and embracing strong typing, clear architecture, and flexibility.
+**Repid** gives async Python applications a clean task queue API with type hints, schema generation,
+and broker flexibility built in.
 
-- 📖 **AsyncAPI Native**: Stop maintaining outdated architecture diagrams. Repid automatically
-  inspects your actors and generates AsyncAPI 3.0 schemas and interactive web documentation.
-- 🛡️ **Modern Typing & Validation**: First-class Pydantic support. Your message payloads and headers
-  are strictly validated and type-coerced before your actors even run.
-- 💉 **Dependency Injection**: Write clean, testable code. Inject database connections, settings, or
-  shared logic directly into your actor signatures.
-- 🔌 **Highly Unopinionated**: Repid doesn't force a strict ecosystem. You can use it as just a
-  producer, just a consumer, or easily swap out underlying message brokers without rewriting your
-  business logic.
+- **AsyncAPI native**: Repid inspects your actors and generates AsyncAPI 3.0 schemas with interactive
+  web documentation, so your task contracts stay close to the code that handles them.
+- **Typed message handling**: With the `pydantic`, Repid can deserialize, validate, and coerce
+  message payloads and headers before an actor runs.
+- **Async-first performance**: Repid keeps the worker path small and async-native, avoiding sync
+  compatibility layers around broker I/O and actor execution.
+- **Dependency injection**: Actors can receive database connections, settings, clients, or other shared
+  objects directly through their function signatures, keeping task code easier to test and reuse.
+- **Broker flexibility**: Use Repid as a producer, a consumer, or both. Broker implementations sit
+  behind the same application API, so business logic stays separate from transport code.
 
 ## LLMs
 

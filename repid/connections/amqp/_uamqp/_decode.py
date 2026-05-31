@@ -6,8 +6,11 @@ from collections.abc import Callable
 from dataclasses import fields
 from typing import Any, Literal, TypeVar
 
-from . import performatives
+from . import endpoints, outcomes, performatives
 from .message import Header, Message, Properties
+
+FRAME_HEADER_SIZE = 8
+MIN_DOFF = 2
 
 # Maps fixed-width constructor bytes to the number of data bytes to skip.
 # Used to advance past the descriptor in a described type without allocating a Python object.
@@ -134,6 +137,22 @@ def _decode_timestamp(buffer: memoryview) -> tuple[memoryview, int]:
     return buffer[8:], c_signed_long_long.unpack(buffer[:8])[0]
 
 
+def _decode_char(buffer: memoryview) -> tuple[memoryview, str]:
+    return buffer[4:], chr(c_unsigned_int.unpack(buffer[:4])[0])
+
+
+def _decode_decimal32(buffer: memoryview) -> tuple[memoryview, bytes]:
+    return buffer[4:], buffer[:4].tobytes()
+
+
+def _decode_decimal64(buffer: memoryview) -> tuple[memoryview, bytes]:
+    return buffer[8:], buffer[:8].tobytes()
+
+
+def _decode_decimal128(buffer: memoryview) -> tuple[memoryview, bytes]:
+    return buffer[16:], buffer[:16].tobytes()
+
+
 def _decode_uuid(buffer: memoryview) -> tuple[memoryview, uuid.UUID]:
     return buffer[16:], uuid.UUID(bytes=buffer[:16].tobytes())
 
@@ -191,37 +210,53 @@ def _decode_map_large(buffer: memoryview) -> tuple[memoryview, dict[Any, Any]]:
 def _decode_array_small(buffer: memoryview) -> tuple[memoryview, list[Any]]:
     count = buffer[1]  # Ignore first byte (size) and just rely on count
     if count:
-        subconstructor = buffer[2]
-        buffer = buffer[3:]
-        values = [None] * count
-        for i in range(count):
-            buffer, values[i] = _DECODE_MAP[subconstructor](buffer)
-        return buffer, values
+        return _decode_array_values(buffer[2], buffer[3:], count)
     return buffer[2:], []
 
 
 def _decode_array_large(buffer: memoryview) -> tuple[memoryview, list[Any]]:
     count = c_unsigned_long.unpack(buffer[4:8])[0]
     if count:
-        subconstructor = buffer[8]
-        buffer = buffer[9:]
-        values = [None] * count
-        for i in range(count):
-            buffer, values[i] = _DECODE_MAP[subconstructor](buffer)
-        return buffer, values
+        return _decode_array_values(buffer[8], buffer[9:], count)
     return buffer[8:], []
+
+
+def _decode_array_values(
+    subconstructor: int,
+    buffer: memoryview,
+    count: int,
+) -> tuple[memoryview, list[Any]]:
+    descriptor: Any | None = None
+    if subconstructor == 0x00:
+        descriptor_constructor = buffer[0]
+        buffer, descriptor = _DECODE_MAP[descriptor_constructor](buffer[1:])
+        subconstructor = buffer[0]
+        buffer = buffer[1:]
+
+    values = [None] * count
+    decoder = _DECODE_MAP[subconstructor]
+    for i in range(count):
+        buffer, value = decoder(buffer)
+        if descriptor is not None:
+            value = _construct_described_value(descriptor, value)
+        values[i] = value
+    return buffer, values
 
 
 def _decode_described(buffer: memoryview) -> tuple[memoryview, object]:
     constructor = buffer[0]
-    skip = _DESCRIPTOR_SKIP_SIZES.get(constructor)
-    if skip is not None:
-        buffer = buffer[1 + skip :]
-    else:
-        # Variable-length or nested described type: decode and discard the descriptor.
-        buffer, _ = _DECODE_MAP[constructor](buffer[1:])
-    result: tuple[memoryview, object] = _DECODE_MAP[buffer[0]](buffer[1:])
-    return result
+    buffer, descriptor = _DECODE_MAP[constructor](buffer[1:])
+    buffer, value = _DECODE_MAP[buffer[0]](buffer[1:])
+    return buffer, _construct_described_value(descriptor, value)
+
+
+def _construct_described_value(descriptor: Any, value: Any) -> object:
+    cls = DESCRIBED_TYPES_MAP.get(descriptor)
+    if cls is None:
+        return (descriptor, value)
+    if isinstance(value, list):
+        return _list_to_dataclass(cls, value)
+    return value
 
 
 def _decode_string_small(buffer: memoryview) -> tuple[memoryview, str]:
@@ -268,10 +303,14 @@ _DECODE_MAP: dict[int, Callable] = {
     0x00000070: _decode_uint_large,
     0x00000071: _decode_int_large,
     0x00000072: _decode_float,
+    0x00000073: _decode_char,
+    0x00000074: _decode_decimal32,
     0x00000080: _decode_ulong_large,
     0x00000081: _decode_long_large,
     0x00000082: _decode_double,
     0x00000083: _decode_timestamp,
+    0x00000084: _decode_decimal64,
+    0x00000094: _decode_decimal128,
     0x00000098: _decode_uuid,
     0x000000A0: _decode_binary_small,
     0x000000A1: _decode_string_small,
@@ -288,6 +327,18 @@ _DECODE_MAP: dict[int, Callable] = {
 }
 
 ListToDataclassT = TypeVar("ListToDataclassT")
+
+
+DESCRIBED_TYPES_MAP: dict[int, type[Any]] = {
+    performatives.Error.CODE: performatives.Error,
+    endpoints.Source.CODE: endpoints.Source,
+    endpoints.Target.CODE: endpoints.Target,
+    outcomes.Received.CODE: outcomes.Received,
+    outcomes.Accepted.CODE: outcomes.Accepted,
+    outcomes.Rejected.CODE: outcomes.Rejected,
+    outcomes.Released.CODE: outcomes.Released,
+    outcomes.Modified.CODE: outcomes.Modified,
+}
 
 
 def _list_to_dataclass(cls: type[ListToDataclassT], fields_list: list[Any]) -> ListToDataclassT:
@@ -311,7 +362,13 @@ def bytes_to_performative(data: bytes) -> performatives.Performative:
     # channel = struct.unpack(">H", buffer[6:8])[0]
 
     # Body
+    if size < FRAME_HEADER_SIZE:
+        raise ValueError(f"Invalid frame size: {size}")
+    if doff < MIN_DOFF:
+        raise ValueError(f"Invalid frame data offset: {doff}")
     body_start = doff * 4
+    if size < body_start:
+        raise ValueError(f"Frame size {size} smaller than data offset {body_start}")
     body_buffer = buffer[body_start:size]
 
     if len(body_buffer) == 0:
@@ -395,9 +452,13 @@ def _construct_message(payload: bytes) -> Message:  # noqa: C901, PLR0912
         elif descriptor == 0x00000074:  # Application Properties  # noqa: PLR2004
             message.application_properties = value
         elif descriptor == 0x00000075:  # Data  # noqa: PLR2004
-            message.data = value
+            if message.data is None:
+                message.data = []
+            message.data.append(value)
         elif descriptor == 0x00000076:  # Sequence  # noqa: PLR2004
-            message.sequence = value
+            if message.sequence is None:
+                message.sequence = []
+            message.sequence.append(value)
         elif descriptor == 0x00000077:  # Value  # noqa: PLR2004
             message.value = value
         elif descriptor == 0x00000078:  # Footer  # noqa: PLR2004

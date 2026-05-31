@@ -9,9 +9,11 @@ import pytest
 
 from repid.connections.amqp._uamqp._encode import message_to_transfer_frames
 from repid.connections.amqp._uamqp.message import Message, Properties
+from repid.connections.amqp._uamqp.outcomes import Accepted
 from repid.connections.amqp._uamqp.performatives import (
     AttachFrame,
     DetachFrame,
+    DispositionFrame,
     FlowFrame,
     TransferFrame,
 )
@@ -117,6 +119,20 @@ async def test_receiver_process_message_types() -> None:
         await link._process_message()
         args = link._callback.call_args[0]
         assert args[1] == {"h": "v"}
+
+        # Sequence sections are encoded as JSON
+        msg_seq = Message(sequence=[["x", 1]])
+        mock_conv.return_value = msg_seq
+        link._incoming_transfers = [TransferFrame(handle=0, delivery_id=4, delivery_tag=b"4")]
+        await link._process_message()
+        link._callback.assert_called_with(b'[["x", 1]]', None, 4, b"4", link, None)
+
+        # Empty body is delivered as empty bytes
+        msg_empty = Message()
+        mock_conv.return_value = msg_empty
+        link._incoming_transfers = [TransferFrame(handle=0, delivery_id=5, delivery_tag=b"5")]
+        await link._process_message()
+        link._callback.assert_called_with(b"", None, 5, b"5", link, None)
 
 
 async def test_transport_configure_keepalive_no_writer() -> None:
@@ -229,6 +245,46 @@ async def test_sender_link_send_waits_for_credit(sender: SenderLink) -> None:
     assert isinstance(frame, TransferFrame)
 
 
+async def test_sender_link_send_waits_for_remote_session_window(sender: SenderLink) -> None:
+    sender._state_machine.transition_sync("send_attach")
+    sender._state_machine.transition_sync("recv_attach")
+    sender._link_credit = 1
+    sender._credit_available.set()
+    sender.session._remote_incoming_window = 0
+
+    send_task = asyncio.create_task(sender.send(b"hello", _timeout=0.05))
+    await asyncio.sleep(0.01)
+    assert not send_task.done()
+
+    sender.session._remote_incoming_window = 1
+    sender.session._remote_incoming_window_available.set()
+
+    await send_task
+    assert sender.session._remote_incoming_window == 0
+    assert len(cast(Any, sender.session.connection).sent) == 1
+    assert isinstance(cast(Any, sender.session.connection).sent[0][1], TransferFrame)
+
+
+async def test_sender_link_send_timeout_waiting_for_session_window(sender: SenderLink) -> None:
+    sender._state_machine.transition_sync("send_attach")
+    sender._state_machine.transition_sync("recv_attach")
+    sender._link_credit = 1
+    sender._credit_available.set()
+
+    with (
+        patch.object(
+            sender.session,
+            "wait_for_remote_incoming_window",
+            side_effect=asyncio.TimeoutError,
+        ),
+        pytest.raises(LinkError, match="Timeout waiting for session window"),
+    ):
+        await sender.send(b"hello", _timeout=0.01)
+
+    assert sender.link_credit == 1
+    assert sender._credit_available.is_set()
+
+
 async def test_sender_link_send_timeout_waiting_for_credit(sender: SenderLink) -> None:
     # Setup link as attached and ready
     sender._state_machine.transition_sync("send_attach")
@@ -332,6 +388,24 @@ async def test_receiver_link_attach(receiver: ReceiverLink) -> None:
     assert isinstance(receiver.session.connection.sent[1][1], FlowFrame)
 
 
+async def test_receiver_link_uses_remote_initial_delivery_count(receiver: ReceiverLink) -> None:
+    receiver._state_machine.transition_sync("send_attach")
+    attach_response = AttachFrame(
+        name="test-receiver",
+        handle=1,
+        role=False,
+        source=None,
+        target=None,
+        initial_delivery_count=42,
+    )
+    await receiver._handle_attach(attach_response)
+
+    assert receiver._delivery_count == 42
+    flow = cast(Any, receiver.session.connection).sent[-1][1]
+    assert isinstance(flow, FlowFrame)
+    assert flow.delivery_count == 42
+
+
 async def test_receiver_link_receive_message(receiver: ReceiverLink) -> None:
     received = []
 
@@ -348,13 +422,105 @@ async def test_receiver_link_receive_message(receiver: ReceiverLink) -> None:
     receiver._callback = on_message
 
     # Pre-calculate transfer frame
-    msg = Message(data=b"test-data")
+    msg = Message(data=[b"test-data"])
     frames = list(message_to_transfer_frames(msg, 512, 0, b"0", True))
 
     await receiver._handle_transfer(frames[0])
 
     assert len(received) == 1
     assert received[0][0] == b"test-data"
+
+
+async def test_receiver_link_discards_aborted_transfer(receiver: ReceiverLink) -> None:
+    receiver._callback = Mock()
+    transfer = TransferFrame(
+        handle=0,
+        delivery_id=1,
+        delivery_tag=b"1",
+        aborted=True,
+        payload=b"bad",
+    )
+
+    await receiver._handle_transfer(transfer)
+
+    receiver._callback.assert_not_called()
+    assert receiver._incoming_transfers == []
+
+
+async def test_receiver_link_aborted_transfer_replenishes_credit(receiver: ReceiverLink) -> None:
+    receiver._state_machine.transition_sync("send_attach")
+    receiver._state_machine.transition_sync("recv_attach")
+    cast(Any, receiver.session.connection).sent.clear()
+    receiver._prefetch = 10
+    receiver._link_credit = 5
+
+    transfer = TransferFrame(
+        handle=0,
+        delivery_id=1,
+        delivery_tag=b"1",
+        aborted=True,
+    )
+
+    await receiver._handle_transfer(transfer)
+
+    assert receiver.link_credit == 10
+    assert isinstance(cast(Any, receiver.session.connection).sent[-1][1], FlowFrame)
+
+
+async def test_receiver_link_aborted_transfer_with_no_credit(receiver: ReceiverLink) -> None:
+    receiver._callback = Mock()
+    receiver._link_credit = 0
+
+    await receiver._handle_transfer(TransferFrame(handle=0, delivery_id=1, aborted=True))
+
+    assert receiver.link_credit == 0
+    assert cast(Any, receiver.session.connection).sent == []
+
+
+async def test_receiver_link_send_disposition(receiver: ReceiverLink) -> None:
+    await receiver._send_disposition(42, Accepted())
+
+    sent = cast(Any, receiver.session.connection).sent
+    assert isinstance(sent[-1][1], DispositionFrame)
+    assert sent[-1][1].first == 42
+    assert receiver._delivery_settled_by_callback is True
+
+
+async def test_receiver_link_multi_frame_uses_first_transfer_delivery_metadata(
+    receiver: ReceiverLink,
+) -> None:
+    received: list[tuple[int, bytes]] = []
+
+    def on_message(
+        _body: bytes,
+        _headers: dict[str, Any] | None,
+        delivery_id: int,
+        delivery_tag: bytes,
+        _link: ReceiverLink,
+        _properties: Properties | None,
+    ) -> None:
+        received.append((delivery_id, delivery_tag))
+
+    receiver._callback = on_message
+    msg = Message(data=[b"x" * 200])
+    frames = list(
+        message_to_transfer_frames(
+            msg,
+            64,
+            0,
+            b"first-tag",
+            123,
+            settled=True,
+        ),
+    )
+    assert len(frames) > 1
+    assert frames[-1].delivery_id is None
+    assert frames[-1].delivery_tag is None
+
+    for frame in frames:
+        await receiver._handle_transfer(frame)
+
+    assert received == [(123, b"first-tag")]
 
 
 async def test_receiver_link_flow_echo(receiver: ReceiverLink) -> None:
@@ -392,7 +558,7 @@ async def test_receiver_link_credit_replenish(receiver: ReceiverLink) -> None:
     receiver._link_credit = 6
 
     # Process message
-    msg = Message(data=b"test")
+    msg = Message(data=[b"test"])
     frames = list(message_to_transfer_frames(msg, 512, 0, b"0", True))
 
     await receiver._handle_transfer(frames[0])
@@ -409,7 +575,7 @@ async def test_receiver_link_credit_replenish(receiver: ReceiverLink) -> None:
     # Credit decreases to 4, which is < 5, so replenish should trigger
     assert receiver.link_credit == 10  # Reset to prefetch
     assert len(receiver.session.connection.sent) == 1  # type: ignore[attr-defined]
-    assert isinstance(receiver.session.connection.sent[0][1], FlowFrame)  # type: ignore[attr-defined]
+    assert isinstance(receiver.session.connection.sent[-1][1], FlowFrame)  # type: ignore[attr-defined]
 
 
 async def test_receiver_process_message_callback_async(receiver: ReceiverLink) -> None:
@@ -420,7 +586,7 @@ async def test_receiver_process_message_callback_async(receiver: ReceiverLink) -
 
     receiver._callback = on_message
 
-    msg = Message(data=b"async-test")
+    msg = Message(data=[b"async-test"])
     frames = list(message_to_transfer_frames(msg, 512, 0, b"0", True))
 
     await receiver._handle_transfer(frames[0])
@@ -435,7 +601,7 @@ async def test_receiver_process_message_json_body(receiver: ReceiverLink) -> Non
 
     # Body is dict (json) - must be bytes
     data = json.dumps({"key": "value"}).encode()
-    msg = Message(data=data)
+    msg = Message(data=[data])
     frames = list(message_to_transfer_frames(msg, 512, 0, b"0", True))
 
     await receiver._handle_transfer(frames[0])
@@ -448,7 +614,7 @@ async def test_receiver_process_message_str_body(receiver: ReceiverLink) -> None
     received = []
     receiver._callback = lambda body, *_: received.append(body)
 
-    msg = Message(data=b"string-body")
+    msg = Message(data=[b"string-body"])
     frames = list(message_to_transfer_frames(msg, 512, 0, b"0", True))
 
     await receiver._handle_transfer(frames[0])
@@ -460,7 +626,7 @@ async def test_receiver_process_message_error(receiver: ReceiverLink) -> None:
     # Callback raises exception
     receiver._callback = Mock(side_effect=ValueError("Callback error"))
 
-    msg = Message(data=b"data")
+    msg = Message(data=[b"data"])
     frames = list(message_to_transfer_frames(msg, 512, 0, b"0", True))
 
     # Should catch exception and clear transfers

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -29,9 +30,23 @@ class FakeSession:
     _next_outgoing_id: int = 0
     _incoming_window: int = 100
     _outgoing_window: int = 100
+    _remote_incoming_window: int = 100
+    _remote_incoming_window_available: asyncio.Event = field(
+        default_factory=asyncio.Event,
+    )
 
     def _remove_link(self, _link: Any) -> None:
         return None
+
+    async def wait_for_remote_incoming_window(self, timeout: float) -> None:  # noqa: ARG002
+        while self._remote_incoming_window <= 0:
+            await self._remote_incoming_window_available.wait()
+
+    def consume_remote_incoming_window(self) -> None:
+        if self._remote_incoming_window > 0:
+            self._remote_incoming_window -= 1
+        if self._remote_incoming_window <= 0:
+            self._remote_incoming_window_available.clear()
 
     async def end(self) -> None:
         return None

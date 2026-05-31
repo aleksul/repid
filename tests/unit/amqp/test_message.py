@@ -8,7 +8,7 @@ from repid.connections.amqp._uamqp.message import Message
 def test_message_encoding_with_various_properties() -> None:
     # Test message with application properties
     msg = Message(
-        data=b"test data",
+        data=[b"test data"],
         application_properties={"key": "value", "number": 42},
     )
 
@@ -31,14 +31,14 @@ def test_message_encoding_with_various_properties() -> None:
 
     # Decode back
     decoded_msg = transfer_frames_to_message(frames)
-    assert decoded_msg.data == b"test data"
+    assert decoded_msg.data == [b"test data"]
     assert decoded_msg.application_properties == {"key": "value", "number": 42}
 
 
 def test_message_encoding_multi_frame() -> None:
     # Test with large data that will span multiple frames
     large_data = b"x" * 10000
-    msg = Message(data=large_data)
+    msg = Message(data=[large_data])
 
     frames = list(
         message_to_transfer_frames(
@@ -54,12 +54,12 @@ def test_message_encoding_multi_frame() -> None:
     # Should create multiple frames for large data
     assert len(frames) > 1
     decoded_msg = transfer_frames_to_message(frames)
-    assert decoded_msg.data == large_data
+    assert decoded_msg.data == [large_data]
 
 
 def test_message_with_footer() -> None:
     # Test with footer
-    msg = Message(data=b"data", footer={"footer_key": "footer_value"})
+    msg = Message(data=[b"data"], footer={"footer_key": "footer_value"})
 
     frames = list(
         message_to_transfer_frames(
@@ -74,5 +74,5 @@ def test_message_with_footer() -> None:
 
     assert len(frames) >= 1
     decoded_msg = transfer_frames_to_message(frames)
-    assert decoded_msg.data == b"data"
+    assert decoded_msg.data == [b"data"]
     assert decoded_msg.footer == {"footer_key": "footer_value"}

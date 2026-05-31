@@ -35,6 +35,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("repid.connections.amqp.protocol")
 
+DEFAULT_SESSION_WINDOW = 65535
+UINT32_HALF_RANGE = 0x80000000
+
 
 class SessionError(Exception):
     """Raised when a session operation fails."""
@@ -53,13 +56,19 @@ class Session:
         await sender.send(b"Hello, World!")
     """
 
-    def __init__(self, connection: AmqpConnection, channel: int) -> None:
+    def __init__(
+        self,
+        connection: AmqpConnection,
+        channel: int,
+        incoming_window: int = DEFAULT_SESSION_WINDOW,
+    ) -> None:
         """
         Initialize session.
 
         Args:
             connection: Parent connection
             channel: Channel number for this session
+            incoming_window: Initial incoming transfer-frame window
         """
         self._connection = connection
         self._channel = channel
@@ -72,19 +81,34 @@ class Session:
         self._links_by_handle: dict[int, SenderLink | ReceiverLink] = {}  # by local handle
         self._links_by_remote_handle: dict[int, SenderLink | ReceiverLink] = {}  # by remote handle
         self._next_handle = 0
+        self._receiver_prefetch_total = 0
 
         # Flow control
         self._next_outgoing_id = 0
         self._next_incoming_id = 0
-        self._incoming_window = 2048
-        self._outgoing_window = 2048
+        self._incoming_window = incoming_window
+        self._outgoing_window = DEFAULT_SESSION_WINDOW
+        self._incoming_transfers_since_flow = 0
+        self._incoming_flow_threshold = self._flow_threshold(self._incoming_window)
 
         # Remote flow control
         self._remote_incoming_window = 0
         self._remote_outgoing_window = 0
+        self._remote_incoming_window_available = asyncio.Event()
 
         # Ready event (set when BEGIN response received)
         self._ready = asyncio.Event()
+
+    @staticmethod
+    def _flow_threshold(window: int) -> int:
+        return max(1, window // 2)
+
+    @staticmethod
+    def _remaining_window(start: int, window: int, current: int) -> int:
+        consumed = (current - start) & 0xFFFFFFFF
+        if consumed >= UINT32_HALF_RANGE:
+            return window
+        return max(window - consumed, 0)
 
     # -------------------------------------------------------------------------
     # Properties
@@ -135,6 +159,58 @@ class Session:
         await self._state_machine.transition("send_begin")
 
         logger.debug("session.begin.sent", extra={"channel": self._channel})
+
+    async def send_flow(self) -> None:
+        """Send session-level FLOW advertising current session window state."""
+        flow_frame = FlowFrame(
+            next_incoming_id=self._next_incoming_id,
+            incoming_window=self._incoming_window,
+            next_outgoing_id=self._next_outgoing_id,
+            outgoing_window=self._outgoing_window,
+        )
+        await self._connection.send_performative(self._channel, flow_frame)
+        self._incoming_transfers_since_flow = 0
+
+        logger.debug(
+            "session.flow.sent",
+            extra={
+                "channel": self._channel,
+                "next_incoming_id": self._next_incoming_id,
+                "incoming_window": self._incoming_window,
+            },
+        )
+
+    async def _record_incoming_transfer(self) -> None:
+        self._next_incoming_id = (self._next_incoming_id + 1) & 0xFFFFFFFF
+        self._incoming_transfers_since_flow += 1
+        if self._incoming_transfers_since_flow >= self._incoming_flow_threshold:
+            await self.send_flow()
+
+    async def wait_for_remote_incoming_window(self, timeout: float) -> None:
+        while self._remote_incoming_window <= 0:
+            try:
+                await asyncio.wait_for(
+                    self._remote_incoming_window_available.wait(),
+                    timeout=timeout,
+                )
+            finally:
+                if self._remote_incoming_window <= 0:
+                    self._remote_incoming_window_available.clear()
+
+    def consume_remote_incoming_window(self) -> None:
+        if self._remote_incoming_window > 0:
+            self._remote_incoming_window -= 1
+        if self._remote_incoming_window <= 0:
+            self._remote_incoming_window_available.clear()
+
+    async def _ensure_incoming_window(self, minimum: int) -> None:
+        if minimum <= self._incoming_window:
+            return
+
+        self._incoming_window = minimum
+        self._incoming_flow_threshold = self._flow_threshold(self._incoming_window)
+        if self.is_mapped:
+            await self.send_flow()
 
     async def wait_ready(self, timeout: float = 10.0) -> None:
         """
@@ -241,6 +317,10 @@ class Session:
         self._remote_incoming_window = begin.incoming_window or 0
         self._remote_outgoing_window = begin.outgoing_window or 0
         self._next_incoming_id = begin.next_outgoing_id
+        if self._remote_incoming_window > 0:
+            self._remote_incoming_window_available.set()
+        else:
+            self._remote_incoming_window_available.clear()
 
         await self._state_machine.transition("recv_begin")
         self._ready.set()
@@ -310,13 +390,21 @@ class Session:
         """Handle FLOW frame."""
         # Update session-level flow control
         if flow.next_incoming_id is not None:
-            self._remote_incoming_window = (
-                (flow.next_incoming_id or 0) + (flow.incoming_window or 0) - self._next_outgoing_id
-            ) & 0xFFFFFFFF
+            self._remote_incoming_window = self._remaining_window(
+                flow.next_incoming_id or 0,
+                flow.incoming_window or 0,
+                self._next_outgoing_id,
+            )
+            if self._remote_incoming_window > 0:
+                self._remote_incoming_window_available.set()
+            else:
+                self._remote_incoming_window_available.clear()
         if flow.next_outgoing_id is not None:
-            self._remote_outgoing_window = (
-                (flow.next_outgoing_id or 0) + (flow.outgoing_window or 0) - self._next_incoming_id
-            ) & 0xFFFFFFFF
+            self._remote_outgoing_window = self._remaining_window(
+                flow.next_outgoing_id or 0,
+                flow.outgoing_window or 0,
+                self._next_incoming_id,
+            )
 
         # Dispatch to link if handle specified
         if flow.handle is not None and flow.handle in self._links_by_remote_handle:
@@ -325,7 +413,7 @@ class Session:
 
     async def _handle_transfer(self, transfer: TransferFrame) -> None:
         """Handle TRANSFER frame (incoming message)."""
-        self._next_incoming_id = (self._next_incoming_id + 1) & 0xFFFFFFFF
+        await self._record_incoming_transfer()
         handle = transfer.handle
         if handle is None:
             logger.error("session.transfer.missing_handle", extra={"channel": self._channel})
@@ -452,6 +540,9 @@ class Session:
 
         if name is None:
             name = f"receiver-{address}-{len(self._links)}"
+
+        self._receiver_prefetch_total += prefetch
+        await self._ensure_incoming_window(self._receiver_prefetch_total)
 
         handle = self._allocate_handle()
         link = ReceiverLink(self, name, address, handle, callback, prefetch=prefetch)

@@ -22,6 +22,7 @@ from repid.connections.amqp.protocol.connection import (
     ConnectionConfig,
     ProtocolError,
 )
+from repid.connections.amqp.protocol.events import ConnectionEvent
 from repid.connections.amqp.protocol.reconnect import ReconnectConfig
 from repid.connections.amqp.protocol.session import Session
 from repid.connections.amqp.protocol.states import (
@@ -34,6 +35,7 @@ from repid.connections.amqp.protocol.transport import (
     AMQP_HEADER,
     SASL_HEADER,
     ConnectionClosedError,
+    FrameError,
 )
 
 from .utils import FakeConnection, FakeSession, FakeTransport, _set_connection_open
@@ -68,7 +70,7 @@ def test_connection_state_machine_rejects_invalid_transition() -> None:
 
 
 async def test_connection_do_amqp_open_records_remote_params() -> None:
-    config = ConnectionConfig(host="example.com")
+    config = ConnectionConfig(host="example.com", max_frame_size=2048)
     connection = AmqpConnection(config)
     transport = FakeTransport(
         protocol_headers=[AMQP_HEADER],
@@ -94,7 +96,38 @@ async def test_connection_do_amqp_open_records_remote_params() -> None:
     assert connection._remote_idle_timeout == 30
     assert connection._remote_channel_max == 7
     assert transport.amqp_headers_sent == 1
+    assert transport.inbound_max_frame_size == 2048
+    assert transport.outbound_max_frame_size == 512
     assert isinstance(transport.sent_frames[0][1], OpenFrame)
+
+
+async def test_connection_do_amqp_open_keeps_channel_max_zero() -> None:
+    config = ConnectionConfig(host="example.com")
+    connection = AmqpConnection(config)
+    transport = FakeTransport(
+        protocol_headers=[AMQP_HEADER],
+        frames=[(0, OpenFrame(container_id="remote", channel_max=0))],
+    )
+
+    with patch.object(connection, "_transport", transport):
+        await connection._do_amqp_open()
+
+    assert connection._remote_channel_max == 0
+
+
+async def test_connection_do_amqp_open_rejects_nonzero_channel() -> None:
+    config = ConnectionConfig(host="example.com")
+    connection = AmqpConnection(config)
+    transport = FakeTransport(
+        protocol_headers=[AMQP_HEADER],
+        frames=[(1, OpenFrame(container_id="remote"))],
+    )
+
+    with (
+        patch.object(connection, "_transport", transport),
+        pytest.raises(ProtocolError, match="OPEN frame received on channel 1"),
+    ):
+        await connection._do_amqp_open()
 
 
 async def test_connection_do_connect_starts_heartbeat_task() -> None:
@@ -115,6 +148,49 @@ async def test_connection_do_connect_starts_heartbeat_task() -> None:
         connection._heartbeat_task.cancel()
         assert connection._read_task is not None
         connection._read_task.cancel()
+
+
+async def test_connection_do_connect_retries_with_sasl_when_server_requires_it() -> None:
+    config = ConnectionConfig(host="example.com")
+    connection = AmqpConnection(config)
+
+    with (
+        patch.object(connection._transport, "connect", new_callable=AsyncMock) as mock_connect,
+        patch.object(connection._transport, "close", new_callable=AsyncMock) as mock_close,
+        patch.object(
+            connection,
+            "_do_amqp_open",
+            new_callable=AsyncMock,
+            side_effect=[ProtocolError("Server requires SASL"), None],
+        ) as mock_open,
+        patch.object(connection, "_do_sasl_auth", new_callable=AsyncMock) as mock_sasl,
+        patch.object(connection, "_read_loop", new_callable=AsyncMock),
+    ):
+        await connection._do_connect()
+
+    assert mock_connect.await_count == 2
+    mock_close.assert_awaited_once()
+    mock_sasl.assert_awaited_once()
+    assert mock_open.await_count == 2
+    assert connection._read_task is not None
+    connection._read_task.cancel()
+
+
+async def test_connection_do_connect_reraises_protocol_error_with_credentials() -> None:
+    connection = AmqpConnection(ConnectionConfig(host="example.com", username="guest"))
+
+    with (
+        patch.object(connection._transport, "connect", new_callable=AsyncMock),
+        patch.object(connection, "_do_sasl_auth", new_callable=AsyncMock),
+        patch.object(
+            connection,
+            "_do_amqp_open",
+            new_callable=AsyncMock,
+            side_effect=ProtocolError("Server requires SASL"),
+        ),
+        pytest.raises(ProtocolError, match="Server requires SASL"),
+    ):
+        await connection._do_connect()
 
 
 async def test_connection_do_amqp_open_rejects_sasl_header() -> None:
@@ -178,6 +254,23 @@ async def test_connection_handle_performative_dispatches_session() -> None:
 
         assert session.state == SessionState.BEGIN_RCVD
         assert session._ready.is_set()
+
+
+async def test_connection_handle_begin_uses_remote_channel_mapping() -> None:
+    config = ConnectionConfig(host="example.com")
+    connection = AmqpConnection(config)
+
+    with patch.object(connection, "_transport", FakeTransport(protocol_headers=[], frames=[])):
+        session = Session(connection, channel=2)
+        connection._sessions[2] = session
+
+        await connection._handle_performative(
+            7,
+            BeginFrame(remote_channel=2, next_outgoing_id=0, incoming_window=1, outgoing_window=1),
+        )
+
+        assert connection._sessions[7] is session
+        assert session.state == SessionState.BEGIN_RCVD
 
 
 async def test_connection_state_machine_is_open() -> None:
@@ -642,6 +735,25 @@ async def test_connection_read_loop_handles_generic_error() -> None:
         # Should exit cleanly
 
 
+async def test_connection_read_loop_handles_frame_error() -> None:
+    config = ConnectionConfig(host="localhost", port=5672)
+    conn = AmqpConnection(config)
+    conn._state_machine._state = ConnectionState.OPENED
+
+    with (
+        patch.object(
+            conn._transport,
+            "read_frame",
+            new_callable=AsyncMock,
+            side_effect=FrameError("bad frame"),
+        ),
+        patch.object(conn, "_handle_frame_error", new_callable=AsyncMock) as mock_handle,
+    ):
+        await conn._read_loop()
+
+        mock_handle.assert_awaited_once()
+
+
 async def test_connection_read_loop_cancelled() -> None:
     config = ConnectionConfig(host="localhost", port=5672)
     conn = AmqpConnection(config)
@@ -677,6 +789,64 @@ async def test_connection_handle_close_frame() -> None:
 
         # Should send CLOSE response
         assert any(isinstance(args[0][1], CloseFrame) for args in mock_send.call_args_list)
+
+
+async def test_connection_handle_close_cancels_heartbeat_and_invalidates_sessions() -> None:
+    config = ConnectionConfig(host="localhost", port=5672)
+    conn = AmqpConnection(config)
+    conn._state_machine._state = ConnectionState.OPENED
+    conn._heartbeat_task = asyncio.create_task(asyncio.sleep(100))
+    session = MagicMock()
+    conn._sessions[1] = session
+
+    with (
+        patch.object(conn._transport, "send_performative", new_callable=AsyncMock),
+        patch.object(conn._transport, "close", new_callable=AsyncMock),
+    ):
+        await conn._handle_close(CloseFrame())
+
+    assert conn._heartbeat_task is None
+    session.invalidate.assert_called_once()
+    assert conn._sessions == {}
+
+
+async def test_connection_handle_frame_error_sends_close_with_error() -> None:
+    config = ConnectionConfig(host="localhost", port=5672)
+    conn = AmqpConnection(config)
+    conn._state_machine._state = ConnectionState.OPENED
+
+    with patch.object(conn._transport, "send_performative", new_callable=AsyncMock) as mock_send:
+        await conn._handle_frame_error(FrameError("bad frame"))
+
+    mock_send.assert_awaited_once()
+    await_args = mock_send.await_args
+    assert await_args is not None
+    channel, frame = await_args.args
+    assert channel == 0
+    assert isinstance(frame, CloseFrame)
+    assert frame.error is not None
+    assert frame.error.condition == "amqp:internal-error"
+    assert frame.error.description == "bad frame"
+    assert conn.state == ConnectionState.ERROR
+
+
+async def test_connection_handle_close_from_unopened_state_marks_error() -> None:
+    config = ConnectionConfig(host="localhost", port=5672)
+    conn = AmqpConnection(config)
+    conn._state_machine._state = ConnectionState.OPENED
+
+    with (
+        patch.object(
+            conn._transport,
+            "send_performative",
+            new_callable=AsyncMock,
+            side_effect=OSError("closed"),
+        ),
+        patch.object(conn._transport, "close", new_callable=AsyncMock),
+    ):
+        await conn._handle_close(CloseFrame())
+
+    assert conn.state == ConnectionState.ERROR
 
 
 async def test_connection_create_session_not_connected() -> None:
@@ -791,6 +961,14 @@ async def test_connection_remove_session() -> None:
 
     # Should be removed
     assert 1 not in conn._sessions
+
+
+async def test_connection_remove_session_ignores_missing_channel() -> None:
+    conn = AmqpConnection(ConnectionConfig(host="localhost", port=5672))
+
+    conn._remove_session(1)
+
+    assert conn._sessions == {}
 
 
 async def test_connection_create_classmethod() -> None:
@@ -1129,6 +1307,25 @@ async def test_connection_create_session_success() -> None:
         assert len(conn._sessions) > 0
 
 
+async def test_connection_create_session_uses_configured_session_window() -> None:
+    config = ConnectionConfig(host="localhost", port=5672, session_window=12345)
+    conn = AmqpConnection(config)
+    conn._state_machine._state = ConnectionState.OPENED
+
+    with patch.object(conn._transport, "send_performative", new_callable=AsyncMock) as mock_send:
+        session = await conn.create_session()
+
+    assert session._incoming_window == 12345
+    begin = mock_send.call_args.args[1]
+    assert isinstance(begin, BeginFrame)
+    assert begin.incoming_window == 12345
+
+
+def test_connection_config_rejects_invalid_session_window() -> None:
+    with pytest.raises(ValueError, match="session_window must be greater than 0"):
+        ConnectionConfig(host="localhost", port=5672, session_window=0)
+
+
 async def test_connection_do_connect_with_sasl_auth() -> None:
     config = ConnectionConfig(
         host="localhost",
@@ -1211,11 +1408,11 @@ async def test_connection_read_loop_triggers_unexpected_close_handler() -> None:
             new_callable=AsyncMock,
             side_effect=RuntimeError("Network error"),
         ),
-        patch.object(conn, "_handle_unexpected_close", new_callable=AsyncMock),
+        patch.object(conn, "_handle_unexpected_close", new_callable=AsyncMock) as mock_handle,
     ):
         await conn._read_loop()
 
-        assert conn._stop_event.is_set() or conn._state_machine.is_open()
+        assert mock_handle.called
 
 
 async def test_connection_handle_unexpected_close_with_general_exception() -> None:
@@ -1311,10 +1508,54 @@ async def test_connection_handle_close_with_error_and_reconnect() -> None:
     with (
         patch.object(conn._transport, "send_performative", new_callable=AsyncMock),
         patch.object(conn._transport, "close", new_callable=AsyncMock),
-        patch.object(conn, "_handle_unexpected_close", new_callable=AsyncMock) as mock_handle,
+        patch.object(conn, "_reconnect_after_close", new_callable=AsyncMock) as mock_reconnect,
     ):
         await conn._handle_close(close_frame)
-        mock_handle.assert_called()
+        mock_reconnect.assert_called()
+
+
+async def test_connection_reconnect_after_close_logs_connection_error() -> None:
+    config = ConnectionConfig(host="localhost", port=5672)
+    conn = AmqpConnection(config)
+
+    with patch.object(
+        conn,
+        "connect",
+        new_callable=AsyncMock,
+        side_effect=ConnectionError("refused"),
+    ) as mock_connect:
+        await conn._reconnect_after_close()
+
+    mock_connect.assert_awaited_once()
+
+
+async def test_connection_reconnect_after_close_emits_reconnected() -> None:
+    config = ConnectionConfig(host="localhost", port=5672)
+    conn = AmqpConnection(config)
+
+    with (
+        patch.object(conn, "connect", new_callable=AsyncMock) as mock_connect,
+        patch.object(conn, "_emit", new_callable=AsyncMock) as mock_emit,
+    ):
+        await conn._reconnect_after_close()
+
+    mock_connect.assert_awaited_once()
+    mock_emit.assert_awaited_once_with(ConnectionEvent.RECONNECTED)
+
+
+async def test_connection_reconnect_after_close_logs_unexpected_error() -> None:
+    config = ConnectionConfig(host="localhost", port=5672)
+    conn = AmqpConnection(config)
+
+    with patch.object(
+        conn,
+        "connect",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("boom"),
+    ) as mock_connect:
+        await conn._reconnect_after_close()
+
+    mock_connect.assert_awaited_once()
 
 
 async def test_connection_send_performative_waiter_removed() -> None:

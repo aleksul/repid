@@ -31,9 +31,23 @@ class FakeSession:
     _next_outgoing_id: int = 0
     _incoming_window: int = 100
     _outgoing_window: int = 100
+    _remote_incoming_window: int = 100
+    _remote_incoming_window_available: asyncio.Event = field(
+        default_factory=asyncio.Event,
+    )
 
     def _remove_link(self, _link: Any) -> None:
         return None
+
+    async def wait_for_remote_incoming_window(self, timeout: float) -> None:  # noqa: ARG002
+        while self._remote_incoming_window <= 0:
+            await self._remote_incoming_window_available.wait()
+
+    def consume_remote_incoming_window(self) -> None:
+        if self._remote_incoming_window > 0:
+            self._remote_incoming_window -= 1
+        if self._remote_incoming_window <= 0:
+            self._remote_incoming_window_available.clear()
 
     async def end(self) -> None:
         return None
@@ -50,6 +64,8 @@ class FakeTransport:
     amqp_headers_sent: int = 0
     sasl_headers_sent: int = 0
     closed: bool = False
+    inbound_max_frame_size: int | None = None
+    outbound_max_frame_size: int | None = None
 
     async def connect(self) -> None:
         return None
@@ -77,6 +93,13 @@ class FakeTransport:
 
     async def send_performative(self, channel: int, performative: Any) -> None:
         self.sent_frames.append((channel, performative))
+
+    def set_max_frame_size(self, _max_frame_size: int) -> None:
+        return None
+
+    def set_frame_size_limits(self, inbound: int, outbound: int) -> None:
+        self.inbound_max_frame_size = inbound
+        self.outbound_max_frame_size = outbound
 
 
 @dataclass(slots=True)

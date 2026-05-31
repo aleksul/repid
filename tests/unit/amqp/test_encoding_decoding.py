@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import decimal
 import struct
 import uuid
 from dataclasses import dataclass
@@ -12,7 +13,12 @@ import pytest
 
 from repid.connections.amqp._uamqp import _encode as encode
 from repid.connections.amqp._uamqp import performatives
-from repid.connections.amqp._uamqp._decode import decode_frame, transfer_frames_to_message
+from repid.connections.amqp._uamqp._decode import (
+    _construct_described_value,
+    bytes_to_performative,
+    decode_frame,
+    transfer_frames_to_message,
+)
 from repid.connections.amqp._uamqp._encode import message_to_transfer_frames, performative_to_bytes
 from repid.connections.amqp._uamqp.amqptypes import (
     TYPE,
@@ -23,6 +29,7 @@ from repid.connections.amqp._uamqp.amqptypes import (
 )
 from repid.connections.amqp._uamqp.endpoints import Source
 from repid.connections.amqp._uamqp.message import Header, Message, Properties
+from repid.connections.amqp._uamqp.outcomes import Accepted
 from repid.connections.amqp._uamqp.performatives import (
     AMQPTAnnotation,
     AttachFrame,
@@ -97,7 +104,7 @@ def test_performative_encoding_various_types() -> None:
 
 def test_decode_frame_round_trip() -> None:
     payload = b"payload"
-    msg = Message(data=payload)
+    msg = Message(data=[payload])
     frames = list(
         message_to_transfer_frames(
             message=msg,
@@ -115,7 +122,151 @@ def test_decode_frame_round_trip() -> None:
     assert isinstance(performative, TransferFrame)
 
     decoded_msg = transfer_frames_to_message(frames)
-    assert decoded_msg.data == payload
+    assert decoded_msg.data == [payload]
+
+
+def test_decode_described_known_descriptor_with_non_list_value() -> None:
+    assert _construct_described_value(Accepted.CODE, "accepted") == "accepted"
+
+
+def test_bytes_to_performative_rejects_too_small_frame() -> None:
+    with pytest.raises(ValueError, match="Invalid frame size"):
+        bytes_to_performative(struct.pack(">IBBH", 7, 2, 0, 0))
+
+
+def test_bytes_to_performative_rejects_too_small_doff() -> None:
+    with pytest.raises(ValueError, match="data offset"):
+        bytes_to_performative(struct.pack(">IBBH", 8, 1, 0, 0))
+
+
+def test_bytes_to_performative_rejects_size_smaller_than_doff() -> None:
+    with pytest.raises(ValueError, match="smaller than data offset"):
+        bytes_to_performative(struct.pack(">IBBH", 8, 3, 0, 0))
+
+
+def test_decimal32_encoder_encodes_bytes() -> None:
+    output = bytearray()
+    encode._encode_decimal32(output, b"1234")
+
+    assert output == b"\x741234"
+
+
+def test_decimal32_encoder_rejects_decimal_instances() -> None:
+    with pytest.raises(TypeError, match="not implemented"):
+        encode._encode_decimal32(bytearray(), decimal.Decimal("1.0"))
+
+
+def test_decimal32_encoder_rejects_wrong_width() -> None:
+    with pytest.raises(ValueError, match="4 bytes"):
+        encode._encode_decimal32(bytearray(), b"123")
+
+
+def test_decimal64_encoder_encodes_bytes() -> None:
+    output = bytearray()
+    encode._encode_decimal64(output, b"12345678")
+
+    assert output == b"\x8412345678"
+
+
+def test_decimal64_encoder_rejects_decimal_instances() -> None:
+    with pytest.raises(TypeError, match="not implemented"):
+        encode._encode_decimal64(bytearray(), decimal.Decimal("1.0"))
+
+
+def test_decimal64_encoder_rejects_wrong_width() -> None:
+    with pytest.raises(ValueError, match="8 bytes"):
+        encode._encode_decimal64(bytearray(), b"123")
+
+
+def test_decimal128_encoder_encodes_bytes() -> None:
+    output = bytearray()
+    encode._encode_decimal128(output, b"1234567890abcdef")
+
+    assert output == b"\x941234567890abcdef"
+
+
+def test_decimal128_encoder_rejects_decimal_instances() -> None:
+    with pytest.raises(TypeError, match="not implemented"):
+        encode._encode_decimal128(bytearray(), decimal.Decimal("1.0"))
+
+
+def test_decimal128_encoder_rejects_wrong_width() -> None:
+    with pytest.raises(ValueError, match="16 bytes"):
+        encode._encode_decimal128(bytearray(), b"123")
+
+
+def test_char_encoder_encodes_single_character_string() -> None:
+    output = bytearray()
+    encode._encode_char(output, "A")
+
+    assert output == b"\x73\x00\x00\x00A"
+
+
+def test_char_encoder_rejects_multi_character_string() -> None:
+    with pytest.raises(ValueError, match="single Unicode character"):
+        encode._encode_char(bytearray(), "ab")
+
+
+def test_char_encoder_rejects_out_of_range_code_point() -> None:
+    with pytest.raises(ValueError, match="out of range"):
+        encode._encode_char(bytearray(), 0x110000)
+
+
+def test_symbol_encoder_rejects_non_ascii_bytes() -> None:
+    with pytest.raises(UnicodeEncodeError):
+        encode._encode_symbol(bytearray(), b"\xff")
+
+
+def test_large_typed_array_uses_array32_encoding() -> None:
+    output = bytearray()
+    encode._encode_typed_array(output, list(range(256)), AMQPTypes.uint)
+
+    assert output[0] == 0xF0
+
+
+def test_message_id_encoder_encodes_uuid() -> None:
+    output = bytearray()
+    encode._encode_message_id(output, uuid.UUID(int=0))
+
+    assert output.startswith(b"\x98")
+
+
+def test_message_id_encoder_encodes_binary() -> None:
+    output = bytearray()
+    encode._encode_message_id(output, b"id")
+
+    assert output.startswith(b"\xa0")
+
+
+def test_annotations_encoder_accepts_ulong_keys() -> None:
+    output = bytearray()
+    encode._encode_annotations(output, [(1, "value")])
+
+    assert output
+
+
+def test_annotations_encoder_rejects_boolean_keys() -> None:
+    with pytest.raises(TypeError, match="annotation keys"):
+        encode._encode_annotations(bytearray(), [(False, "value")])
+
+
+def test_application_properties_encoder_rejects_non_string_keys() -> None:
+    with pytest.raises(TypeError, match="application-properties keys"):
+        encode._encode_application_properties(bytearray(), [(1, "value")])
+
+
+def test_performative_value_encoder_encodes_annotations_field() -> None:
+    output = bytearray()
+    encode._encode_performative_value(output, {"key": "value"}, FieldDefinition.annotations)
+
+    assert output
+
+
+def test_performative_value_encoder_encodes_application_properties_field() -> None:
+    output = bytearray()
+    encode._encode_performative_value(output, {"key": "value"}, FieldDefinition.app_properties)
+
+    assert output
 
 
 def test_encode_null() -> None:
@@ -132,11 +283,11 @@ def test_encode_boolean() -> None:
 
     out = bytearray()
     encode._encode_boolean(out, True, with_constructor=False)
-    assert out == b"\x41"
+    assert out == b"\x01"
 
     out = bytearray()
     encode._encode_boolean(out, False, with_constructor=False)
-    assert out == b"\x42"
+    assert out == b"\x00"
 
 
 def test_encode_ubyte() -> None:
@@ -147,6 +298,9 @@ def test_encode_ubyte() -> None:
     # Error case
     with pytest.raises(ValueError, match="Unsigned byte value"):
         encode._encode_ubyte(bytearray(), 256)
+
+    with pytest.raises(ValueError, match="Unsigned byte value"):
+        encode._encode_ubyte(bytearray(), -1)
 
     # Bytes input coverage
     out = bytearray()
@@ -159,7 +313,7 @@ def test_encode_ushort() -> None:
     encode._encode_ushort(out, 65535)
     assert out == b"\x60\xff\xff"
 
-    with pytest.raises(ValueError, match="Unsigned byte value"):
+    with pytest.raises(ValueError, match="Unsigned short value"):
         encode._encode_ushort(out, 70000)
 
 
@@ -180,7 +334,7 @@ def test_encode_uint() -> None:
     encode._encode_uint(out, 300)
     assert out == b"\x70\x00\x00\x01\x2c"
 
-    with pytest.raises(ValueError, match="Value supplied for unsigned int invalid"):
+    with pytest.raises(ValueError, match="Unsigned int value"):
         encode._encode_uint(bytearray(), 2**32)
 
 
@@ -197,7 +351,7 @@ def test_encode_ulong() -> None:
     encode._encode_ulong(out, 10, use_smallest=False)
     assert out == b"\x80\x00\x00\x00\x00\x00\x00\x00\x0a"
 
-    with pytest.raises(ValueError, match="unsigned long invalid"):
+    with pytest.raises(ValueError, match="Unsigned long value"):
         encode._encode_ulong(bytearray(), 2**64)
 
 
@@ -350,6 +504,71 @@ def test_encode_symbol() -> None:
     ):
         encode._encode_symbol(bytearray(), "x" * 300)
 
+    with pytest.raises(UnicodeEncodeError):
+        encode._encode_symbol(bytearray(), "snowman-☃")
+
+
+def test_encode_multiple_symbol_field_as_array() -> None:
+    encoded = performative_to_bytes(
+        OpenFrame(container_id="cid", offered_capabilities=["ANONYMOUS-RELAY"]),
+        0,
+    )
+    assert b"\xe0" in encoded
+
+
+def test_encode_annotation_keys_as_symbols() -> None:
+    frames = list(
+        message_to_transfer_frames(
+            Message(data=[b"x"], message_annotations={"x-opt-key": "v"}),
+            512,
+            0,
+            b"tag",
+            1,
+        ),
+    )
+    assert frames[0].payload is not None
+    assert b"\xa3\tx-opt-key" in frames[0].payload
+
+
+def test_application_properties_reject_nested_values() -> None:
+    with pytest.raises(TypeError, match="simple AMQP types"):
+        list(
+            message_to_transfer_frames(
+                Message(data=[b"x"], application_properties={"nested": {"x": 1}}),
+                512,
+                0,
+                b"tag",
+                1,
+            ),
+        )
+
+
+def test_message_id_int_encodes_as_ulong() -> None:
+    frames = list(
+        message_to_transfer_frames(
+            Message(properties=Properties(message_id=1), data=[b"x"]),
+            512,
+            0,
+            b"tag",
+            1,
+        ),
+    )
+    assert frames[0].payload is not None
+    assert b"\x53\x01" in frames[0].payload
+
+
+def test_message_id_rejects_float() -> None:
+    with pytest.raises(TypeError, match="message-id"):
+        list(
+            message_to_transfer_frames(
+                Message(properties=Properties(message_id=1.2), data=[b"x"]),
+                512,
+                0,
+                b"tag",
+                1,
+            ),
+        )
+
 
 def test_encode_list() -> None:
     out = bytearray()
@@ -412,6 +631,14 @@ def test_encode_array() -> None:
     out = bytearray()
     encode._encode_array(out, items, use_smallest=True)
     assert out[0] == 0xE0
+
+    out = bytearray()
+    encode._encode_array(out, [True, False], use_smallest=True)
+    assert out == b"\xe0\x04\x02\x56\x01\x00"
+
+    out = bytearray()
+    encode._encode_array(out, [0, 1], use_smallest=True)
+    assert out.startswith(b"\xe0")
 
     out = bytearray()
     encode._encode_array(out, items, use_smallest=False)
@@ -559,7 +786,7 @@ def test_message_to_transfer_frames_full() -> None:
     msg.properties = Properties(message_id="1")
     msg.application_properties = {"ap": 1}
     msg.footer = {"footer": 1}
-    msg.data = b"data"
+    msg.data = [b"data"]
 
     frames = list(encode.message_to_transfer_frames(msg, max_frame_size=4096, handle=1))
     assert len(frames) >= 1
@@ -567,7 +794,7 @@ def test_message_to_transfer_frames_full() -> None:
 
 def test_message_to_transfer_frames_split() -> None:
     # Test splitting message into multiple frames
-    msg = Message(data=b"x" * 1000)
+    msg = Message(data=[b"x" * 1000])
     frames = list(encode.message_to_transfer_frames(msg, max_frame_size=200, handle=1))
     assert len(frames) > 1
     assert frames[0].more is True
@@ -576,12 +803,12 @@ def test_message_to_transfer_frames_split() -> None:
 
 def test_message_to_transfer_frames() -> None:
     msg = Message()
-    msg.data = b"data"
+    msg.data = [b"data"]
 
     frames = list(encode.message_to_transfer_frames(msg, max_frame_size=1024, handle=1))
     assert len(frames) >= 1
 
-    msg = Message(sequence=[1, 2])
+    msg = Message(sequence=[[1, 2]])
     frames = list(encode.message_to_transfer_frames(msg, max_frame_size=1024, handle=1))
 
     msg = Message(value="val")

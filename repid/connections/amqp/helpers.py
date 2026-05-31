@@ -107,12 +107,19 @@ class AmqpReceivedMessage:
 
     async def _do_ack(self) -> None:
         """Send the AMQP accepted disposition on the wire (does not update `_action`)."""
+        await self._send_disposition(ACCEPTED_STATE)
+
+    async def _send_disposition(self, state: Accepted | Rejected | Released) -> None:
+        if hasattr(self._link, "_send_disposition"):
+            await self._link._send_disposition(self._delivery_id, state)
+            return
+
         disp = DispositionFrame(
             role=True,
             first=self._delivery_id,
             last=self._delivery_id,
             settled=True,
-            state=ACCEPTED_STATE,
+            state=state,
         )
         await self._link.session.connection.send_performative(self._link.session.channel, disp)
 
@@ -125,27 +132,13 @@ class AmqpReceivedMessage:
     async def nack(self) -> None:
         if self._action is not None:
             return
-        disp = DispositionFrame(
-            role=True,
-            first=self._delivery_id,
-            last=self._delivery_id,
-            settled=True,
-            state=REJECTED_STATE,
-        )
-        await self._link.session.connection.send_performative(self._link.session.channel, disp)
+        await self._send_disposition(REJECTED_STATE)
         self._action = MessageAction.nacked
 
     async def reject(self) -> None:
         if self._action is not None:
             return
-        disp = DispositionFrame(
-            role=True,
-            first=self._delivery_id,
-            last=self._delivery_id,
-            settled=True,
-            state=RELEASED_STATE,
-        )
-        await self._link.session.connection.send_performative(self._link.session.channel, disp)
+        await self._send_disposition(RELEASED_STATE)
         self._action = MessageAction.rejected
 
     async def reply(

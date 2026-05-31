@@ -1,9 +1,11 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Annotated, Any, ClassVar
 
 from .amqptypes import AMQPTAnnotation, AMQPTypes, FieldDefinition
+
+_ABSENT = object()
 
 
 class MessageBodyType(Enum):
@@ -224,18 +226,18 @@ class Message:
     message_annotations: dict[str, Any] | None = None
     properties: Properties | None = None
     application_properties: dict[str, Any] | None = None
-    data: bytes | None = None
-    sequence: list | None = None
-    value: Any | None = None
+    data: list[bytes] | None = None
+    sequence: list[list[Any]] | None = None
+    value: Any = field(default_factory=lambda: _ABSENT)
     footer: dict[str, Any] | None = None
 
     @property
-    def body(self) -> bytes | list | Any | None:
+    def body(self) -> list[bytes] | list[list[Any]] | Any | None:
         if self.data is not None:
             return self.data
         if self.sequence is not None:
             return self.sequence
-        if self.value is not None:
+        if self.value is not _ABSENT:
             return self.value
         return None
 
@@ -245,6 +247,6 @@ class Message:
             return MessageBodyType.DATA
         if self.sequence is not None:
             return MessageBodyType.SEQUENCE
-        if self.value is not None:
+        if self.value is not _ABSENT:
             return MessageBodyType.VALUE
         return MessageBodyType.EMPTY

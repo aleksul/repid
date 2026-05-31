@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from typing import Any, ClassVar, cast
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -288,9 +289,30 @@ async def test_amqp_received_message_properties() -> None:
     assert msg.channel == "test-channel"
     assert msg.message_id is None
     assert msg.is_acted_on is False
+    assert msg.keep_alive_interval is None
 
     await msg.ack()
     assert msg.is_acted_on is True
+
+
+async def test_amqp_received_message_uses_link_send_disposition() -> None:
+    class FakeLinkWithDisposition:
+        _send_disposition = AsyncMock()
+
+    msg = AmqpReceivedMessage(
+        payload=b"test",
+        headers=None,
+        link=cast(Any, FakeLinkWithDisposition()),
+        delivery_id=123,
+        delivery_tag=b"tag",
+        channel_name="test-channel",
+        managed_session=cast(ManagedSession, object()),
+        publish_fn=lambda: asyncio.sleep(0),
+    )
+
+    await msg.ack()
+
+    FakeLinkWithDisposition._send_disposition.assert_awaited_once()
 
 
 async def test_amqp_received_message_bytes_message_id() -> None:
@@ -342,6 +364,30 @@ async def test_amqp_received_message_reply_to() -> None:
     )
 
     assert msg.reply_to == "reply-to"
+
+
+async def test_amqp_received_message_properties_content_type_none() -> None:
+    connection = FakeConnection()
+    fake_session = FakeSession(connection=connection, channel=2)
+
+    class FakeReceiverLinkWithSession:
+        handle: int = 7
+        session: FakeSession = fake_session
+
+    link = FakeReceiverLinkWithSession()
+    msg = AmqpReceivedMessage(
+        payload=b"test",
+        headers=None,
+        link=cast(Any, link),
+        delivery_id=1,
+        delivery_tag=b"tag",
+        channel_name="q",
+        managed_session=cast(ManagedSession, object()),
+        publish_fn=lambda: asyncio.sleep(0),
+        properties=Properties(content_type=None),
+    )
+
+    assert msg.content_type is None
 
 
 async def test_amqp_received_message_bytes_properties() -> None:
@@ -597,6 +643,41 @@ async def test_message_broker_connection_context(monkeypatch: Any) -> None:
     async with broker.connection():
         assert broker.is_connected is True
     assert broker.is_connected is False
+
+
+async def test_message_broker_passes_session_window_to_connection(monkeypatch: Any) -> None:
+    configs: list[ConnectionConfig] = []
+
+    class DummyConnection:
+        def __init__(self, config: ConnectionConfig):
+            configs.append(config)
+            self.is_connected = False
+
+        async def connect(self) -> None:
+            self.is_connected = True
+
+        async def close(self) -> None:
+            self.is_connected = False
+
+    class DummyManagedSession:
+        def __init__(self, _connection: Any):
+            pass
+
+        async def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("repid.connections.amqp.message_broker.AmqpConnection", DummyConnection)
+    monkeypatch.setattr("repid.connections.amqp.message_broker.ManagedSession", DummyManagedSession)
+
+    broker = AmqpServer("amqp://localhost:5672", session_window=12345)
+    await broker.connect()
+
+    assert configs[0].session_window == 12345
+
+
+def test_message_broker_rejects_invalid_session_window() -> None:
+    with pytest.raises(ValueError, match="session_window must be greater than 0"):
+        AmqpServer("amqp://localhost:5672", session_window=0)
 
 
 async def test_message_broker_default_subscribe_naming() -> None:

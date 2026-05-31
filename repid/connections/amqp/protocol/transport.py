@@ -41,6 +41,7 @@ TLS_HEADER = b"AMQP\x02\x01\x00\x00"
 # Frame constants
 FRAME_HEADER_SIZE = 8
 MIN_FRAME_SIZE = 512
+MIN_DOFF = 2
 
 
 # =============================================================================
@@ -213,6 +214,8 @@ class AmqpTransport:
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._buffer = FrameBuffer()
+        self._inbound_max_frame_size = MIN_FRAME_SIZE
+        self._outbound_max_frame_size = MIN_FRAME_SIZE
         self._metrics = TransportMetrics()
         self._write_lock = asyncio.Lock()
         self._read_lock = asyncio.Lock()
@@ -241,6 +244,15 @@ class AmqpTransport:
     def set_events(self, events: EventEmitter) -> None:
         """Set event emitter for monitoring."""
         self._events = events
+
+    def set_max_frame_size(self, max_frame_size: int) -> None:
+        """Set a shared frame size limit for backward-compatible tests."""
+        self.set_frame_size_limits(max_frame_size, max_frame_size)
+
+    def set_frame_size_limits(self, inbound: int, outbound: int) -> None:
+        """Set negotiated receive and send frame size limits."""
+        self._inbound_max_frame_size = max(inbound, MIN_FRAME_SIZE)
+        self._outbound_max_frame_size = max(outbound, MIN_FRAME_SIZE)
 
     async def connect(self) -> None:
         """
@@ -414,7 +426,7 @@ class AmqpTransport:
     # Frame I/O
     # -------------------------------------------------------------------------
 
-    async def read_frame(self) -> tuple[int, Performative]:
+    async def read_frame(self) -> tuple[int, Performative]:  # noqa: C901
         """
         Read a complete AMQP frame.
 
@@ -438,10 +450,19 @@ class AmqpTransport:
             self._metrics.bytes_received += 8
 
             # Parse header
-            size, _doff, _frame_type, channel = struct.unpack(">IBBH", header_data)
+            size, doff, frame_type, channel = struct.unpack(">IBBH", header_data)
 
             if size < FRAME_HEADER_SIZE:
                 raise FrameError(f"Invalid frame size: {size}")
+            if doff < MIN_DOFF:
+                raise FrameError(f"Invalid frame data offset: {doff}")
+            body_start = doff * 4
+            if size < body_start:
+                raise FrameError(f"Frame size {size} smaller than data offset {body_start}")
+            if size > self._inbound_max_frame_size:
+                raise FrameError(f"Frame too large: {size} > {self._inbound_max_frame_size}")
+            if frame_type not in (0, 1):
+                raise FrameError(f"Unknown frame type: {frame_type}")
 
             # Read body
             body_size = size - FRAME_HEADER_SIZE
@@ -458,6 +479,11 @@ class AmqpTransport:
             # Decode performative
             full_frame = header_data + payload
             performative = bytes_to_performative(full_frame)
+
+            if frame_type == 0 and getattr(performative, "FRAME_TYPE", b"\x00") != b"\x00":
+                raise FrameError("SASL performative received in AMQP frame")
+            if frame_type == 1 and getattr(performative, "FRAME_TYPE", b"\x00") != b"\x01":
+                raise FrameError("AMQP performative received in SASL frame")
 
             self._metrics.frames_received += 1
             self._metrics.last_read_time = time.monotonic()
@@ -477,6 +503,10 @@ class AmqpTransport:
             performative: The performative to send
         """
         frame_bytes = performative_to_bytes(performative, channel)
+        if len(frame_bytes) > self._outbound_max_frame_size:
+            raise FrameError(
+                f"Frame too large: {len(frame_bytes)} > {self._outbound_max_frame_size}",
+            )
 
         async with self._write_lock:
             if self._writer is None:

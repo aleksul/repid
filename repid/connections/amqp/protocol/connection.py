@@ -23,6 +23,7 @@ from typing_extensions import Self
 
 from repid.connections.amqp._uamqp.constants import MAX_FRAME_SIZE_BYTES, MIN_MAX_FRAME_SIZE
 from repid.connections.amqp._uamqp.performatives import (
+    BeginFrame,
     CloseFrame,
     EmptyFrame,
     OpenFrame,
@@ -31,14 +32,19 @@ from repid.connections.amqp._uamqp.performatives import (
     SASLMechanism,
     SASLOutcome,
 )
+from repid.connections.amqp._uamqp.performatives import (
+    Error as AmqpFrameError,
+)
 
 from .events import ConnectionEvent, EventData, EventEmitter, MetricsCollector
 from .reconnect import ReconnectConfig, ReconnectStrategy
+from .session import DEFAULT_SESSION_WINDOW
 from .states import ConnectionState, ConnectionStateMachine
 from .transport import (
     SASL_HEADER,
     AmqpTransport,
     ConnectionClosedError,
+    FrameError,
     TransportConfig,
 )
 
@@ -92,12 +98,18 @@ class ConnectionConfig:
     # Frame settings
     max_frame_size: int = MAX_FRAME_SIZE_BYTES
     channel_max: int = 65535
+    session_window: int = DEFAULT_SESSION_WINDOW
 
     # Reconnection settings
     reconnect: ReconnectConfig = field(default_factory=ReconnectConfig)
 
     # Container ID (unique identifier for this connection)
     container_id: str = field(default_factory=lambda: f"repid-{uuid.uuid4().hex[:8]}")
+
+    def __post_init__(self) -> None:
+        if self.session_window <= 0:
+            msg = "session_window must be greater than 0"
+            raise ValueError(msg)
 
 
 # =============================================================================
@@ -341,7 +353,16 @@ class AmqpConnection:
             await self._do_sasl_auth()
 
         # 3. AMQP protocol negotiation
-        await self._do_amqp_open()
+        try:
+            await self._do_amqp_open()
+        except ProtocolError as exc:
+            if self._config.username is not None or "requires SASL" not in str(exc):
+                raise
+            await self._transport.close()
+            self._state_machine.reset(ConnectionState.START)
+            await self._transport.connect()
+            await self._do_sasl_auth()
+            await self._do_amqp_open()
 
         # 4. Start read loop
         self._read_task = asyncio.create_task(
@@ -464,17 +485,23 @@ class AmqpConnection:
         await self._state_machine.transition("send_open")
 
         # Wait for OPEN response
-        _, response_frame = await self._transport.read_frame()
+        channel, response_frame = await self._transport.read_frame()
+        if channel != 0:
+            raise ProtocolError(f"OPEN frame received on channel {channel}, expected 0")
         if not isinstance(response_frame, OpenFrame):
             raise ProtocolError(f"Expected OPEN, got {type(response_frame)}")
 
         # Store remote parameters
-        if response_frame.max_frame_size:
+        if response_frame.max_frame_size is not None:
             self._remote_max_frame_size = response_frame.max_frame_size
-        if response_frame.channel_max:
+        if response_frame.channel_max is not None:
             self._remote_channel_max = response_frame.channel_max
         self._remote_container_id = response_frame.container_id
         self._remote_idle_timeout = response_frame.idle_timeout
+        self._transport.set_frame_size_limits(
+            inbound=self._config.max_frame_size,
+            outbound=self._remote_max_frame_size,
+        )
 
         await self._state_machine.transition("recv_open")
 
@@ -554,11 +581,20 @@ class AmqpConnection:
                     await self._handle_performative(channel, performative)
                 except ConnectionClosedError:
                     logger.info("connection.closed_by_server")
+                    if not self._stop_event.is_set():
+                        with contextlib.suppress(ValueError):
+                            await self._state_machine.transition("fatal_error")
+                    break
+                except FrameError as exc:
+                    await self._handle_frame_error(exc)
                     break
                 except asyncio.CancelledError:
                     raise
                 except Exception:
                     logger.exception("connection.read_loop.error")
+                    if not self._stop_event.is_set():
+                        with contextlib.suppress(ValueError):
+                            await self._state_machine.transition("fatal_error")
                     break
 
         except asyncio.CancelledError:
@@ -652,11 +688,33 @@ class AmqpConnection:
             pass
         elif isinstance(performative, CloseFrame):
             await self._handle_close(performative)
+        elif isinstance(performative, BeginFrame) and performative.remote_channel in self._sessions:
+            session = self._sessions[performative.remote_channel]
+            self._sessions[channel] = session
+            await session.handle_performative(performative)
         elif channel in self._sessions:
             # Dispatch to session
             await self._sessions[channel].handle_performative(performative)
         else:
             logger.warning("session.not_found", extra={"channel": channel})
+
+    async def _handle_frame_error(self, exc: FrameError) -> None:
+        """Handle a framing error by sending CLOSE and transitioning to error state."""
+        logger.warning("connection.frame_error", extra={"error": str(exc)})
+        if self._state_machine.is_usable():
+            with contextlib.suppress(OSError, asyncio.TimeoutError, ValueError):
+                await self._transport.send_performative(
+                    0,
+                    CloseFrame(
+                        error=AmqpFrameError(
+                            condition="amqp:internal-error",
+                            description=str(exc),
+                        ),
+                    ),
+                )
+        if not self._stop_event.is_set():
+            with contextlib.suppress(ValueError):
+                await self._state_machine.transition("fatal_error")
 
     async def _handle_close(self, close_frame: CloseFrame) -> None:
         """Handle CLOSE from server."""
@@ -675,13 +733,50 @@ class AmqpConnection:
                 await self._transport.send_performative(0, CloseFrame())
                 await self._state_machine.transition("send_close")
 
-        # If server closed with an error, treat as unexpected and reconnect
+        # Ensure terminal state
+        if not self._state_machine.is_terminal():
+            with contextlib.suppress(ValueError):
+                await self._state_machine.transition("fatal_error")
+
+        # Cancel heartbeat task
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._heartbeat_task
+            self._heartbeat_task = None
+
+        # Close transport
+        await self._transport.close()
+
+        # Invalidate sessions
+        for session in list(self._sessions.values()):
+            session.invalidate()
+        self._sessions.clear()
+
+        # Stop the connection
+        self._stop_event.set()
+
+        await self._emit(
+            ConnectionEvent.DISCONNECTED,
+            {"error": str(error) if error else None},
+        )
+
+        # If server closed with an error and reconnection is enabled, reconnect
         if error and self._reconnect.config.enabled:
-            # Call _handle_unexpected_close directly to reconnect before returning
-            # This ensures the connection is restored before any waiters can proceed
-            await self._handle_unexpected_close()
-        else:
-            await self.close()
+            task = asyncio.create_task(self._reconnect_after_close())
+            task.add_done_callback(lambda _t: None)
+
+    async def _reconnect_after_close(self) -> None:
+        """Attempt reconnection after peer-initiated close with error."""
+        self._state_machine.reset(ConnectionState.START)
+        self._stop_event.clear()
+        try:
+            await self.connect()
+            await self._emit(ConnectionEvent.RECONNECTED)
+        except ConnectionError as exc:
+            logger.error("connection.reconnect.failed", extra={"error": str(exc)})
+        except Exception:
+            logger.exception("connection.reconnect.unexpected_error")
 
     # -------------------------------------------------------------------------
     # Session Management
@@ -712,7 +807,7 @@ class AmqpConnection:
         # Import here to avoid circular import
         from .session import Session  # noqa: PLC0415
 
-        session = Session(self, channel)
+        session = Session(self, channel, incoming_window=self._config.session_window)
         self._sessions[channel] = session
 
         await session.begin()
@@ -720,8 +815,12 @@ class AmqpConnection:
 
     def _remove_session(self, channel: int) -> None:
         """Remove a session from the connection."""
-        if channel in self._sessions:
-            del self._sessions[channel]
+        session = self._sessions.get(channel)
+        if session is None:
+            return
+        for existing_channel, existing_session in list(self._sessions.items()):
+            if existing_session is session:
+                del self._sessions[existing_channel]
 
     # -------------------------------------------------------------------------
     # Frame Sending

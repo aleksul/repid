@@ -2566,11 +2566,11 @@ wheels = [
 
 [[package]]
 name = "types-grpcio"
-version = "1.0.0.20251009"
+version = "1.0.0.20260518"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/de/93/78aa083216853c667c9412df4ef8284b2a68c6bcd2aef833f970b311f3c1/types_grpcio-1.0.0.20251009.tar.gz", hash = "sha256:a8f615ea7a47b31f10da028ab5258d4f1611fbd70719ca450fc0ab3fb9c62b63", size = 14479, upload-time = "2025-10-09T02:54:14.539Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4c/23/3082206fa4e3715cd7fb10194ffabb1ecb7edd325d020f05437ec9e0df31/types_grpcio-1.0.0.20260518.tar.gz", hash = "sha256:cd18473dd0819f0b193874e1035de4a6a58e8bacdb128139280a03f4f1a87d37", size = 14752, upload-time = "2026-05-18T06:01:50.626Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d4/93/66d28f41b16bb4e6b611bd608ef28dffc740facec93250b30cf83138da21/types_grpcio-1.0.0.20251009-py3-none-any.whl", hash = "sha256:112ac4312a5b0a273a4c414f7f2c7668f342990d9c6ab0f647391c36331f95ed", size = 15208, upload-time = "2025-10-09T02:54:13.588Z" },
+    { url = "https://files.pythonhosted.org/packages/be/77/07a2fbf4a2fe822e413feeac9057bc46bf13a5e225a82f5c7c90d58fae8a/types_grpcio-1.0.0.20260518-py3-none-any.whl", hash = "sha256:61c8d4ffcc0b99b1cec647808b6132805671daaa8ad2081673453874914a5347", size = 15309, upload-time = "2026-05-18T06:01:49.737Z" },
 ]
 
 [[package]]

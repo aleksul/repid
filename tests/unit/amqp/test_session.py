@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from repid.connections.amqp._uamqp.message import Properties
+from repid.connections.amqp._uamqp.outcomes import Accepted, DeliveryState
 from repid.connections.amqp._uamqp.performatives import (
     AttachFrame,
     BeginFrame,
@@ -650,6 +651,22 @@ async def test_session_handle_attach_detach_flow_disposition() -> None:
     await session.handle_performative(detach_unknown)
 
 
+async def test_session_disposition_dispatches_to_sender_link() -> None:
+    connection = FakeConnection()
+    session = Session(cast(AmqpConnection, connection), channel=1)
+    sender = SenderLink(session, "sender", "address", 0)
+    settlement: asyncio.Future[DeliveryState | None] = asyncio.Future()
+    sender._unsettled[3] = settlement
+    accepted = Accepted()
+    session._links["sender"] = sender
+
+    await session._handle_disposition(
+        DispositionFrame(role=True, first=3, settled=True, state=accepted),
+    )
+
+    assert settlement.result() is accepted
+
+
 async def test_session_handle_transfer_and_invalidate(monkeypatch: Any) -> None:
     connection = FakeConnection()
     session = Session(cast(AmqpConnection, connection), channel=1)
@@ -756,6 +773,18 @@ async def test_session_sends_flow_before_incoming_window_exhaustion(monkeypatch:
     assert flow.incoming_window == 4
 
 
+async def test_session_rejects_transfer_beyond_incoming_window() -> None:
+    connection = FakeConnection()
+    session = Session(cast(AmqpConnection, connection), channel=1)
+    session._incoming_window = 1
+    session._incoming_flow_threshold = 10
+
+    await session._record_incoming_transfer()
+
+    with pytest.raises(SessionError, match="incoming window"):
+        await session._record_incoming_transfer()
+
+
 async def test_session_remote_incoming_window_clamps_when_exhausted() -> None:
     connection = FakeConnection()
     session = Session(cast(AmqpConnection, connection), channel=1)
@@ -805,6 +834,14 @@ def test_session_consume_remote_incoming_window_decrements_available_window() ->
 
     assert session._remote_incoming_window == 1
     assert session._remote_incoming_window_available.is_set()
+
+
+def test_session_allocate_outgoing_delivery_id_increments() -> None:
+    connection = FakeConnection()
+    session = Session(cast(AmqpConnection, connection), channel=1)
+
+    assert session.allocate_outgoing_delivery_id() == 0
+    assert session.allocate_outgoing_delivery_id() == 1
 
 
 async def test_session_handle_begin_clears_empty_remote_incoming_window() -> None:

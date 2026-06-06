@@ -120,6 +120,7 @@ class AmqpSubscriber:
                 managed_session: ManagedSession = managed_session,
             ) -> None:
                 await paused_event.wait()
+                link_ref.defer_delivery_credit(delivery_id)
 
                 msg = AmqpReceivedMessage(
                     payload=payload,
@@ -132,7 +133,11 @@ class AmqpSubscriber:
                     publish_fn=publish_fn,
                     properties=properties,
                 )
-                await callback(msg)
+                try:
+                    await callback(msg)
+                except Exception:
+                    await link_ref.release_delivery_credit(delivery_id)
+                    raise
 
             # Subscribe using the receiver pool (handles reconnection automatically)
             address = naming_strategy(queue)

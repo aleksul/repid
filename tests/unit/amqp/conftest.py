@@ -28,6 +28,7 @@ class FakeSession:
     channel: int = 1
     _next_incoming_id: int = 0
     _next_outgoing_id: int = 0
+    _next_outgoing_delivery_id: int = 0
     _incoming_window: int = 100
     _outgoing_window: int = 100
     _remote_incoming_window: int = 100
@@ -47,6 +48,11 @@ class FakeSession:
             self._remote_incoming_window -= 1
         if self._remote_incoming_window <= 0:
             self._remote_incoming_window_available.clear()
+
+    def allocate_outgoing_delivery_id(self) -> int:
+        delivery_id = self._next_outgoing_delivery_id
+        self._next_outgoing_delivery_id = (self._next_outgoing_delivery_id + 1) & 0xFFFFFFFF
+        return delivery_id
 
     async def end(self) -> None:
         return None

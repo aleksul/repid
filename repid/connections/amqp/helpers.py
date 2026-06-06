@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Coroutine
 from typing import Any
 
 from repid.connections.abc import MessageAction
 from repid.connections.amqp._uamqp.message import Properties
 from repid.connections.amqp._uamqp.outcomes import Accepted, Rejected, Released
-from repid.connections.amqp._uamqp.performatives import DispositionFrame
 from repid.connections.amqp.protocol import ManagedSession, ReceiverLink
 from repid.data import MessageData
 
@@ -41,6 +41,7 @@ class AmqpReceivedMessage:
         self._publish_fn = publish_fn
         self._properties = properties
         self._action: MessageAction | None = None
+        self._settlement_lock = asyncio.Lock()
 
     @property
     def payload(self) -> bytes:
@@ -105,41 +106,29 @@ class AmqpReceivedMessage:
     async def keep_alive(self) -> None:  # pragma: no cover
         pass
 
-    async def _do_ack(self) -> None:
-        """Send the AMQP accepted disposition on the wire (does not update `_action`)."""
-        await self._send_disposition(ACCEPTED_STATE)
-
-    async def _send_disposition(self, state: Accepted | Rejected | Released) -> None:
-        if hasattr(self._link, "_send_disposition"):
-            await self._link._send_disposition(self._delivery_id, state)
-            return
-
-        disp = DispositionFrame(
-            role=True,
-            first=self._delivery_id,
-            last=self._delivery_id,
-            settled=True,
-            state=state,
-        )
-        await self._link.session.connection.send_performative(self._link.session.channel, disp)
+    async def _settle_delivery(self, state: Accepted | Rejected | Released) -> None:
+        await self._link.settle_delivery(self._delivery_id, state)
 
     async def ack(self) -> None:
-        if self._action is not None:
-            return
-        await self._do_ack()
-        self._action = MessageAction.acked
+        async with self._settlement_lock:
+            if self._action is not None:
+                return
+            await self._settle_delivery(ACCEPTED_STATE)
+            self._action = MessageAction.acked
 
     async def nack(self) -> None:
-        if self._action is not None:
-            return
-        await self._send_disposition(REJECTED_STATE)
-        self._action = MessageAction.nacked
+        async with self._settlement_lock:
+            if self._action is not None:
+                return
+            await self._settle_delivery(REJECTED_STATE)
+            self._action = MessageAction.nacked
 
     async def reject(self) -> None:
-        if self._action is not None:
-            return
-        await self._send_disposition(RELEASED_STATE)
-        self._action = MessageAction.rejected
+        async with self._settlement_lock:
+            if self._action is not None:
+                return
+            await self._settle_delivery(RELEASED_STATE)
+            self._action = MessageAction.rejected
 
     async def reply(
         self,
@@ -150,24 +139,25 @@ class AmqpReceivedMessage:
         channel: str | None = None,
         server_specific_parameters: dict[str, Any] | None = None,
     ) -> None:
-        if self._action is not None:
-            return
-        reply_channel = channel or self.reply_to
-        if reply_channel is None:
-            raise ValueError(
-                "Reply channel is not set. Provide `channel` or publish with `reply_to`.",
+        async with self._settlement_lock:
+            if self._action is not None:
+                return
+            reply_channel = channel or self.reply_to
+            if reply_channel is None:
+                raise ValueError(
+                    "Reply channel is not set. Provide `channel` or publish with `reply_to`.",
+                )
+
+            params = dict(server_specific_parameters or {})
+
+            await self._publish_fn(
+                channel=reply_channel,
+                message=MessageData(
+                    payload=payload,
+                    headers=headers,
+                    content_type=content_type,
+                ),
+                server_specific_parameters=params,
             )
-
-        await self._do_ack()
-        self._action = MessageAction.replied
-        params = dict(server_specific_parameters or {})
-
-        await self._publish_fn(
-            channel=reply_channel,
-            message=MessageData(
-                payload=payload,
-                headers=headers,
-                content_type=content_type,
-            ),
-            server_specific_parameters=params,
-        )
+            await self._settle_delivery(ACCEPTED_STATE)
+            self._action = MessageAction.replied

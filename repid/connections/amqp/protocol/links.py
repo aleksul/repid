@@ -22,6 +22,7 @@ from repid.connections.amqp._uamqp._decode import transfer_frames_to_message
 from repid.connections.amqp._uamqp._encode import message_to_transfer_frames
 from repid.connections.amqp._uamqp.endpoints import Source, Target
 from repid.connections.amqp._uamqp.message import Header, Message, Properties
+from repid.connections.amqp._uamqp.outcomes import Accepted, DeliveryState, Rejected, Released
 from repid.connections.amqp._uamqp.performatives import (
     AttachFrame,
     DetachFrame,
@@ -36,6 +37,8 @@ if TYPE_CHECKING:
     from .session import Session
 
 logger = logging.getLogger("repid.connections.amqp.protocol")
+
+ReceiverSettlementState = Accepted | Rejected | Released
 
 
 class LinkError(Exception):
@@ -273,6 +276,8 @@ class SenderLink(Link):
         self._delivery_count = 0
         self._link_credit = 0
         self._available = 0
+        self._send_lock = asyncio.Lock()
+        self._unsettled: dict[int, asyncio.Future[DeliveryState | None]] = {}
 
         # Flow control wait event
         self._credit_available = asyncio.Event()
@@ -338,14 +343,60 @@ class SenderLink(Link):
         if not self.is_usable:
             raise LinkError("Link is not usable")
 
-        # Wait for credit if needed
+        settlement_future: asyncio.Future[DeliveryState | None] | None = None
+        async with self._send_lock:
+            await self._wait_for_credit(_timeout)
+            delivery_id = self._session.allocate_outgoing_delivery_id()
+            frames = self._build_transfer_frames(
+                payload=payload,
+                headers=headers,
+                message_header=message_header,
+                message_properties=message_properties,
+                delivery_annotations=delivery_annotations,
+                message_annotations=message_annotations,
+                footer=footer,
+                delivery_id=delivery_id,
+                settled=settled,
+            )
+
+            if not settled:
+                settlement_future = asyncio.get_running_loop().create_future()
+                self._unsettled[delivery_id] = settlement_future
+
+            try:
+                await self._send_transfer_frames(frames, _timeout)
+            except Exception:
+                self._discard_unsettled_delivery(delivery_id, settlement_future)
+                raise
+
+        logger.debug(
+            "sender_link.message.sent",
+            extra={"link": self._name, "delivery": delivery_id, "frames": len(frames)},
+        )
+
+        if settlement_future is not None:
+            await self._wait_for_delivery_settlement(delivery_id, settlement_future, _timeout)
+
+    async def _wait_for_credit(self, timeout: float) -> None:
         while self._link_credit <= 0:
             try:
-                await asyncio.wait_for(self._credit_available.wait(), timeout=_timeout)
+                await asyncio.wait_for(self._credit_available.wait(), timeout=timeout)
             except asyncio.TimeoutError as e:
                 raise LinkError("Timeout waiting for link credit") from e
 
-        # Build message
+    def _build_transfer_frames(
+        self,
+        *,
+        payload: bytes,
+        headers: dict[str, Any] | None,
+        message_header: Header | None,
+        message_properties: Properties | None,
+        delivery_annotations: dict[str, Any] | None,
+        message_annotations: dict[str, Any] | None,
+        footer: dict[str, Any] | None,
+        delivery_id: int,
+        settled: bool,
+    ) -> list[TransferFrame]:
         msg = Message(
             data=[payload],
             application_properties=headers,
@@ -355,35 +406,28 @@ class SenderLink(Link):
             message_annotations=message_annotations,
             footer=footer,
         )
-
-        # Calculate max frame size
-        max_frame_size = self._session.connection.max_frame_size
-
-        # Encode message into transfer frames
-        frames = list(
+        return list(
             message_to_transfer_frames(
                 message=msg,
                 handle=self._handle,
-                delivery_id=self._delivery_count,
-                delivery_tag=str(self._delivery_count).encode(),
+                delivery_id=delivery_id,
+                delivery_tag=str(delivery_id).encode(),
                 settled=settled,
-                max_frame_size=max_frame_size,
+                max_frame_size=self._session.connection.max_frame_size,
             ),
         )
 
-        # Send all frames. Session flow control is per transfer frame, while link
-        # credit is per delivery.
+    async def _send_transfer_frames(self, frames: list[TransferFrame], timeout: float) -> None:
+        # Session flow control is per transfer frame, while link credit is per delivery.
         credit_consumed = False
         for frame in frames:
             try:
-                await self._session.wait_for_remote_incoming_window(_timeout)
+                await self._session.wait_for_remote_incoming_window(timeout)
             except asyncio.TimeoutError as e:
                 raise LinkError("Timeout waiting for session window") from e
 
             if not credit_consumed:
-                self._link_credit -= 1
-                if self._link_credit <= 0:
-                    self._credit_available.clear()
+                self._consume_send_credit()
                 credit_consumed = True
 
             await self._session.connection.send_performative(
@@ -393,12 +437,35 @@ class SenderLink(Link):
             self._session._next_outgoing_id = (self._session._next_outgoing_id + 1) & 0xFFFFFFFF
             self._session.consume_remote_incoming_window()
 
+    def _consume_send_credit(self) -> None:
+        self._link_credit -= 1
+        if self._link_credit <= 0:
+            self._credit_available.clear()
         self._delivery_count = (self._delivery_count + 1) & 0xFFFFFFFF
 
-        logger.debug(
-            "sender_link.message.sent",
-            extra={"link": self._name, "delivery": self._delivery_count - 1, "frames": len(frames)},
-        )
+    def _discard_unsettled_delivery(
+        self,
+        delivery_id: int,
+        settlement_future: asyncio.Future[DeliveryState | None] | None,
+    ) -> None:
+        if settlement_future is None:
+            return
+        self._unsettled.pop(delivery_id, None)
+        settlement_future.cancel()
+
+    async def _wait_for_delivery_settlement(
+        self,
+        delivery_id: int,
+        settlement_future: asyncio.Future[DeliveryState | None],
+        timeout: float,
+    ) -> None:
+        try:
+            state = await asyncio.wait_for(settlement_future, timeout=timeout)
+        except asyncio.TimeoutError as e:
+            self._unsettled.pop(delivery_id, None)
+            raise LinkError("Timeout waiting for delivery settlement") from e
+        if not isinstance(state, Accepted):
+            raise LinkError(f"Delivery was not accepted: {state!r}")
 
     async def _handle_flow(self, flow: FlowFrame) -> None:
         """Handle FLOW frame (credit update)."""
@@ -422,6 +489,13 @@ class SenderLink(Link):
                 self._credit_available.set()
             else:
                 self._credit_available.clear()
+
+    async def _handle_disposition(self, disposition: DispositionFrame) -> None:
+        last = disposition.last if disposition.last is not None else disposition.first
+        for delivery_id in range(disposition.first, last + 1):
+            future = self._unsettled.pop(delivery_id, None)
+            if future is not None and not future.done():
+                future.set_result(disposition.state)
 
 
 # =============================================================================
@@ -464,6 +538,10 @@ class ReceiverLink(Link):
         # Multi-frame transfer handling
         self._incoming_transfers: list[TransferFrame] = []
         self._delivery_settled_by_callback = False
+        self._credit_lock = asyncio.Lock()
+        self._credit_pending_delivery_ids: set[int] = set()
+        self._deferred_credit_delivery_ids: set[int] = set()
+        self._settled_delivery_ids: set[int] = set()
 
     @property
     def link_credit(self) -> int:
@@ -538,10 +616,21 @@ class ReceiverLink(Link):
 
     async def _handle_transfer(self, transfer: TransferFrame) -> None:
         """Handle TRANSFER frame (incoming message)."""
+        is_first_transfer = not self._incoming_transfers
+        delivery_id = self._delivery_id_from_transfer(transfer)
+
+        if is_first_transfer:
+            await self._accept_delivery(transfer, delivery_id)
+        elif transfer.settled:
+            self._settled_delivery_ids.add(
+                self._delivery_id_from_transfer(self._incoming_transfers[0]),
+            )
+
         if transfer.aborted:
+            if not is_first_transfer:
+                delivery_id = self._delivery_id_from_transfer(self._incoming_transfers[0])
             self._incoming_transfers.clear()
-            self._delivery_count = (self._delivery_count + 1) & 0xFFFFFFFF
-            await self._consume_credit()
+            await self.release_delivery_credit(delivery_id)
             return
 
         self._incoming_transfers.append(transfer)
@@ -552,34 +641,21 @@ class ReceiverLink(Link):
 
     async def _process_message(self) -> None:
         """Process a complete message from accumulated transfer frames."""
+        delivery_id: int | None = None
         try:
+            # Continuation transfers may omit delivery metadata.
+            first_transfer = self._incoming_transfers[0]
+            delivery_id = self._delivery_id_from_transfer(first_transfer)
+
             # Decode message from transfer frames
             msg = transfer_frames_to_message(self._incoming_transfers)
 
-            # Continuation transfers may omit delivery metadata.
-            first_transfer = self._incoming_transfers[0]
-            delivery_id = first_transfer.delivery_id or 0
             delivery_tag = first_transfer.delivery_tag or b""
 
-            # Extract body
-            body = msg.body
-            if isinstance(body, list):
-                if body and isinstance(body[0], bytes):
-                    body = b"".join(cast(list[bytes], body))
-                elif body:
-                    body = json.dumps(body).encode()
-            elif isinstance(body, str):
-                body = body.encode()
-            elif not isinstance(body, bytes) and body is not None:
-                body = json.dumps(body).encode()
-            if not isinstance(body, bytes):
-                body = b""
-
-            # Get headers
-            headers = msg.application_properties
-            if headers is not None:
-                # Ensure it's a dict
-                headers = dict(headers)
+            body = self._body_to_bytes(msg.body)
+            headers = (
+                dict(msg.application_properties) if msg.application_properties is not None else None
+            )
 
             # Call the callback
             self._delivery_settled_by_callback = False
@@ -587,18 +663,15 @@ class ReceiverLink(Link):
             if inspect.iscoroutine(result):
                 await result
 
-            # Update delivery count
-            self._delivery_count = (self._delivery_count + 1) & 0xFFFFFFFF
-
-            await self._consume_credit()
-
         except Exception:
             logger.exception("receiver_link.message.error", extra={"link": self._name})
         finally:
+            if delivery_id is not None and delivery_id not in self._deferred_credit_delivery_ids:
+                await self.release_delivery_credit(delivery_id)
             self._delivery_settled_by_callback = False
             self._incoming_transfers.clear()
 
-    async def _send_disposition(self, delivery_id: int, state: Any) -> None:
+    async def _send_disposition(self, delivery_id: int, state: ReceiverSettlementState) -> None:
         disp = DispositionFrame(
             role=True,
             first=delivery_id,
@@ -609,13 +682,64 @@ class ReceiverLink(Link):
         await self._session.connection.send_performative(self._session.channel, disp)
         self._delivery_settled_by_callback = True
 
-    async def _consume_credit(self) -> None:
-        if self._link_credit <= 0:
-            return
-        self._link_credit -= 1
-        if self._link_credit < self._prefetch // 2:
-            self._link_credit = self._prefetch
-            await self._send_flow()
+    async def settle_delivery(self, delivery_id: int, state: ReceiverSettlementState) -> None:
+        if not self.is_delivery_settled(delivery_id):
+            await self._send_disposition(delivery_id, state)
+        await self.release_delivery_credit(delivery_id)
+
+    @staticmethod
+    def _body_to_bytes(body: Any) -> bytes:
+        if isinstance(body, list):
+            if body and isinstance(body[0], bytes):
+                return b"".join(cast(list[bytes], body))
+            if body:
+                return json.dumps(body).encode()
+        elif isinstance(body, str):
+            return body.encode()
+        elif isinstance(body, bytes):
+            return body
+        elif body is not None:
+            return json.dumps(body).encode()
+        return b""
+
+    @staticmethod
+    def _delivery_id_from_transfer(transfer: TransferFrame) -> int:
+        return transfer.delivery_id if transfer.delivery_id is not None else 0
+
+    async def _accept_delivery(self, transfer: TransferFrame, delivery_id: int) -> None:
+        async with self._credit_lock:
+            if self._link_credit > 0:
+                self._credit_pending_delivery_ids.add(delivery_id)
+                if transfer.settled:
+                    self._settled_delivery_ids.add(delivery_id)
+                self._link_credit -= 1
+            else:
+                logger.warning(
+                    "receiver_link.credit.overdrawn",
+                    extra={"link": self._name, "delivery_id": delivery_id},
+                )
+            self._delivery_count = (self._delivery_count + 1) & 0xFFFFFFFF
+
+    def defer_delivery_credit(self, delivery_id: int) -> None:
+        if delivery_id in self._credit_pending_delivery_ids:
+            self._deferred_credit_delivery_ids.add(delivery_id)
+
+    def is_delivery_settled(self, delivery_id: int) -> bool:
+        return delivery_id in self._settled_delivery_ids
+
+    async def release_delivery_credit(self, delivery_id: int) -> None:
+        async with self._credit_lock:
+            if delivery_id not in self._credit_pending_delivery_ids:
+                return
+
+            self._credit_pending_delivery_ids.remove(delivery_id)
+            self._deferred_credit_delivery_ids.discard(delivery_id)
+            self._settled_delivery_ids.discard(delivery_id)
+
+            if self._link_credit < self._prefetch:
+                self._link_credit += 1
+                if self.is_usable:
+                    await self._send_flow()
 
     async def set_credit(self, credit: int) -> None:
         """
@@ -624,7 +748,10 @@ class ReceiverLink(Link):
         Args:
             credit: New credit value
         """
+        if credit < 0:
+            raise ValueError("credit must be non-negative")
         self._link_credit = credit
+        self._prefetch = credit
         await self._send_flow()
 
 

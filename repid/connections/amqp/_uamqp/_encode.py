@@ -972,7 +972,7 @@ def _encode_performative_body(performative: EncodableT) -> bytes:
         output.extend(len(field_values).to_bytes(4, "big"))
 
     output.extend(list_body)
-    return output
+    return bytes(output)
 
 
 def performative_to_bytes(performative: EncodableT, channel: int = 0) -> bytes:
@@ -998,7 +998,7 @@ def performative_to_bytes(performative: EncodableT, channel: int = 0) -> bytes:
     header.extend(performative.FRAME_TYPE)
     header.extend(channel.to_bytes(2, "big"))
 
-    return header + output
+    return bytes(header + output)
 
 
 def message_to_transfer_frames(  # noqa: C901, PLR0912, PLR0915
@@ -1069,7 +1069,7 @@ def message_to_transfer_frames(  # noqa: C901, PLR0912, PLR0915
         _encode_annotations(payload, message.footer)
 
     # Split into frames
-    remaining_payload = payload
+    remaining_payload = bytes(payload)
     first = True
 
     while remaining_payload or first:

@@ -255,8 +255,8 @@ class AmqpServer:
         # Prepare server-specific parameters for uAMQP
         header = params.get("header")
         properties = params.get("properties")
-        message_reply_to = getattr(message, "reply_to", None)
-        message_content_type = getattr(message, "content_type", None)
+        message_reply_to = message.reply_to
+        message_content_type = message.content_type
         if properties is None:
             properties = Properties(
                 message_id=str(uuid4()),

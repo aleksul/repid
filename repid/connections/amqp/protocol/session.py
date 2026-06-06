@@ -25,6 +25,7 @@ from repid.connections.amqp._uamqp.performatives import (
     TransferFrame,
 )
 
+from . import links
 from .states import SessionState, SessionStateMachine
 
 if TYPE_CHECKING:
@@ -85,6 +86,7 @@ class Session:
 
         # Flow control
         self._next_outgoing_id = 0
+        self._next_outgoing_delivery_id = 0
         self._next_incoming_id = 0
         self._incoming_window = incoming_window
         self._outgoing_window = DEFAULT_SESSION_WINDOW
@@ -181,6 +183,8 @@ class Session:
         )
 
     async def _record_incoming_transfer(self) -> None:
+        if self._incoming_transfers_since_flow >= self._incoming_window:
+            raise SessionError("Remote exceeded advertised incoming window")
         self._next_incoming_id = (self._next_incoming_id + 1) & 0xFFFFFFFF
         self._incoming_transfers_since_flow += 1
         if self._incoming_transfers_since_flow >= self._incoming_flow_threshold:
@@ -202,6 +206,11 @@ class Session:
             self._remote_incoming_window -= 1
         if self._remote_incoming_window <= 0:
             self._remote_incoming_window_available.clear()
+
+    def allocate_outgoing_delivery_id(self) -> int:
+        delivery_id = self._next_outgoing_delivery_id
+        self._next_outgoing_delivery_id = (self._next_outgoing_delivery_id + 1) & 0xFFFFFFFF
+        return delivery_id
 
     async def _ensure_incoming_window(self, minimum: int) -> None:
         if minimum <= self._incoming_window:
@@ -421,10 +430,7 @@ class Session:
 
         if handle in self._links_by_remote_handle:
             link = self._links_by_remote_handle[handle]
-            # Import here to avoid circular import
-            from .links import ReceiverLink  # noqa: PLC0415
-
-            if isinstance(link, ReceiverLink):
+            if isinstance(link, links.ReceiverLink):
                 await link._handle_transfer(transfer)
             else:
                 logger.warning(
@@ -443,6 +449,12 @@ class Session:
 
     async def _handle_disposition(self, disposition: DispositionFrame) -> None:
         """Handle DISPOSITION frame."""
+        if disposition.role:
+            # Dispositions from the remote receiver settle deliveries sent by our sender links.
+            for link in list(self._links.values()):
+                if isinstance(link, links.SenderLink):
+                    await link._handle_disposition(disposition)
+
         # For now, just log
         logger.debug(
             "session.disposition.received",
@@ -488,14 +500,11 @@ class Session:
         if not self.is_usable:
             raise SessionError("Session is not usable")
 
-        # Import here to avoid circular import
-        from .links import SenderLink  # noqa: PLC0415
-
         if name is None:
             name = f"sender-{address}-{len(self._links)}"
 
         handle = self._allocate_handle()
-        link = SenderLink(self, name, address, handle)
+        link = links.SenderLink(self, name, address, handle)
         self._links[name] = link
         self._links_by_handle[handle] = link
 
@@ -535,9 +544,6 @@ class Session:
         if not self.is_usable:
             raise SessionError("Session is not usable")
 
-        # Import here to avoid circular import
-        from .links import ReceiverLink  # noqa: PLC0415
-
         if name is None:
             name = f"receiver-{address}-{len(self._links)}"
 
@@ -545,7 +551,7 @@ class Session:
         await self._ensure_incoming_window(self._receiver_prefetch_total)
 
         handle = self._allocate_handle()
-        link = ReceiverLink(self, name, address, handle, callback, prefetch=prefetch)
+        link = links.ReceiverLink(self, name, address, handle, callback, prefetch=prefetch)
         self._links[name] = link
         self._links_by_handle[handle] = link
 

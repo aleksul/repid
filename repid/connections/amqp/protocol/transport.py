@@ -480,9 +480,9 @@ class AmqpTransport:
             full_frame = header_data + payload
             performative = bytes_to_performative(full_frame)
 
-            if frame_type == 0 and getattr(performative, "FRAME_TYPE", b"\x00") != b"\x00":
+            if frame_type == 0 and performative.FRAME_TYPE != b"\x00":
                 raise FrameError("SASL performative received in AMQP frame")
-            if frame_type == 1 and getattr(performative, "FRAME_TYPE", b"\x00") != b"\x01":
+            if frame_type == 1 and performative.FRAME_TYPE != b"\x01":
                 raise FrameError("AMQP performative received in SASL frame")
 
             self._metrics.frames_received += 1

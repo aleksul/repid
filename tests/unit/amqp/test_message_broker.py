@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from typing import Any, ClassVar, cast
-from unittest.mock import AsyncMock
 
 import pytest
 
 from repid.connections.abc import MessageAction, SentMessageT
 from repid.connections.amqp._uamqp.message import Properties
+from repid.connections.amqp._uamqp.outcomes import Accepted, Rejected, Released
+from repid.connections.amqp._uamqp.performatives import DispositionFrame
 from repid.connections.amqp.helpers import AmqpReceivedMessage
 from repid.connections.amqp.message_broker import AmqpServer
 from repid.connections.amqp.protocol import ManagedSession
@@ -27,6 +28,34 @@ from .utils import (
     FakeSession,
     FakeSessionForPools,
 )
+
+ReceiverSettlementState = Accepted | Rejected | Released
+
+
+class FakeReceiverLinkCreditMixin:
+    session: FakeSession
+    released_delivery_id: int
+
+    def is_delivery_settled(self, _delivery_id: int) -> bool:
+        return False
+
+    async def _send_disposition(self, delivery_id: int, state: ReceiverSettlementState) -> None:
+        disp = DispositionFrame(
+            role=True,
+            first=delivery_id,
+            last=delivery_id,
+            settled=True,
+            state=state,
+        )
+        await self.session.connection.send_performative(self.session.channel, disp)
+
+    async def release_delivery_credit(self, delivery_id: int) -> None:
+        self.released_delivery_id = delivery_id
+
+    async def settle_delivery(self, delivery_id: int, state: ReceiverSettlementState) -> None:
+        if not self.is_delivery_settled(delivery_id):
+            await self._send_disposition(delivery_id, state)
+        await self.release_delivery_credit(delivery_id)
 
 
 async def test_message_broker_not_connected_publish() -> None:
@@ -180,7 +209,7 @@ async def test_amqp_received_message_headers_and_ack_nack_reply() -> None:
     connection = FakeConnection()
     fake_session = FakeSession(connection=connection, channel=2)
 
-    class FakeReceiverLinkWithSession:
+    class FakeReceiverLinkWithSession(FakeReceiverLinkCreditMixin):
         handle: int = 7
         session: FakeSession = fake_session
 
@@ -218,7 +247,7 @@ async def test_amqp_received_message_nack() -> None:
     connection = FakeConnection()
     fake_session = FakeSession(connection=connection, channel=2)
 
-    class FakeReceiverLinkWithSession:
+    class FakeReceiverLinkWithSession(FakeReceiverLinkCreditMixin):
         handle: int = 7
         session: FakeSession = fake_session
 
@@ -239,11 +268,68 @@ async def test_amqp_received_message_nack() -> None:
     assert msg._action == MessageAction.nacked
 
 
+async def test_amqp_received_message_concurrent_settlement_sends_one_disposition() -> None:
+    connection = FakeConnection()
+    fake_session = FakeSession(connection=connection, channel=2)
+
+    class FakeReceiverLinkWithSession(FakeReceiverLinkCreditMixin):
+        handle: int = 7
+        session: FakeSession = fake_session
+
+    link = FakeReceiverLinkWithSession()
+    msg = AmqpReceivedMessage(
+        payload=b"test",
+        headers={},
+        link=cast(Any, link),
+        delivery_id=123,
+        delivery_tag=b"tag",
+        channel_name="test",
+        managed_session=cast(ManagedSession, object()),
+        publish_fn=lambda: asyncio.sleep(0),
+    )
+
+    await asyncio.gather(msg.ack(), msg.nack())
+
+    assert msg.action == MessageAction.acked
+    assert len(connection.sent) == 1
+    assert isinstance(connection.sent[0][1], DispositionFrame)
+
+
+async def test_amqp_received_message_presettled_ack_sends_no_disposition() -> None:
+    connection = FakeConnection()
+    fake_session = FakeSession(connection=connection, channel=2)
+
+    class FakeReceiverLinkWithSession(FakeReceiverLinkCreditMixin):
+        handle: int = 7
+        session: FakeSession = fake_session
+
+        def is_delivery_settled(self, _delivery_id: int) -> bool:
+            return True
+
+    link = FakeReceiverLinkWithSession()
+    msg = AmqpReceivedMessage(
+        payload=b"test",
+        headers={},
+        link=cast(Any, link),
+        delivery_id=123,
+        delivery_tag=b"tag",
+        channel_name="test",
+        managed_session=cast(ManagedSession, object()),
+        publish_fn=lambda: asyncio.sleep(0),
+    )
+
+    await msg.ack()
+
+    assert msg.action == MessageAction.acked
+    assert connection.sent == []
+    assert link.released_delivery_id == 123
+
+
 async def test_amqp_received_message_reject() -> None:
     connection = FakeConnection()
     fake_session = FakeSession(connection=connection, channel=2)
 
-    class FakeReceiverLinkWithSession:
+    class FakeReceiverLinkWithSession(FakeReceiverLinkCreditMixin):
         handle: int = 7
         session: FakeSession = fake_session
 
@@ -268,7 +354,7 @@ async def test_amqp_received_message_properties() -> None:
     connection = FakeConnection()
     fake_session = FakeSession(connection=connection, channel=2)
 
-    class FakeReceiverLinkWithSession:
+    class FakeReceiverLinkWithSession(FakeReceiverLinkCreditMixin):
         handle: int = 7
         session: FakeSession = fake_session
 
@@ -296,13 +382,18 @@ async def test_amqp_received_message_properties() -> None:
 
 
 async def test_amqp_received_message_uses_link_send_disposition() -> None:
-    class FakeLinkWithDisposition:
-        _send_disposition = AsyncMock()
+    connection = FakeConnection()
+    fake_session = FakeSession(connection=connection, channel=2)
 
+    class FakeLinkWithDisposition(FakeReceiverLinkCreditMixin):
+        handle: int = 7
+        session: FakeSession = fake_session
+
+    link = FakeLinkWithDisposition()
     msg = AmqpReceivedMessage(
         payload=b"test",
         headers=None,
-        link=cast(Any, FakeLinkWithDisposition()),
+        link=cast(Any, link),
         delivery_id=123,
         delivery_tag=b"tag",
         channel_name="test-channel",
@@ -312,14 +403,15 @@ async def test_amqp_received_message_uses_link_send_disposition() -> None:
 
     await msg.ack()
 
-    FakeLinkWithDisposition._send_disposition.assert_awaited_once()
+    assert isinstance(connection.sent[0][1], DispositionFrame)
+    assert link.released_delivery_id == 123
 
 
 async def test_amqp_received_message_bytes_message_id() -> None:
     connection = FakeConnection()
     fake_session = FakeSession(connection=connection, channel=2)
 
-    class FakeReceiverLinkWithSession:
+    class FakeReceiverLinkWithSession(FakeReceiverLinkCreditMixin):
         handle: int = 7
         session: FakeSession = fake_session
 
@@ -346,7 +438,7 @@ async def test_amqp_received_message_reply_to() -> None:
     connection = FakeConnection()
     fake_session = FakeSession(connection=connection, channel=2)
 
-    class FakeReceiverLinkWithSession:
+    class FakeReceiverLinkWithSession(FakeReceiverLinkCreditMixin):
         handle: int = 7
         session: FakeSession = fake_session
 
@@ -370,7 +462,7 @@ async def test_amqp_received_message_properties_content_type_none() -> None:
     connection = FakeConnection()
     fake_session = FakeSession(connection=connection, channel=2)
 
-    class FakeReceiverLinkWithSession:
+    class FakeReceiverLinkWithSession(FakeReceiverLinkCreditMixin):
         handle: int = 7
         session: FakeSession = fake_session
 
@@ -394,7 +486,7 @@ async def test_amqp_received_message_bytes_properties() -> None:
     connection = FakeConnection()
     fake_session = FakeSession(connection=connection, channel=2)
 
-    class FakeReceiverLinkWithSession:
+    class FakeReceiverLinkWithSession(FakeReceiverLinkCreditMixin):
         handle: int = 7
         session: FakeSession = fake_session
 
@@ -422,7 +514,7 @@ async def test_amqp_received_message_non_bytes_content_type_casts_to_str() -> No
     connection = FakeConnection()
     fake_session = FakeSession(connection=connection, channel=2)
 
-    class FakeReceiverLinkWithSession:
+    class FakeReceiverLinkWithSession(FakeReceiverLinkCreditMixin):
         handle: int = 7
         session: FakeSession = fake_session
 
@@ -473,6 +565,8 @@ async def test_amqp_publish_fills_missing_message_id_on_existing_properties(
     class FakeMessage:
         payload = b"hello"
         headers: ClassVar[dict] = {}
+        reply_to = None
+        content_type = None
 
     # Provide Properties with message_id=None — should be auto-filled
     await broker.publish(
@@ -517,6 +611,7 @@ async def test_amqp_publish_fills_missing_reply_to_on_existing_properties(
         payload = b"hello"
         headers: ClassVar[dict] = {}
         reply_to = "reply-1"
+        content_type = None
 
     await broker.publish(
         channel="queue",
@@ -598,7 +693,7 @@ async def test_amqp_received_message_no_headers() -> None:
     connection = FakeConnection()
     fake_session = FakeSession(connection=connection, channel=2)
 
-    class FakeReceiverLinkWithSession:
+    class FakeReceiverLinkWithSession(FakeReceiverLinkCreditMixin):
         handle: int = 7
         session: FakeSession = fake_session
 
@@ -723,7 +818,7 @@ async def test_amqp_received_message_ack_double_call_is_noop() -> None:
     connection = FakeConnection()
     fake_session = FakeSession(connection=connection, channel=2)
 
-    class FakeReceiverLinkWithSession:
+    class FakeReceiverLinkWithSession(FakeReceiverLinkCreditMixin):
         handle: int = 7
         session: FakeSession = fake_session
 
@@ -750,7 +845,7 @@ async def test_amqp_received_message_reply_first() -> None:
     connection = FakeConnection()
     fake_session = FakeSession(connection=connection, channel=2)
 
-    class FakeReceiverLinkWithSession:
+    class FakeReceiverLinkWithSession(FakeReceiverLinkCreditMixin):
         handle: int = 7
         session: FakeSession = fake_session
 
@@ -787,11 +882,43 @@ async def test_amqp_received_message_reply_first() -> None:
     assert len(published) == 1
 
 
+async def test_amqp_received_message_reply_publish_failure_does_not_ack() -> None:
+    connection = FakeConnection()
+    fake_session = FakeSession(connection=connection, channel=2)
+
+    class FakeReceiverLinkWithSession(FakeReceiverLinkCreditMixin):
+        handle: int = 7
+        session: FakeSession = fake_session
+
+    link = FakeReceiverLinkWithSession()
+
+    async def publish_fn(**_kwargs: Any) -> None:
+        raise RuntimeError("publish failed")
+
+    msg = AmqpReceivedMessage(
+        payload=b"original",
+        headers=None,
+        link=cast(Any, link),
+        delivery_id=6,
+        delivery_tag=b"tag",
+        channel_name="q",
+        managed_session=cast(ManagedSession, object()),
+        publish_fn=publish_fn,
+        properties=Properties(reply_to="reply-to-channel"),
+    )
+
+    with pytest.raises(RuntimeError, match="publish failed"):
+        await msg.reply(payload=b"response")
+
+    assert msg.action is None
+    assert connection.sent == []
+
+
 async def test_amqp_received_message_reply_uses_reply_to() -> None:
     connection = FakeConnection()
     fake_session = FakeSession(connection=connection, channel=2)
 
-    class FakeReceiverLinkWithSession:
+    class FakeReceiverLinkWithSession(FakeReceiverLinkCreditMixin):
         handle: int = 7
         session: FakeSession = fake_session
 
@@ -833,7 +960,7 @@ async def test_amqp_received_message_reply_updates_existing_properties() -> None
     connection = FakeConnection()
     fake_session = FakeSession(connection=connection, channel=2)
 
-    class FakeReceiverLinkWithSession:
+    class FakeReceiverLinkWithSession(FakeReceiverLinkCreditMixin):
         handle: int = 7
         session: FakeSession = fake_session
 
@@ -872,7 +999,7 @@ async def test_amqp_received_message_reply_requires_channel_or_reply_to() -> Non
     connection = FakeConnection()
     fake_session = FakeSession(connection=connection, channel=2)
 
-    class FakeReceiverLinkWithSession:
+    class FakeReceiverLinkWithSession(FakeReceiverLinkCreditMixin):
         handle: int = 7
         session: FakeSession = fake_session
 

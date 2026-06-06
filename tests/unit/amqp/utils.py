@@ -29,6 +29,7 @@ class FakeSession:
     channel: int = 1
     _next_incoming_id: int = 0
     _next_outgoing_id: int = 0
+    _next_outgoing_delivery_id: int = 0
     _incoming_window: int = 100
     _outgoing_window: int = 100
     _remote_incoming_window: int = 100
@@ -48,6 +49,11 @@ class FakeSession:
             self._remote_incoming_window -= 1
         if self._remote_incoming_window <= 0:
             self._remote_incoming_window_available.clear()
+
+    def allocate_outgoing_delivery_id(self) -> int:
+        delivery_id = self._next_outgoing_delivery_id
+        self._next_outgoing_delivery_id = (self._next_outgoing_delivery_id + 1) & 0xFFFFFFFF
+        return delivery_id
 
     async def end(self) -> None:
         return None
@@ -189,9 +195,21 @@ class FakeReceiverLink:
     handle: int = 1
     is_usable: bool = True
     detached: bool = False
+    deferred_delivery_ids: set[int] = field(default_factory=set)
+    settled_delivery_ids: set[int] = field(default_factory=set)
+    released_delivery_ids: list[int] = field(default_factory=list)
 
     async def detach(self) -> None:
         self.detached = True
+
+    def defer_delivery_credit(self, delivery_id: int) -> None:
+        self.deferred_delivery_ids.add(delivery_id)
+
+    def is_delivery_settled(self, delivery_id: int) -> bool:
+        return delivery_id in self.settled_delivery_ids
+
+    async def release_delivery_credit(self, delivery_id: int) -> None:
+        self.released_delivery_ids.append(delivery_id)
 
 
 @dataclass(slots=True)

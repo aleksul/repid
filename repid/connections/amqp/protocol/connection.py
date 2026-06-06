@@ -17,7 +17,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from types import TracebackType
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from typing_extensions import Self
 
@@ -38,7 +38,7 @@ from repid.connections.amqp._uamqp.performatives import (
 
 from .events import ConnectionEvent, EventData, EventEmitter, MetricsCollector
 from .reconnect import ReconnectConfig, ReconnectStrategy
-from .session import DEFAULT_SESSION_WINDOW
+from .session import DEFAULT_SESSION_WINDOW, Session
 from .states import ConnectionState, ConnectionStateMachine
 from .transport import (
     SASL_HEADER,
@@ -47,9 +47,6 @@ from .transport import (
     FrameError,
     TransportConfig,
 )
-
-if TYPE_CHECKING:
-    from .session import Session
 
 logger = logging.getLogger("repid.connections.amqp.protocol")
 
@@ -718,7 +715,7 @@ class AmqpConnection:
 
     async def _handle_close(self, close_frame: CloseFrame) -> None:
         """Handle CLOSE from server."""
-        error = getattr(close_frame, "error", None)
+        error = close_frame.error
         logger.info(
             "connection.close.received",
             extra={"error": error if error else None},
@@ -803,9 +800,6 @@ class AmqpConnection:
                 raise ConnectionError("No free channels available")
 
         self._next_channel = (channel + 1) % (self._remote_channel_max + 1)
-
-        # Import here to avoid circular import
-        from .session import Session  # noqa: PLC0415
 
         session = Session(self, channel, incoming_window=self._config.session_window)
         self._sessions[channel] = session

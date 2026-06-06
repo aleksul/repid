@@ -472,7 +472,7 @@ def transfer_frames_to_message(frames: list[performatives.TransferFrame]) -> Mes
     for frame in frames:
         if frame.payload:
             payload.extend(frame.payload)
-    return _construct_message(payload)
+    return _construct_message(bytes(payload))
 
 
 def decode_frame(data: bytes) -> tuple[int, performatives.Performative]:

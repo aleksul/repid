@@ -8,7 +8,8 @@ from contextlib import suppress
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
-from repid.connections.abc import ServerT, SubscriberT
+from repid.connections.abc import SubscriberT
+from repid.data.actor import ActorExecutionContext
 from repid.health_check_server import HealthCheckStatus
 
 logger = logging.getLogger("repid")
@@ -17,7 +18,6 @@ if TYPE_CHECKING:
     from repid.connections.abc import ReceivedMessageT
     from repid.data.actor import ActorData
     from repid.health_check_server import HealthCheckServer
-    from repid.serializer import SerializerT
 
 
 ActorResultT = Any
@@ -26,14 +26,12 @@ ActorResultT = Any
 async def _actor_execution(
     message: ReceivedMessageT,
     actor: ActorData,
-    server: ServerT,
-    default_serializer: SerializerT,
+    actor_context: ActorExecutionContext,
 ) -> ActorResultT:
     args, kwargs = await actor.converter.convert_inputs(
         message=message,
         actor=actor,
-        server=server,
-        default_serializer=default_serializer,
+        actor_context=actor_context,
     )
     return await actor.fn(*args, **kwargs)
 
@@ -52,23 +50,22 @@ async def _keep_alive_loop(message: ReceivedMessageT, interval: float) -> None:
 async def _run_with_keepalive(
     message: ReceivedMessageT,
     actor: ActorData,
-    server: ServerT,
-    default_serializer: SerializerT,
+    actor_context: ActorExecutionContext,
 ) -> ActorResultT:
     if actor.keep_alive is False:
-        return await _actor_execution(message, actor, server, default_serializer)
+        return await _actor_execution(message, actor, actor_context)
 
     interval = (
         actor.keep_alive
         if isinstance(actor.keep_alive, (int, float)) and not isinstance(actor.keep_alive, bool)
         else message.keep_alive_interval
     )
-    if not server.capabilities["supports_keep_alive"] or interval is None:
-        return await _actor_execution(message, actor, server, default_serializer)
+    if not actor_context.server.capabilities["supports_keep_alive"] or interval is None:
+        return await _actor_execution(message, actor, actor_context)
 
     keepalive_task = asyncio.create_task(_keep_alive_loop(message, interval))
     try:
-        return await _actor_execution(message, actor, server, default_serializer)
+        return await _actor_execution(message, actor, actor_context)
     finally:
         keepalive_task.cancel()
         with suppress(asyncio.CancelledError):
@@ -78,17 +75,16 @@ async def _run_with_keepalive(
 async def _actor_execution_with_confirmation(  # noqa: C901, PLR0912
     message: ReceivedMessageT,
     actor: ActorData,
-    server: ServerT,
-    default_serializer: SerializerT,
+    actor_context: ActorExecutionContext,
 ) -> ActorResultT:
     """Wraps `_actor_execution` to ack/nack the message immediately after the actor fn runs,
     so middlewares unwinding above this leaf can observe `message.action`."""
     try:
         if actor.timeout is None or actor.timeout <= 0 or actor.timeout == float("inf"):
-            result = await _run_with_keepalive(message, actor, server, default_serializer)
+            result = await _run_with_keepalive(message, actor, actor_context)
         else:
             result = await asyncio.wait_for(
-                _run_with_keepalive(message, actor, server, default_serializer),
+                _run_with_keepalive(message, actor, actor_context),
                 timeout=actor.timeout,
             )
     except Exception as exc:
@@ -131,8 +127,7 @@ async def _actor_execution_with_confirmation(  # noqa: C901, PLR0912
 async def _actor_run(
     actor: ActorData,
     message: ReceivedMessageT,
-    server: ServerT,
-    default_serializer: SerializerT,
+    actor_context: ActorExecutionContext,
 ) -> ActorResultT | Exception:
     if (
         not message.is_acted_on  # theoretically a server can automatically ack the message on receive
@@ -151,8 +146,7 @@ async def _actor_run(
 
     leaf = partial(
         _actor_execution_with_confirmation,
-        server=server,
-        default_serializer=default_serializer,
+        actor_context=actor_context,
     )
 
     try:
@@ -172,13 +166,12 @@ async def _actor_run(
 async def _actor_run_with_cancel_event_and_callback(
     actor: ActorData,
     message: ReceivedMessageT,
-    server: ServerT,
-    default_serializer: SerializerT,
+    actor_context: ActorExecutionContext,
     cancel_event: asyncio.Event,
     cancel_event_task: asyncio.Task,
     callback: Callable[[], Awaitable],
 ) -> None:
-    process_task = asyncio.create_task(_actor_run(actor, message, server, default_serializer))
+    process_task = asyncio.create_task(_actor_run(actor, message, actor_context))
     await asyncio.wait(
         {cancel_event_task, process_task},
         return_when=asyncio.FIRST_COMPLETED,
@@ -212,8 +205,8 @@ class _Runner:
         "_tasks",
         "_tasks_concurrency_limit",
         "_unrouted_seen_counts",
+        "actor_context",
         "cancel_event",
-        "default_serializer",
         "max_tasks",
         "max_unrouted_retries",
         "server",
@@ -223,15 +216,14 @@ class _Runner:
     def __init__(
         self,
         *,
-        server: ServerT,
+        actor_context: ActorExecutionContext,
         max_tasks: int = float("inf"),  # type: ignore[assignment]
         tasks_concurrency_limit: int = 1000,
         concurrency_unpause_percent: float = 0.1,  # 10 percent
         health_check_server: HealthCheckServer | None = None,
-        default_serializer: SerializerT,
         max_unrouted_retries: int = 10,
     ):
-        self.server = server
+        self.server = actor_context.server
         self._server_subscriber: SubscriberT | None = None
         self._server_subscriber_concurrency_unpause_threshold = max(
             math.ceil(tasks_concurrency_limit * concurrency_unpause_percent),
@@ -259,7 +251,7 @@ class _Runner:
 
         self._health_check_server = health_check_server
 
-        self.default_serializer = default_serializer
+        self.actor_context = actor_context
 
     @property
     def processed(self) -> int:
@@ -343,8 +335,7 @@ class _Runner:
             _actor_run_with_cancel_event_and_callback(
                 actor,
                 message,
-                self.server,
-                self.default_serializer,
+                self.actor_context,
                 self.cancel_event,
                 self.cancel_event_task,
                 self._actor_run_callback,

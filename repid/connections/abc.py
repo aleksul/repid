@@ -4,7 +4,9 @@ import asyncio
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Protocol, TypedDict
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, TypedDict
+
+from repid.data.message import MessageData
 
 if TYPE_CHECKING:
     from repid.asyncapi.models.common import ServerBindingsObject
@@ -35,6 +37,12 @@ class BaseMessageT(Protocol):
 
 class SentMessageT(BaseMessageT, Protocol):
     pass
+
+
+MessagePublisherT: TypeAlias = Callable[
+    [str, MessageData, dict[str, Any] | None],
+    Coroutine[Any, Any, Any],
+]
 
 
 class ReceivedMessageT(BaseMessageT, Protocol):

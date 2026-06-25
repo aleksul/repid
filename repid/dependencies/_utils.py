@@ -10,17 +10,15 @@ from repid.dependencies.header_dependency import Header
 from repid.dependencies.message_dependency import MessageDependency
 
 if TYPE_CHECKING:
-    from repid.connections.abc import ReceivedMessageT, ServerT
-    from repid.data.actor import ActorData
-    from repid.serializer import SerializerT
+    from repid.connections.abc import ReceivedMessageT
+    from repid.data.actor import ActorData, ActorExecutionContext
 
 
 @dataclass(slots=True, kw_only=True, frozen=True)
 class DependencyContext:
     message: ReceivedMessageT
     actor: ActorData
-    server: ServerT
-    default_serializer: SerializerT
+    actor_context: ActorExecutionContext
     parsed_args: list[Any]
     parsed_kwargs: dict[str, Any]
     parsed_headers: dict[str, Any]

@@ -9,24 +9,22 @@ from typing import TYPE_CHECKING
 
 from repid._runner import _Runner
 from repid.asyncapi_server import AsyncAPIServer
+from repid.data.actor import ActorExecutionContext
 from repid.health_check_server import HealthCheckServer
 from repid.router import Router
-from repid.serializer import default_serializer as repid_default_serializer
 
 logger = logging.getLogger("repid")
 
 if TYPE_CHECKING:
     from repid.asyncapi import AsyncAPI3Schema
     from repid.asyncapi_server import AsyncAPIServerSettings
-    from repid.connections.abc import ServerT
     from repid.health_check_server import HealthCheckServerSettings
-    from repid.serializer import SerializerT
 
 
 class _Worker:
     def __init__(
         self,
-        server: ServerT,
+        actor_context: ActorExecutionContext,
         router: Router,
         graceful_shutdown_time: float = 25.0,
         messages_limit: int = float("inf"),  # type: ignore[assignment]
@@ -35,9 +33,9 @@ class _Worker:
         health_check_server: HealthCheckServerSettings | None = None,
         asyncapi_server: AsyncAPIServerSettings | None = None,
         asyncapi_schema: AsyncAPI3Schema | None = None,
-        default_serializer: SerializerT | None = None,
     ):
-        self.server: ServerT = server
+        self.actor_context = actor_context
+        self.server = actor_context.server
         self.centralized_router = router
 
         self.tasks_limit: int = tasks_limit
@@ -66,8 +64,6 @@ class _Worker:
                 raise ValueError("AsyncAPI schema is required if AsyncAPI server is enabled.")
             self.asyncapi_server = AsyncAPIServer(asyncapi_schema, asyncapi_server)
 
-        self.default_serializer = default_serializer or repid_default_serializer
-
     async def run(self) -> _Runner:
         logger.info(
             "worker.run.start",
@@ -85,11 +81,10 @@ class _Worker:
             await self.asyncapi_server.start()
 
         runner = _Runner(
-            server=self.server,
+            actor_context=self.actor_context,
             max_tasks=self.messages_limit,
             tasks_concurrency_limit=self.tasks_limit,
             health_check_server=self.health_check_server,
-            default_serializer=self.default_serializer,
         )
 
         if not self.centralized_router.actors:

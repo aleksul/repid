@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, overload
 from repid._worker import _Worker
 from repid.asyncapi import AsyncAPI3Schema, AsyncAPIGenerator
 from repid.asyncapi_server import AsyncAPIServer, get_asyncapi_html
-from repid.data import MessageData, RunnerInfo
+from repid.data import ActorExecutionContext, MessageData, RunnerInfo
 from repid.message_registry import MessageRegistry
 from repid.middlewares import (
     ActorMiddlewareT,
@@ -93,7 +93,11 @@ class Repid:
             )
 
         worker = _Worker(
-            server=server,
+            actor_context=ActorExecutionContext(
+                server=server,
+                publish=self._producer_middleware_pipeline(server.publish),
+                default_serializer=self.default_serializer,
+            ),
             router=self._centralized_router,
             graceful_shutdown_time=graceful_shutdown_time,
             messages_limit=messages_limit,
@@ -102,7 +106,6 @@ class Repid:
             health_check_server=health_check_server,
             asyncapi_server=asyncapi_server,
             asyncapi_schema=self.generate_asyncapi_schema() if asyncapi_server else None,
-            default_serializer=self.default_serializer,
         )
         runner = await worker.run()
         return RunnerInfo(processed=runner.processed)

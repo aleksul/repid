@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 from repid.data import MessageData
 
 if TYPE_CHECKING:
-    from repid.connections.abc import MessageAction, ReceivedMessageT, ServerT
+    from repid.connections.abc import MessageAction, MessagePublisherT, ReceivedMessageT, ServerT
     from repid.dependencies._utils import DependencyContext
     from repid.serializer import SerializerT
 
@@ -16,10 +16,12 @@ class EnhancedReceivedMessage:
         server: ServerT,
         message: ReceivedMessageT,
         default_serializer: SerializerT,
+        publish: MessagePublisherT,
     ) -> None:
         self._server = server
         self._message = message
         self._default_serializer = default_serializer
+        self._publish = publish
 
     @property
     def payload(self) -> bytes:
@@ -76,14 +78,14 @@ class EnhancedReceivedMessage:
         server_specific_parameters: dict[str, Any] | None = None,
     ) -> None:
         """Send a new message to a specified channel."""
-        await self._server.publish(
-            channel=channel,
-            message=MessageData(
+        await self._publish(
+            channel,
+            MessageData(
                 payload=payload,
                 headers=headers,
                 content_type=content_type,
             ),
-            server_specific_parameters=server_specific_parameters,
+            server_specific_parameters,
         )
 
     async def send_message_json(
@@ -97,14 +99,14 @@ class EnhancedReceivedMessage:
     ) -> None:
         """Send a new message to a specified channel."""
         serializer = serializer if serializer is not None else self._default_serializer
-        await self._server.publish(
-            channel=channel,
-            message=MessageData(
+        await self._publish(
+            channel,
+            MessageData(
                 payload=serializer(payload),
                 headers=headers,
                 content_type="application/json",
             ),
-            server_specific_parameters=server_specific_parameters,
+            server_specific_parameters,
         )
 
     async def reply(
@@ -132,11 +134,13 @@ class EnhancedReceivedMessage:
                     "Reply channel is not set. Provide `channel` or publish with `reply_to`.",
                 )
 
-            await self.send_message(
+            await self._server.publish(
                 channel=reply_channel,
-                payload=payload,
-                headers=headers,
-                content_type=content_type,
+                message=MessageData(
+                    payload=payload,
+                    headers=headers,
+                    content_type=content_type,
+                ),
                 server_specific_parameters=server_specific_parameters,
             )
             await self.ack()
@@ -166,9 +170,10 @@ class MessageDependency:
 
     async def resolve(self, *, context: DependencyContext) -> EnhancedReceivedMessage:
         return EnhancedReceivedMessage(
-            server=context.server,
+            server=context.actor_context.server,
             message=context.message,
-            default_serializer=context.default_serializer,
+            default_serializer=context.actor_context.default_serializer,
+            publish=context.actor_context.publish,
         )
 
 

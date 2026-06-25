@@ -43,6 +43,7 @@ nav:
   - Middlewares: cookbook/middlewares.md
 - Cookbook:
   - Sentry Middleware: cookbook/sentry_middleware.md
+  - OpenTelemetry Middleware: cookbook/opentelemetry_middleware.md
   - RabbitMQ Retries: cookbook/rabbitmq_retries.md
   - Large Payloads: cookbook/large_payloads.md
 - Extending Repid:
@@ -124,6 +125,7 @@ plugins:
       - cookbook/middlewares.md
       Cookbook:
       - cookbook/sentry_middleware.md
+      - cookbook/opentelemetry_middleware.md
       - cookbook/rabbitmq_retries.md
       - cookbook/large_payloads.md
       Extending Repid:

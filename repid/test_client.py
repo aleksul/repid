@@ -11,7 +11,7 @@ from typing_extensions import Self
 
 from repid._runner import _actor_run
 from repid.connections.abc import CapabilitiesT, MessageAction, ServerT
-from repid.data import MessageData
+from repid.data import ActorExecutionContext, MessageData
 from repid.message_registry import MessageRegistry
 
 if TYPE_CHECKING:
@@ -265,6 +265,12 @@ class TestClient:
         self._message_queue: asyncio.Queue[tuple[str, TestMessage]] = asyncio.Queue()
         self._mock_server: ServerT = _MockServer(self)  # type: ignore[assignment]
         self._producer_middleware_pipeline = app._producer_middleware_pipeline
+        self._actor_publish = self._producer_middleware_pipeline(self._mock_server.publish)
+        self._actor_context = ActorExecutionContext(
+            server=self._mock_server,
+            publish=self._actor_publish,
+            default_serializer=app.default_serializer,
+        )
 
     @property
     def messages(self) -> MessageRegistry:
@@ -465,10 +471,9 @@ class TestClient:
 
         # _actor_run returns either the result or the exception
         actor_result = await _actor_run(
-            actor,
-            test_message,
-            self._mock_server,
-            self.app.default_serializer,
+            actor=actor,
+            message=test_message,
+            actor_context=self._actor_context,
         )
 
         if isinstance(actor_result, Exception):

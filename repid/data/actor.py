@@ -6,10 +6,11 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 if TYPE_CHECKING:
     from repid.asyncapi.models.operations import OperationBindingsObject
-    from repid.connections.abc import BaseMessageT, ReceivedMessageT
+    from repid.connections.abc import BaseMessageT, MessagePublisherT, ReceivedMessageT, ServerT
     from repid.converter import ConverterT
     from repid.data import ExternalDocs, Tag
     from repid.data.message_schema import ActorMessageMetadata
+    from repid.serializer import SerializerT
 
 FnReturnT = TypeVar("FnReturnT")
 
@@ -21,6 +22,13 @@ ManualActionT = Literal["ack", "nack", "reject", "no_action"]
 OnErrorManualT = ManualActionT | Callable[[BaseException], ManualActionT]
 
 OnErrorT = OnErrorAutoT | OnErrorManualT
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ActorExecutionContext:
+    server: ServerT
+    publish: MessagePublisherT
+    default_serializer: SerializerT
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)

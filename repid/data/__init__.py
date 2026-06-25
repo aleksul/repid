@@ -1,4 +1,5 @@
 from .actor import ActorData as ActorData
+from .actor import ActorExecutionContext as ActorExecutionContext
 from .actor import AutoActionT as AutoActionT
 from .actor import ManualActionT as ManualActionT
 from .actor import OnErrorAutoT as OnErrorAutoT

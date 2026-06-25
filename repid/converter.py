@@ -9,15 +9,15 @@ from typing import TYPE_CHECKING, Any, Protocol, cast, get_args
 
 from repid._utils import is_installed
 from repid.data import ConverterInputSchema
+from repid.data.actor import ActorExecutionContext
 from repid.dependencies._utils import DependencyContext, get_dependency, get_full_payload_marker
 from repid.dependencies.depends import Depends as DependsClass
 from repid.dependencies.header_dependency import Header
 
 if TYPE_CHECKING:
-    from repid.connections.abc import ReceivedMessageT, ServerT
+    from repid.connections.abc import ReceivedMessageT
     from repid.data import ActorData, CorrelationId
     from repid.dependencies._utils import DependencyT
-    from repid.serializer import SerializerT
 
 if is_installed("pydantic"):
     from pydantic import BaseModel, Field, create_model
@@ -30,8 +30,7 @@ FnParams = tuple[list, dict]
 async def _resolve_dependencies(
     message: ReceivedMessageT,
     actor: ActorData,
-    server: ServerT,
-    default_serializer: SerializerT,
+    actor_context: ActorExecutionContext,
     parsed_args: list[Any],
     parsed_kwargs: dict[str, Any],
     parsed_headers: dict[str, Any],
@@ -41,8 +40,7 @@ async def _resolve_dependencies(
     context = DependencyContext(
         message=message,
         actor=actor,
-        server=server,
-        default_serializer=default_serializer,
+        actor_context=actor_context,
         parsed_args=parsed_args,
         parsed_kwargs=parsed_kwargs,
         parsed_headers=parsed_headers,
@@ -77,8 +75,7 @@ class ConverterT(Protocol):
         *,
         message: ReceivedMessageT,
         actor: ActorData,
-        server: ServerT,
-        default_serializer: SerializerT,
+        actor_context: ActorExecutionContext,
     ) -> FnParams: ...
 
     def get_input_schema(self) -> ConverterInputSchema: ...
@@ -113,8 +110,7 @@ class DefaultConverter:
         *,
         message: ReceivedMessageT,
         actor: ActorData,
-        server: ServerT,
-        default_serializer: SerializerT,
+        actor_context: ActorExecutionContext,
     ) -> FnParams:
         raise NotImplementedError  # pragma: no cover
 
@@ -221,8 +217,7 @@ class BasicConverter:
         *,
         message: ReceivedMessageT,
         actor: ActorData,
-        server: ServerT,
-        default_serializer: SerializerT,
+        actor_context: ActorExecutionContext,
     ) -> FnParams:
         loaded = self._parse_payload(message)
 
@@ -236,8 +231,7 @@ class BasicConverter:
         resolved = await _resolve_dependencies(
             message=message,
             actor=actor,
-            server=server,
-            default_serializer=default_serializer,
+            actor_context=actor_context,
             parsed_args=args,
             parsed_kwargs={**kwargs, **loaded},
             parsed_headers={**self.header_defaults, **(message.headers or {})},
@@ -500,8 +494,7 @@ class PydanticConverter:
         *,
         message: ReceivedMessageT,
         actor: ActorData,
-        server: ServerT,
-        default_serializer: SerializerT,
+        actor_context: ActorExecutionContext,
     ) -> FnParams:
         validated_payload = self._parse_payload(message)
         validated_headers = self._parse_headers(message)
@@ -525,8 +518,7 @@ class PydanticConverter:
             resolved = await _resolve_dependencies(
                 message=message,
                 actor=actor,
-                server=server,
-                default_serializer=default_serializer,
+                actor_context=actor_context,
                 parsed_args=args,
                 parsed_kwargs=fn_kwargs,
                 parsed_headers=parsed_headers,
@@ -548,8 +540,7 @@ class PydanticConverter:
         resolved = await _resolve_dependencies(
             message=message,
             actor=actor,
-            server=server,
-            default_serializer=default_serializer,
+            actor_context=actor_context,
             parsed_args=args,
             parsed_kwargs=loaded,
             parsed_headers=parsed_headers,

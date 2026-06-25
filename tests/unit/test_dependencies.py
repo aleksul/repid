@@ -11,11 +11,18 @@ from pydantic import ValidationError
 from repid import Header, Message, Repid, Router
 from repid.connections.abc import MessageAction
 from repid.converter import BasicConverter, DefaultConverter
-from repid.data import MessageData
+from repid.data import ActorExecutionContext, MessageData
 from repid.dependencies import Depends, MessageDependency
 from repid.dependencies._utils import get_dependency
 from repid.dependencies.message_dependency import EnhancedReceivedMessage
+from repid.serializer import default_serializer
 from repid.test_client import TestClient
+
+_CONVERTER_CONTEXT = ActorExecutionContext(
+    server=Mock(),
+    publish=AsyncMock(),
+    default_serializer=default_serializer,
+)
 
 
 def test_depends_raises_on_both_run_in_process_and_pool_executor() -> None:
@@ -180,10 +187,13 @@ async def test_message_dependency_reply_fallback() -> None:
     msg_mock.ack = AsyncMock()
     msg_mock.reply_to = "fallback_channel"
 
+    publish = AsyncMock()
+
     enhanced = EnhancedReceivedMessage(
         server=server,
         message=msg_mock,
         default_serializer=_default_serializer,
+        publish=publish,
     )
 
     # This should trigger the fallback
@@ -191,6 +201,7 @@ async def test_message_dependency_reply_fallback() -> None:
 
     # Should publish then ack
     server.publish.assert_called_once()
+    publish.assert_not_awaited()
     msg_mock.ack.assert_called_once()
 
     # If no reply_to and no channel, raises ValueError
@@ -721,8 +732,7 @@ async def test_depends_missing_required_argument() -> None:
                 content_type="application/json",
             ),
             actor=None,  # type: ignore[arg-type]
-            server=None,  # type: ignore[arg-type]
-            default_serializer=None,  # type: ignore[arg-type]
+            actor_context=_CONVERTER_CONTEXT,
         )
 
 
@@ -743,8 +753,7 @@ async def test_depends_uses_default_for_missing_argument() -> None:
             content_type="application/json",
         ),
         actor=None,  # type: ignore[arg-type]
-        server=None,  # type: ignore[arg-type]
-        default_serializer=None,  # type: ignore[arg-type]
+        actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
     assert kwargs == {"d": "default_value"}

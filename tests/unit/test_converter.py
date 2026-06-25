@@ -2,14 +2,22 @@ from __future__ import annotations
 
 import json
 from typing import Annotated
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from pydantic import BaseModel, ValidationError
 
 from repid import FullPayload, Header
 from repid.converter import BasicConverter, ConverterT, PydanticConverter
-from repid.data import MessageData
+from repid.data import ActorExecutionContext, MessageData
 from repid.dependencies import Depends
+from repid.serializer import default_serializer
+
+_CONVERTER_CONTEXT = ActorExecutionContext(
+    server=Mock(),
+    publish=AsyncMock(),
+    default_serializer=default_serializer,
+)
 
 
 @pytest.mark.parametrize(
@@ -35,8 +43,7 @@ async def test_converter_parses_payload_args_kwargs(
             content_type="application/json",
         ),
         actor=None,  # type: ignore[arg-type]
-        server=None,  # type: ignore[arg-type]
-        default_serializer=None,  # type: ignore[arg-type]
+        actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
     assert kwargs == expected
@@ -66,8 +73,7 @@ async def test_converter_parses_payload_positional_args(
             content_type="application/json",
         ),
         actor=None,  # type: ignore[arg-type]
-        server=None,  # type: ignore[arg-type]
-        default_serializer=None,  # type: ignore[arg-type]
+        actor_context=_CONVERTER_CONTEXT,
     )
     assert args == expected_args
     assert kwargs == expected_kwargs
@@ -102,8 +108,7 @@ async def test_pydantic_converter_properly_coerces_types() -> None:
             content_type="application/json",
         ),
         actor=None,  # type: ignore[arg-type]
-        server=None,  # type: ignore[arg-type]
-        default_serializer=None,  # type: ignore[arg-type]
+        actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
     assert kwargs == {
@@ -151,8 +156,7 @@ async def test_pydantic_converter_validation_errors(
                 content_type="application/json",
             ),
             actor=None,  # type: ignore[arg-type]
-            server=None,  # type: ignore[arg-type]
-            default_serializer=None,  # type: ignore[arg-type]
+            actor_context=_CONVERTER_CONTEXT,
         )
 
 
@@ -169,8 +173,7 @@ async def test_converter_not_json_error(converter: type[ConverterT]) -> None:
                 content_type="application/xml",
             ),
             actor=None,  # type: ignore[arg-type]
-            server=None,  # type: ignore[arg-type]
-            default_serializer=None,  # type: ignore[arg-type]
+            actor_context=_CONVERTER_CONTEXT,
         )
 
 
@@ -194,8 +197,7 @@ async def test_converter_header_in_depends(converter: type[ConverterT]) -> None:
             content_type="application/json",
         ),
         actor=None,  # type: ignore[arg-type]
-        server=None,  # type: ignore[arg-type]
-        default_serializer=None,  # type: ignore[arg-type]
+        actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
     assert kwargs == {"d": "got: header_value"}
@@ -225,8 +227,7 @@ async def test_converter_header(converter: type[ConverterT], input_headers: dict
             content_type="application/json",
         ),
         actor=None,  # type: ignore[arg-type]
-        server=None,  # type: ignore[arg-type]
-        default_serializer=None,  # type: ignore[arg-type]
+        actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
     assert kwargs == {"d": "header_value"}
@@ -260,8 +261,7 @@ async def test_converter_header_defaults(converter: type[ConverterT], input_head
             content_type="application/json",
         ),
         actor=None,  # type: ignore[arg-type]
-        server=None,  # type: ignore[arg-type]
-        default_serializer=None,  # type: ignore[arg-type]
+        actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
     assert kwargs == {"d": "default_value"}
@@ -299,8 +299,7 @@ async def test_converter_payload_in_depends(
             content_type="application/json",
         ),
         actor=None,  # type: ignore[arg-type]
-        server=None,  # type: ignore[arg-type]
-        default_serializer=None,  # type: ignore[arg-type]
+        actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
     assert kwargs == {"d": "got: default_value"}
@@ -332,8 +331,7 @@ async def test_converter_payload_in_depends_with_default(
             content_type="application/json",
         ),
         actor=None,  # type: ignore[arg-type]
-        server=None,  # type: ignore[arg-type]
-        default_serializer=None,  # type: ignore[arg-type]
+        actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
     assert kwargs == {"d": "got: default_value"}
@@ -367,8 +365,7 @@ async def test_converter_header_in_depends_with_default(
             content_type="application/json",
         ),
         actor=None,  # type: ignore[arg-type]
-        server=None,  # type: ignore[arg-type]
-        default_serializer=None,  # type: ignore[arg-type]
+        actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
     assert kwargs == {"d": "got: default_value"}
@@ -425,8 +422,7 @@ async def test_converter_unsupported_content_type(converter: type[ConverterT]) -
                 content_type="text/plain",
             ),
             actor=None,  # type: ignore[arg-type]
-            server=None,  # type: ignore[arg-type]
-            default_serializer=None,  # type: ignore[arg-type]
+            actor_context=_CONVERTER_CONTEXT,
         )
 
 
@@ -442,8 +438,7 @@ async def test_basic_converter_payload_not_dict() -> None:
                 content_type="application/json",
             ),
             actor=None,  # type: ignore[arg-type]
-            server=None,  # type: ignore[arg-type]
-            default_serializer=None,  # type: ignore[arg-type]
+            actor_context=_CONVERTER_CONTEXT,
         )
 
 
@@ -458,8 +453,7 @@ async def test_basic_converter_var_kwargs() -> None:
             content_type="application/json",
         ),
         actor=None,  # type: ignore[arg-type]
-        server=None,  # type: ignore[arg-type]
-        default_serializer=None,  # type: ignore[arg-type]
+        actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
     assert kwargs == {"a": 1, "b": 2, "c": 3}
@@ -476,8 +470,7 @@ async def test_basic_converter_var_args() -> None:
             content_type="application/json",
         ),
         actor=None,  # type: ignore[arg-type]
-        server=None,  # type: ignore[arg-type]
-        default_serializer=None,  # type: ignore[arg-type]
+        actor_context=_CONVERTER_CONTEXT,
     )
     # For *args, the values (not keys) get extended as args
     assert 1 in args
@@ -509,8 +502,7 @@ async def test_converter_empty_payload(payload: bytes, converter: type[Converter
             content_type="application/json",
         ),
         actor=None,  # type: ignore[arg-type]
-        server=None,  # type: ignore[arg-type]
-        default_serializer=None,  # type: ignore[arg-type]
+        actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
     assert kwargs == {"a": 5}
@@ -559,8 +551,7 @@ async def test_converter_header_no_name_uses_param_name(converter: type[Converte
             content_type="application/json",
         ),
         actor=None,  # type: ignore[arg-type]
-        server=None,  # type: ignore[arg-type]
-        default_serializer=None,  # type: ignore[arg-type]
+        actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
     assert kwargs == {"d": "got: header_value"}
@@ -589,8 +580,7 @@ async def test_converter_header_default_uses_param_name(
             content_type="application/json",
         ),
         actor=None,  # type: ignore[arg-type]
-        server=None,  # type: ignore[arg-type]
-        default_serializer=None,  # type: ignore[arg-type]
+        actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
     assert kwargs == {"d": "got: param_default"}
@@ -788,8 +778,7 @@ async def test_pydantic_converter_full_payload_model_parse() -> None:
             content_type="application/json",
         ),
         actor=None,  # type: ignore[arg-type]
-        server=None,  # type: ignore[arg-type]
-        default_serializer=None,  # type: ignore[arg-type]
+        actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
     assert kwargs == {"model": MyModel(a=1, b=2.5)}
@@ -832,8 +821,7 @@ async def test_pydantic_converter_full_payload_model_with_extra_kwargs() -> None
             content_type="application/json",
         ),
         actor=None,  # type: ignore[arg-type]
-        server=None,  # type: ignore[arg-type]
-        default_serializer=None,  # type: ignore[arg-type]
+        actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
     assert kwargs["extra"] == "hello"

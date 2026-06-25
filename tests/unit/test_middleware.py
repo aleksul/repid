@@ -7,8 +7,9 @@ from typing import Any, TypeVar
 
 import pytest
 
-from repid import ActorData, MessageData, Repid, Router
+from repid import ActorData, Message, MessageData, Repid, Router
 from repid.connections.abc import MessageAction, ReceivedMessageT
+from repid.connections.in_memory import InMemoryServer
 from repid.middlewares import (
     _compile_actor_middleware_pipeline,
     _compile_producer_middleware_pipeline,
@@ -223,6 +224,96 @@ async def test_producer_middleware_on_repid_level() -> None:
     res = await pipeline_fn("default", MessageData(payload=b""), None)
     assert res == "ok"
     assert calls == ["enter", "leaf", "exit"]
+
+
+async def test_producer_middleware_on_message_dependency_sends() -> None:
+    calls: list[str] = []
+
+    async def middleware(
+        call_next: Callable[[str, MessageData, dict[str, Any] | None], Coroutine[None, None, T]],
+        channel: str,
+        message: MessageData,
+        server_specific_parameters: dict[str, Any] | None,
+    ) -> T:
+        calls.append(channel)
+        new_message = replace(
+            message,
+            headers={**(message.headers or {}), "x-produced-channel": channel},
+        )
+        return await call_next(channel, new_message, server_specific_parameters)
+
+    app = Repid(producer_middlewares=[middleware])
+    router = Router()
+
+    @router.actor
+    async def sender(message: Message) -> None:
+        await message.send_message(channel="target_raw", payload=b"raw")
+        await message.send_message_json(channel="target_json", payload={"value": 1})
+
+    app.include_router(router)
+
+    async with TestClient(app) as client:
+        await client.send_message(
+            channel="default",
+            payload=b"{}",
+            headers={"topic": "sender"},
+        )
+
+        raw_messages = client.get_sent_messages(channel="target_raw")
+        json_messages = client.get_sent_messages(channel="target_json")
+
+    assert calls == ["default", "target_raw", "target_json"]
+    assert len(raw_messages) == 1
+    assert raw_messages[0].headers == {"x-produced-channel": "target_raw"}
+    assert raw_messages[0].payload == b"raw"
+    assert len(json_messages) == 1
+    assert json_messages[0].headers == {"x-produced-channel": "target_json"}
+    assert json_messages[0].payload == b'{"value":1}'
+
+
+async def test_producer_middleware_on_message_dependency_sends_in_worker() -> None:
+    calls: list[str] = []
+    received_headers: dict[str, str] | None = None
+
+    async def middleware(
+        call_next: Callable[[str, MessageData, dict[str, Any] | None], Coroutine[None, None, T]],
+        channel: str,
+        message: MessageData,
+        server_specific_parameters: dict[str, Any] | None,
+    ) -> T:
+        calls.append(channel)
+        new_message = replace(
+            message,
+            headers={**(message.headers or {}), "x-produced-channel": channel},
+        )
+        return await call_next(channel, new_message, server_specific_parameters)
+
+    server = InMemoryServer()
+    app = Repid(producer_middlewares=[middleware])
+    app.servers.register_server("default", server, is_default=True)
+    router = Router()
+
+    @router.actor
+    async def sender(message: Message) -> None:
+        await message.send_message(
+            channel="target",
+            payload=b"{}",
+            headers={"topic": "receiver"},
+        )
+
+    @router.actor(channel="target")
+    async def receiver(message: Message) -> None:
+        nonlocal received_headers
+        received_headers = message.headers
+
+    app.include_router(router)
+
+    async with server.connection():
+        await app.send_message(channel="default", payload=b"{}", headers={"topic": "sender"})
+        await app.run_worker(messages_limit=2)
+
+    assert calls == ["default", "target"]
+    assert received_headers == {"topic": "receiver", "x-produced-channel": "target"}
 
 
 async def test_actor_middleware_combination() -> None:

@@ -8,10 +8,10 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from repid import Repid, Router
+from repid import Repid, Router, ServerT
 from repid._runner import _keep_alive_loop, _run_with_keepalive, _Runner
 from repid.connections.in_memory import InMemoryServer
-from repid.data import MessageData
+from repid.data import ActorExecutionContext, MessageData
 from repid.health_check_server import HealthCheckServer, HealthCheckStatus
 from repid.serializer import default_serializer
 from repid.test_client import TestClient
@@ -210,10 +210,9 @@ async def test_runner_max_tasks_hit(supports_lightweight_pause: bool) -> None:
 
     async with server.connection():
         runner = _Runner(
-            server=mocked_server,
+            actor_context=_make_actor_context(mocked_server),
             max_tasks=5,
             tasks_concurrency_limit=10,
-            default_serializer=default_serializer,
         )
 
         assert not runner.max_tasks_hit
@@ -242,11 +241,10 @@ async def test_runner_unpause_threshold_validation() -> None:
 
     with pytest.raises(ValueError, match="Subscriber will never unpause"):
         _Runner(
-            server=server,
+            actor_context=_make_actor_context(server),
             max_tasks=10,
             tasks_concurrency_limit=1,
             concurrency_unpause_percent=2.0,  # 200% - more than limit
-            default_serializer=default_serializer,
         )
 
 
@@ -269,8 +267,7 @@ async def test_runner_cancel_event_during_actor_execution() -> None:
 
     async with server.connection():
         runner = _Runner(
-            server=server,
-            default_serializer=default_serializer,
+            actor_context=_make_actor_context(server),
         )
 
         async def trigger_cancel() -> None:
@@ -316,8 +313,7 @@ async def test_runner_no_matching_actor_rejects_message(
 
     async with server.connection():
         runner = _Runner(
-            server=server,
-            default_serializer=default_serializer,
+            actor_context=_make_actor_context(server),
         )
 
         await server.publish(
@@ -361,9 +357,8 @@ async def test_runner_pause_and_resume_with_concurrency_limit() -> None:
 
     async with server.connection():
         runner = _Runner(
-            server=server,
+            actor_context=_make_actor_context(server),
             tasks_concurrency_limit=2,
-            default_serializer=default_serializer,
         )
 
         async def publish_messages() -> None:
@@ -431,9 +426,8 @@ async def test_runner_subscriber_exception_sets_unhealthy() -> None:
 
     async with server.connection():
         runner = _Runner(
-            server=server,
+            actor_context=_make_actor_context(server),
             health_check_server=health_check_server,
-            default_serializer=default_serializer,
         )
 
         await runner.run(
@@ -459,8 +453,7 @@ async def test_runner_graceful_shutdown_with_timeout(
 
     async with server.connection():
         runner = _Runner(
-            server=server,
-            default_serializer=default_serializer,
+            actor_context=_make_actor_context(server),
         )
 
         async def publish_and_stop() -> None:
@@ -529,8 +522,7 @@ async def test_runner_pause_exception_during_shutdown(
 
     async with server.connection():
         runner = _Runner(
-            server=server,
-            default_serializer=default_serializer,
+            actor_context=_make_actor_context(server),
         )
 
         runner.stop_consume_event.set()
@@ -586,8 +578,7 @@ async def test_runner_close_exception_during_shutdown(
 
     async with server.connection():
         runner = _Runner(
-            server=server,
-            default_serializer=default_serializer,
+            actor_context=_make_actor_context(server),
         )
 
         runner.stop_consume_event.set()
@@ -627,8 +618,7 @@ async def test_runner_tasks_not_finishing_after_cancellation(
 
     async with server.connection():
         runner = _Runner(
-            server=server,
-            default_serializer=default_serializer,
+            actor_context=_make_actor_context(server),
         )
 
         async def run_with_message() -> None:
@@ -768,7 +758,7 @@ def _make_unrouted_message(message_id: str | None) -> Mock:
 
 async def test_runner_unrouted_message_reject_below_threshold() -> None:
     server = InMemoryServer()
-    runner = _Runner(server=server, default_serializer=default_serializer, max_unrouted_retries=3)
+    runner = _Runner(actor_context=_make_actor_context(server), max_unrouted_retries=3)
 
     for _ in range(2):
         msg = _make_unrouted_message("msg-poison")
@@ -781,7 +771,7 @@ async def test_runner_unrouted_message_nack_at_threshold(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     server = InMemoryServer()
-    runner = _Runner(server=server, default_serializer=default_serializer, max_unrouted_retries=3)
+    runner = _Runner(actor_context=_make_actor_context(server), max_unrouted_retries=3)
 
     for _ in range(2):
         await runner._message_handler([], _make_unrouted_message("msg-poison"))
@@ -801,7 +791,7 @@ async def test_runner_unrouted_message_nack_at_threshold(
 
 async def test_runner_unrouted_message_counter_cleared_after_nack() -> None:
     server = InMemoryServer()
-    runner = _Runner(server=server, default_serializer=default_serializer, max_unrouted_retries=2)
+    runner = _Runner(actor_context=_make_actor_context(server), max_unrouted_retries=2)
 
     for _ in range(2):
         await runner._message_handler([], _make_unrouted_message("msg-poison"))
@@ -811,7 +801,7 @@ async def test_runner_unrouted_message_counter_cleared_after_nack() -> None:
 
 async def test_runner_unrouted_message_no_id_always_reject() -> None:
     server = InMemoryServer()
-    runner = _Runner(server=server, default_serializer=default_serializer, max_unrouted_retries=1)
+    runner = _Runner(actor_context=_make_actor_context(server), max_unrouted_retries=1)
 
     for _ in range(3):
         msg = _make_unrouted_message(None)
@@ -878,6 +868,14 @@ def _make_mock_actor(fn: AsyncMock | None = None) -> Mock:
     return actor
 
 
+def _make_actor_context(server: Mock | ServerT) -> ActorExecutionContext:
+    return ActorExecutionContext(
+        server=server,
+        publish=AsyncMock(),
+        default_serializer=default_serializer,
+    )
+
+
 async def test_run_with_keepalive_skipped_when_capability_false() -> None:
     message = Mock()
     message.keep_alive_interval = 0
@@ -886,7 +884,7 @@ async def test_run_with_keepalive_skipped_when_capability_false() -> None:
     server = Mock()
     server.capabilities = {"supports_keep_alive": False}
 
-    await _run_with_keepalive(message, _make_mock_actor(), server, Mock())
+    await _run_with_keepalive(message, _make_mock_actor(), _make_actor_context(server))
 
     message.keep_alive.assert_not_called()
 
@@ -899,7 +897,7 @@ async def test_run_with_keepalive_skipped_when_interval_none() -> None:
     server = Mock()
     server.capabilities = {"supports_keep_alive": True}
 
-    await _run_with_keepalive(message, _make_mock_actor(), server, Mock())
+    await _run_with_keepalive(message, _make_mock_actor(), _make_actor_context(server))
 
     message.keep_alive.assert_not_called()
 
@@ -920,8 +918,7 @@ async def test_run_with_keepalive_fires_during_slow_actor() -> None:
     await _run_with_keepalive(
         message,
         _make_mock_actor(AsyncMock(side_effect=slow_fn)),
-        server,
-        Mock(),
+        _make_actor_context(server),
     )
 
     assert message.keep_alive.call_count >= 1
@@ -945,8 +942,7 @@ async def test_run_with_keepalive_task_cancelled_on_actor_timeout() -> None:
             _run_with_keepalive(
                 message,
                 _make_mock_actor(AsyncMock(side_effect=very_slow_fn)),
-                server,
-                Mock(),
+                _make_actor_context(server),
             ),
             timeout=0.05,
         )

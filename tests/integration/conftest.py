@@ -46,6 +46,24 @@ rabbitmq_container = container(
 )
 
 
+class ActiveMQContainer(wrappers.Container):
+    def ready(self) -> bool:
+        self._container.reload()
+        return bool(self.status == "running" and "AMQ221007" in self.logs())
+
+
+activemq_container = container(
+    image="apache/artemis:2.54.0-alpine",
+    ports={"61616/tcp": None},
+    environment={
+        "ARTEMIS_USER": "user",
+        "ARTEMIS_PASSWORD": "testtest",
+    },
+    scope="session",
+    wrapper_class=ActiveMQContainer,
+)
+
+
 class DeltioContainer(wrappers.Container):
     def ready(self) -> bool:
         return "listening on" in self.logs()
@@ -119,6 +137,26 @@ def rabbitmq_connection(rabbitmq_container: "wrappers.Container") -> ServerT:
 
     return AmqpServer(
         dsn=f"amqp://user:testtest@localhost:{rabbitmq_container.ports['5672/tcp'][0]}",
+    )
+
+
+@pytest.fixture(scope="session")
+def activemq_connection(activemq_container: "wrappers.Container") -> ServerT:
+    for queue in ("default", "another", "my_queue"):
+        create_result = activemq_container.exec_run(
+            "/var/lib/artemis-instance/bin/artemis queue create "
+            f"--name {queue} --address {queue} --anycast --durable "
+            "--auto-create-address --silent --user user --password testtest "
+            "--url tcp://localhost:61616",
+        )
+        assert create_result.exit_code == 0, (
+            f"Failed to create ActiveMQ queue {queue}: {create_result.output.decode()}"
+        )
+
+    return AmqpServer(
+        dsn=f"amqp://user:testtest@localhost:{activemq_container.ports['61616/tcp'][0]}",
+        publish_naming_strategy=lambda channel, _: channel,
+        subscribe_naming_strategy=lambda channel: channel,
     )
 
 
@@ -408,6 +446,7 @@ async def sqs_connection(elasticmq_container: "wrappers.Container") -> ServerT:
 @pytest.fixture(
     params=[
         lazy_fixture("rabbitmq_connection"),
+        lazy_fixture("activemq_connection"),
         lazy_fixture("pubsub_connection"),
         lazy_fixture("redis_connection"),
         lazy_fixture("kafka_connection"),

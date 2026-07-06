@@ -266,6 +266,7 @@ class TestClient:
         self._mock_server: ServerT = _MockServer(self)  # type: ignore[assignment]
         self._producer_middleware_pipeline = app._producer_middleware_pipeline
         self._actor_publish = self._producer_middleware_pipeline(self._mock_server.publish)
+        self._router = app._centralized_router._materialize()
         self._actor_context = ActorExecutionContext(
             server=self._mock_server,
             publish=self._actor_publish,
@@ -459,7 +460,7 @@ class TestClient:
 
     async def _process_message(self, test_message: TestMessage) -> TestMessage:
         # Find actors for this channel
-        actors = self.app._centralized_router._actors_per_channel_address.get(
+        actors = self._router._actors_per_channel_address.get(
             test_message.channel,
             [],
         )

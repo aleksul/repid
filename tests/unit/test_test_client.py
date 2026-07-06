@@ -733,3 +733,25 @@ async def test_test_client_clear_with_messages() -> None:
 
         assert client._message_queue.empty()
         assert len(client.get_sent_messages()) == 0
+
+
+async def test_test_client_include_router_after_creation() -> None:
+    app = Repid()
+    router = Router()
+
+    @router.actor
+    async def myactor(arg1: str) -> None:
+        pass
+
+    async with TestClient(app, auto_process=False) as client:
+        # including router after establishing test client doesn't change anything
+        app.include_router(router)
+
+        await client.send_message_json(
+            channel="default",
+            payload={"arg1": "first"},
+            headers={"topic": "myactor"},
+        )
+
+        with pytest.raises(ValueError, match="No actor found for channel 'default'"):
+            await client.process_next()

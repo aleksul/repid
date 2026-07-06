@@ -43,7 +43,7 @@ async def test_worker_with_no_actors() -> None:
     async with server.connection():
         worker = _Worker(
             actor_context=_make_actor_context(server),
-            router=router,
+            router=router._materialize(),
             graceful_shutdown_time=1.0,
         )
 
@@ -60,7 +60,7 @@ async def test_worker_without_asyncapi_schema_raises() -> None:
     with pytest.raises(ValueError, match="AsyncAPI schema is required"):
         _Worker(
             actor_context=_make_actor_context(server),
-            router=router,
+            router=router._materialize(),
             asyncapi_server=AsyncAPIServerSettings(address="127.0.0.1", port=18125),
             asyncapi_schema=None,
         )
@@ -78,7 +78,7 @@ async def test_worker_run_with_health_check_server_lifecycle() -> None:
     async with server.connection():
         worker = _Worker(
             actor_context=_make_actor_context(server),
-            router=router,
+            router=router._materialize(),
             graceful_shutdown_time=0.1,
             messages_limit=1,
             health_check_server=HealthCheckServerSettings(address="127.0.0.1", port=18126),
@@ -123,7 +123,7 @@ async def test_worker_run_with_asyncapi_server_lifecycle() -> None:
     async with server.connection():
         worker = _Worker(
             actor_context=_make_actor_context(server),
-            router=router,
+            router=router._materialize(),
             graceful_shutdown_time=0.1,
             messages_limit=1,
             asyncapi_server=AsyncAPIServerSettings(address="127.0.0.1", port=18127),
@@ -170,7 +170,7 @@ async def test_worker_run_with_both_servers_lifecycle() -> None:
     async with server.connection():
         worker = _Worker(
             actor_context=_make_actor_context(server),
-            router=router,
+            router=router._materialize(),
             graceful_shutdown_time=0.1,
             messages_limit=1,
             health_check_server=HealthCheckServerSettings(address="127.0.0.1", port=18128),
@@ -213,7 +213,7 @@ async def test_worker_run_graceful_shutdown() -> None:
     async with server.connection():
         worker = _Worker(
             actor_context=_make_actor_context(server),
-            router=router,
+            router=router._materialize(),
             graceful_shutdown_time=0.1,
             register_signals=[signal.SIGUSR1],
         )
@@ -238,7 +238,7 @@ async def test_worker_run_cancel() -> None:
     async with server.connection():
         worker = _Worker(
             actor_context=_make_actor_context(server),
-            router=router,
+            router=router._materialize(),
             graceful_shutdown_time=0.1,
             register_signals=[signal.SIGUSR1],
         )

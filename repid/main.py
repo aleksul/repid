@@ -98,7 +98,7 @@ class Repid:
                 publish=self._producer_middleware_pipeline(server.publish),
                 default_serializer=self.default_serializer,
             ),
-            router=self._centralized_router,
+            router=self._centralized_router._materialize(),
             graceful_shutdown_time=graceful_shutdown_time,
             messages_limit=messages_limit,
             tasks_limit=tasks_limit,
@@ -112,7 +112,7 @@ class Repid:
 
     def generate_asyncapi_schema(self) -> AsyncAPI3Schema:
         return AsyncAPIGenerator(
-            routers=[self._centralized_router],
+            routers=[self._centralized_router._materialize()],
             servers=self._servers,
             messages=self._messages,
             title=self.title,

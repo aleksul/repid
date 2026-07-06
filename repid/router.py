@@ -7,6 +7,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, overload
 
 from repid._utils import NotSet, asyncify
+from repid._utils.not_set import _NotSet
 from repid.converter import DefaultConverter
 from repid.data import (
     ActorData,
@@ -82,9 +83,44 @@ class _ActorDefinition:
     message_schema: ActorMessageMetadata | None
 
 
+@dataclass(slots=True, kw_only=True, frozen=True)
+class _IncludedRouter:
+    router: Router
+
+
+@dataclass(slots=True, kw_only=True, frozen=True)
+class _RouterDefaults:
+    channel: Channel | str | _NotSet
+    middlewares: tuple[ActorMiddlewareT, ...]
+    timeout: float | _NotSet
+    keep_alive: bool | float | None | _NotSet
+    run_in_process: bool | _NotSet
+    pool_executor: Executor | None | _NotSet
+    converter: type[ConverterT] | _NotSet
+
+    @classmethod
+    def empty(cls) -> _RouterDefaults:
+        return cls(
+            channel=NotSet,
+            middlewares=(),
+            timeout=NotSet,
+            keep_alive=NotSet,
+            run_in_process=NotSet,
+            pool_executor=NotSet,
+            converter=NotSet,
+        )
+
+
+@dataclass(slots=True, kw_only=True, frozen=True)
+class _MaterializedRouter:
+    actors: list[ActorData]
+    channels: list[Channel]
+    _actors_per_channel_address: dict[str, list[ActorData]]
+
+
 class Router:
     __slots__ = (
-        "_definitions",
+        "_entries",
         "channel",
         "converter",
         "keep_alive",
@@ -105,7 +141,7 @@ class Router:
         pool_executor: Executor | None = NotSet,
         converter: type[ConverterT] = NotSet,
     ) -> None:
-        self._definitions: list[_ActorDefinition] = []
+        self._entries: list[_ActorDefinition | _IncludedRouter] = []
         self.channel = channel
         self.middlewares = middlewares
         self.timeout = timeout
@@ -115,204 +151,246 @@ class Router:
         self.converter = converter
 
     def include_router(self, router: Router) -> None:
-        self._definitions.extend(router._definitions)
+        if router is self or router._contains_router(self):
+            raise ValueError("Including this router would create a cycle.")
 
-        # propagate defaults
-        if router.channel is NotSet and self.channel is not NotSet:
-            router.channel = self.channel
+        if any(
+            isinstance(entry, _IncludedRouter) and entry.router is router for entry in self._entries
+        ):
+            return
 
-        if self.middlewares is not None:
-            child_mws = router.middlewares
-            if child_mws is None:
-                router.middlewares = self.middlewares
+        self._entries.append(_IncludedRouter(router=router))
+
+    def _contains_router(self, router: Router, seen: set[int] | None = None) -> bool:
+        if seen is None:
+            seen = set()
+        if id(self) in seen:
+            return False
+        seen.add(id(self))
+
+        for entry in self._entries:
+            if isinstance(entry, _ActorDefinition):
+                continue
+            if entry.router is router or entry.router._contains_router(router, seen):
+                return True
+        return False
+
+    def _materialize(self) -> _MaterializedRouter:
+        actors: list[ActorData] = []
+        channels: dict[str, Channel] = {}
+        self._materialize_into(
+            actors=actors,
+            channels=channels,
+            defaults=_RouterDefaults.empty(),
+        )
+
+        actors_per_channel_address: dict[str, list[ActorData]] = {}
+        for actor in actors:
+            if actor.channel_address not in actors_per_channel_address:
+                actors_per_channel_address[actor.channel_address] = []
+            actors_per_channel_address[actor.channel_address].append(actor)
+
+        return _MaterializedRouter(
+            actors=actors,
+            channels=list(channels.values()),
+            _actors_per_channel_address=actors_per_channel_address,
+        )
+
+    def _materialize_into(
+        self,
+        *,
+        actors: list[ActorData],
+        channels: dict[str, Channel],
+        defaults: _RouterDefaults,
+    ) -> None:
+        current_defaults = self._merge_defaults(defaults)
+        for entry in self._entries:
+            if isinstance(entry, _IncludedRouter):
+                entry.router._materialize_into(
+                    actors=actors,
+                    channels=channels,
+                    defaults=current_defaults,
+                )
             else:
-                router.middlewares = tuple(self.middlewares) + tuple(child_mws)
+                actor_data, channel = self._materialize_actor(entry, current_defaults)
+                actors.append(actor_data)
+                self._add_channel(channels, channel)
 
-        if router.timeout is NotSet and self.timeout is not NotSet:
-            router.timeout = self.timeout
+    def _merge_defaults(self, defaults: _RouterDefaults) -> _RouterDefaults:
+        return _RouterDefaults(
+            channel=(defaults.channel if isinstance(self.channel, _NotSet) else self.channel),
+            middlewares=(
+                defaults.middlewares
+                if self.middlewares is None
+                else (*defaults.middlewares, *self.middlewares)
+            ),
+            timeout=defaults.timeout if isinstance(self.timeout, _NotSet) else self.timeout,
+            keep_alive=(
+                defaults.keep_alive if isinstance(self.keep_alive, _NotSet) else self.keep_alive
+            ),
+            run_in_process=(
+                defaults.run_in_process
+                if isinstance(self.run_in_process, _NotSet)
+                else self.run_in_process
+            ),
+            pool_executor=(
+                defaults.pool_executor
+                if isinstance(self.pool_executor, _NotSet)
+                else self.pool_executor
+            ),
+            converter=(
+                defaults.converter if isinstance(self.converter, _NotSet) else self.converter
+            ),
+        )
 
-        if router.keep_alive is NotSet and self.keep_alive is not NotSet:
-            router.keep_alive = self.keep_alive
+    @staticmethod
+    def _add_channel(channels: dict[str, Channel], channel: Channel) -> None:
+        if channel.address not in channels:
+            channels[channel.address] = channel
+            return
 
-        if router.run_in_process is NotSet and self.run_in_process is not NotSet:
-            router.run_in_process = self.run_in_process
+        existing = channels[channel.address]
+        if not any(
+            (
+                existing.title,
+                existing.summary,
+                existing.description,
+                existing.bindings,
+                existing.external_docs,
+            ),
+        ) and any(
+            (
+                channel.title,
+                channel.summary,
+                channel.description,
+                channel.bindings,
+                channel.external_docs,
+            ),
+        ):
+            channels[channel.address] = channel
 
-        if router.pool_executor is NotSet and self.pool_executor is not NotSet:
-            router.pool_executor = self.pool_executor
+    def _materialize_actor(
+        self,
+        definition: _ActorDefinition,
+        defaults: _RouterDefaults,
+    ) -> tuple[ActorData, Channel]:
+        converter_cls = (
+            definition.converter
+            if definition.converter is not None
+            else (
+                DefaultConverter if isinstance(defaults.converter, _NotSet) else defaults.converter
+            )
+        )
 
-        if router.converter is NotSet and self.converter is not NotSet:
-            router.converter = self.converter
+        channel_obj = self._resolve_channel(definition.channel, defaults)
+        channel_address = channel_obj.address
+
+        actual_name = definition.name or definition.fn.__name__
+
+        actual_routing_strategy = definition.routing_strategy(actor_name=actual_name)
+
+        actor_middlewares = definition.middlewares or []
+        all_middlewares: list[ActorMiddlewareT] = [
+            *defaults.middlewares,
+            *actor_middlewares,
+        ]
+
+        composer = _compile_actor_middleware_pipeline(all_middlewares)
+
+        async def middleware_pipeline(
+            call_next: Callable[[ReceivedMessageT, ActorData], Coroutine[Any, Any, Any]],
+            message: ReceivedMessageT,
+            actor: ActorData,
+            _composer: Callable = composer,
+            _all_middlewares: list[ActorMiddlewareT] = all_middlewares,
+        ) -> Any:
+            if _all_middlewares:
+                final = _composer(call_next)
+                return await final(message, actor)
+            return await call_next(message, actor)
+
+        timeout_val = (
+            definition.timeout
+            if definition.timeout is not None
+            else (300.0 if isinstance(defaults.timeout, _NotSet) else defaults.timeout)
+        )
+        keep_alive_val = (
+            definition.keep_alive
+            if definition.keep_alive is not None
+            else (True if isinstance(defaults.keep_alive, _NotSet) else defaults.keep_alive)
+        )
+        run_in_process_val = (
+            definition.run_in_process
+            if definition.run_in_process is not None
+            else (
+                False if isinstance(defaults.run_in_process, _NotSet) else defaults.run_in_process
+            )
+        )
+        pool_executor_val = (
+            definition.pool_executor
+            if definition.pool_executor is not None
+            else (None if isinstance(defaults.pool_executor, _NotSet) else defaults.pool_executor)
+        )
+
+        actor_data = ActorData(
+            fn=asyncify(
+                definition.fn,
+                run_in_process=run_in_process_val,
+                executor=pool_executor_val,
+            ),
+            name=actual_name,
+            confirmation_mode=definition.confirmation_mode,
+            routing_strategy=actual_routing_strategy,
+            middleware_pipeline=middleware_pipeline,
+            channel_address=channel_address,
+            timeout=timeout_val,
+            keep_alive=keep_alive_val,
+            converter=converter_cls(
+                definition.fn,
+                fn_locals=definition.fn_locals,
+                correlation_id=definition.correlation_id,
+            ),
+            title=definition.title,
+            summary=definition.summary
+            or " ".join([part.capitalize() for part in definition.fn.__name__.split("_")]),
+            description=definition.description or definition.fn.__doc__,
+            security=tuple(definition.security) if definition.security is not None else None,
+            tags=tuple(definition.tags) if definition.tags is not None else None,
+            external_docs=definition.external_docs,
+            bindings=definition.bindings,
+            deprecated=definition.deprecated,
+            on_error=definition.on_error,
+            message_schema=definition.message_schema,
+        )
+        return actor_data, channel_obj
+
+    @staticmethod
+    def _resolve_channel(
+        channel: Channel | str | None,
+        defaults: _RouterDefaults,
+    ) -> Channel:
+        fallback_channel: Channel | str = "default"
+        resolved_channel = (
+            channel
+            if channel is not None
+            else (fallback_channel if isinstance(defaults.channel, _NotSet) else defaults.channel)
+        )
+
+        if isinstance(resolved_channel, Channel):
+            return resolved_channel
+        return Channel(address=resolved_channel)
 
     @property
     def _actors_per_channel_address(self) -> dict[str, list[ActorData]]:
-        result: dict[str, list[ActorData]] = {}
-        for actor in self.actors:
-            if actor.channel_address not in result:
-                result[actor.channel_address] = []
-            result[actor.channel_address].append(actor)
-        return result
+        return self._materialize()._actors_per_channel_address
 
     @property
     def channels(self) -> list[Channel]:
-        channels: dict[str, Channel] = {}
-        for definition in self._definitions:
-            if definition.channel is None:
-                if isinstance(definition.router.channel, Channel):
-                    channel = definition.router.channel
-                elif definition.router.channel is NotSet:
-                    channel = Channel(address="default")
-                else:
-                    channel = Channel(address=definition.router.channel)
-            elif isinstance(definition.channel, Channel):
-                channel = definition.channel
-            else:
-                channel = Channel(address=definition.channel)
-            if channel.address not in channels:
-                channels[channel.address] = channel
-                continue
-            existing = channels[channel.address]
-            if not any(
-                (
-                    existing.title,
-                    existing.summary,
-                    existing.description,
-                    existing.bindings,
-                    existing.external_docs,
-                ),
-            ) and any(
-                (
-                    channel.title,
-                    channel.summary,
-                    channel.description,
-                    channel.bindings,
-                    channel.external_docs,
-                ),
-            ):
-                channels[channel.address] = channel
-        return list(channels.values())
+        return self._materialize().channels
 
     @property
-    def actors(self) -> list[ActorData]:  # noqa: PLR0915
-        actors: list[ActorData] = []
-        for definition in self._definitions:
-            fn = definition.fn
-            name = definition.name
-            confirmation_mode = definition.confirmation_mode
-            routing_strategy = definition.routing_strategy
-            channel = definition.channel
-            middlewares = definition.middlewares
-            timeout = definition.timeout
-            keep_alive = definition.keep_alive
-            title = definition.title
-            summary = definition.summary
-            description = definition.description
-            run_in_process = definition.run_in_process
-            pool_executor = definition.pool_executor
-            converter = definition.converter
-            security = definition.security
-            tags = definition.tags
-            external_docs = definition.external_docs
-            bindings = definition.bindings
-            deprecated = definition.deprecated
-            on_error = definition.on_error
-            correlation_id = definition.correlation_id
-            fn_locals = definition.fn_locals
-            message_schema = definition.message_schema
-
-            if converter is None:
-                converter = (
-                    DefaultConverter
-                    if definition.router.converter is NotSet
-                    else definition.router.converter
-                )
-
-            if channel is None:
-                channel = (
-                    "default" if definition.router.channel is NotSet else definition.router.channel
-                )
-
-            channel_address = channel if isinstance(channel, str) else channel.address
-
-            actual_name = name or fn.__name__
-
-            actual_routing_strategy = routing_strategy(actor_name=actual_name)
-
-            defaults_middlewares = definition.router.middlewares or []
-            actor_middlewares = middlewares or []
-            all_middlewares: list[ActorMiddlewareT] = [
-                *defaults_middlewares,
-                *actor_middlewares,
-            ]
-
-            composer = _compile_actor_middleware_pipeline(all_middlewares)
-
-            async def middleware_pipeline(
-                call_next: Callable[[ReceivedMessageT, ActorData], Coroutine[Any, Any, Any]],
-                message: ReceivedMessageT,
-                actor: ActorData,
-                _composer: Callable = composer,
-                _all_middlewares: list[ActorMiddlewareT] = all_middlewares,
-            ) -> Any:
-                if _all_middlewares:
-                    final = _composer(call_next)
-                    return await final(message, actor)
-                return await call_next(message, actor)
-
-            timeout_val = timeout
-            if timeout_val is None:
-                timeout_val = (
-                    300.0 if definition.router.timeout is NotSet else definition.router.timeout
-                )
-
-            keep_alive_val = keep_alive
-            if keep_alive_val is None:
-                keep_alive_val = (
-                    True if definition.router.keep_alive is NotSet else definition.router.keep_alive
-                )
-
-            run_in_process_val = run_in_process
-            if run_in_process_val is None:
-                run_in_process_val = (
-                    False
-                    if definition.router.run_in_process is NotSet
-                    else definition.router.run_in_process
-                )
-
-            pool_executor_val = pool_executor
-            if pool_executor_val is None:
-                pool_executor_val = (
-                    None
-                    if definition.router.pool_executor is NotSet
-                    else definition.router.pool_executor
-                )
-
-            actor_data = ActorData(
-                fn=asyncify(
-                    fn,
-                    run_in_process=run_in_process_val,
-                    executor=pool_executor_val,
-                ),
-                name=actual_name,
-                confirmation_mode=confirmation_mode,
-                routing_strategy=actual_routing_strategy,
-                middleware_pipeline=middleware_pipeline,
-                channel_address=channel_address,
-                timeout=timeout_val,
-                keep_alive=keep_alive_val,
-                converter=converter(fn, fn_locals=fn_locals, correlation_id=correlation_id),
-                title=title,
-                summary=summary or " ".join([part.capitalize() for part in fn.__name__.split("_")]),
-                description=description or fn.__doc__,
-                security=tuple(security) if security is not None else None,
-                tags=tuple(tags) if tags is not None else None,
-                external_docs=external_docs,
-                bindings=bindings,
-                deprecated=deprecated,
-                on_error=on_error,
-                message_schema=message_schema,
-            )
-            actors.append(actor_data)
-        return actors
+    def actors(self) -> list[ActorData]:
+        return self._materialize().actors
 
     @overload
     def actor(
@@ -720,7 +798,7 @@ class Router:
         if on_error is None:
             on_error = "no_action" if confirmation_mode in ("manual", "manual_explicit") else "nack"
 
-        self._definitions.append(
+        self._entries.append(
             _ActorDefinition(
                 router=self,
                 fn=fn,

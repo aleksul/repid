@@ -6,6 +6,7 @@ import pytest
 from pydantic import BaseModel
 
 from repid import Contact, ExternalDocs, Header, License, Repid, Router, Tag
+from repid.asyncapi import AsyncAPIGenerator
 from repid.connections.amqp import AmqpServer
 from repid.connections.in_memory import InMemoryServer
 from repid.data.channel import Channel as ChannelData
@@ -15,6 +16,8 @@ from repid.data.message_schema import (
     MessageExample,
     MessageSchema,
 )
+from repid.message_registry import MessageRegistry
+from repid.server_registry import ServerRegistry
 
 
 def test_message_example_raises_error_when_neither_headers_nor_payload_provided() -> None:
@@ -55,6 +58,22 @@ def test_asyncapi_generator_basic() -> None:
         "version": "2.0.0",
         "description": "Test description",
     }
+
+
+def test_asyncapi_generator_accepts_public_router() -> None:
+    router = Router()
+
+    @router.actor
+    async def test_actor() -> None:
+        pass
+
+    schema = AsyncAPIGenerator(
+        routers=[router],
+        servers=ServerRegistry(),
+        messages=MessageRegistry(),
+    ).generate_schema()
+
+    assert "test_actor" in schema["components"]["messages"]
 
 
 def test_asyncapi_generator_server() -> None:

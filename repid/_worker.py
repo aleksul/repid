@@ -11,7 +11,7 @@ from repid._runner import _Runner
 from repid.asyncapi_server import AsyncAPIServer
 from repid.data.actor import ActorExecutionContext
 from repid.health_check_server import HealthCheckServer
-from repid.router import Router
+from repid.router import _MaterializedRouter
 
 logger = logging.getLogger("repid")
 
@@ -25,7 +25,7 @@ class _Worker:
     def __init__(
         self,
         actor_context: ActorExecutionContext,
-        router: Router,
+        router: _MaterializedRouter,
         graceful_shutdown_time: float = 25.0,
         messages_limit: int = float("inf"),  # type: ignore[assignment]
         tasks_limit: int = 1000,

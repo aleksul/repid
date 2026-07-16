@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from copy import deepcopy
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, cast
 from urllib.parse import quote
 
 from repid.asyncapi.models import (
@@ -41,7 +41,6 @@ if TYPE_CHECKING:
     from repid.data.message_schema import MessageExample
     from repid.data.tag import Tag as TagModel
     from repid.message_registry import MessageRegistry
-    from repid.router import Router
     from repid.server_registry import ServerRegistry
 
 
@@ -60,6 +59,14 @@ def _sanitize_component_key(value: str, *, fallback: str) -> str:
 def _escape_ref_token(value: str) -> str:
     escaped = value.replace("~", "~0").replace("/", "~1")
     return quote(escaped, safe="-._~")
+
+
+class _AsyncAPIRouter(Protocol):
+    @property
+    def channels(self) -> list[ChannelDataModel]: ...
+
+    @property
+    def _actors_per_channel_address(self) -> dict[str, list[ActorData]]: ...
 
 
 class AsyncAPIComponents:
@@ -330,7 +337,7 @@ class AsyncAPIGenerator:
     def __init__(
         self,
         *,
-        routers: list[Router],
+        routers: list[_AsyncAPIRouter],
         servers: ServerRegistry,
         messages: MessageRegistry,
         title: str = "Repid API",
@@ -359,7 +366,7 @@ class AsyncAPIGenerator:
         components = AsyncAPIComponents()
         extractor = DataExtractor(components)
         message_keys: dict[int, str] = {}
-        actors_per_router: list[tuple[Router, dict[str, list[ActorData]]]] = []
+        actors_per_router: list[tuple[_AsyncAPIRouter, dict[str, list[ActorData]]]] = []
 
         for router in self.routers:
             actors_by_channel = router._actors_per_channel_address
@@ -495,7 +502,7 @@ class AsyncAPIGenerator:
         extractor: DataExtractor,
         components: AsyncAPIComponents,
         message_keys: dict[int, str],
-        actors_per_router: list[tuple[Router, dict[str, list[ActorData]]]],
+        actors_per_router: list[tuple[_AsyncAPIRouter, dict[str, list[ActorData]]]],
     ) -> dict[str, Channel]:
         channels: dict[str, Channel] = {}
 
@@ -580,7 +587,7 @@ class AsyncAPIGenerator:
         extractor: DataExtractor,
         components: AsyncAPIComponents,
         message_keys: dict[int, str],
-        actors_per_router: list[tuple[Router, dict[str, list[ActorData]]]],
+        actors_per_router: list[tuple[_AsyncAPIRouter, dict[str, list[ActorData]]]],
     ) -> dict[str, Operation]:
         operations: dict[str, Operation] = {}
         generated_operation_ids: set[str] = set()

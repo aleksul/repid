@@ -151,7 +151,7 @@ async def _actor_run(
 
     try:
         result = await actor.middleware_pipeline(leaf, message, actor)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         exception = exc
         logger.debug("actor.run.error", extra=logger_extra, exc_info=exc)
     else:

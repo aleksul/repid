@@ -81,7 +81,7 @@ class TestMessage:
         "_timestamp",
     )
 
-    def __init__(
+    def __init__(  # noqa: PLR0917
         self,
         operation_id: str | None,
         payload: bytes,

@@ -27,7 +27,7 @@ if is_installed("pydantic"):
 FnParams = tuple[list, dict]
 
 
-async def _resolve_dependencies(
+async def _resolve_dependencies(  # noqa: PLR0917
     message: ReceivedMessageT,
     actor: ActorData,
     actor_context: ActorExecutionContext,

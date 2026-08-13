@@ -35,7 +35,7 @@ class AIOKafkaConsumerProtocol(Protocol):
 class AIOKafkaProducerProtocol(Protocol):
     async def start(self) -> None: ...
     async def stop(self) -> None: ...
-    async def send_and_wait(
+    async def send_and_wait(  # noqa: PLR0917
         self,
         topic: str,
         value: bytes | None = None,

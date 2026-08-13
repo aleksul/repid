@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 
 class _Worker:
-    def __init__(
+    def __init__(  # noqa: PLR0917
         self,
         actor_context: ActorExecutionContext,
         router: _MaterializedRouter,

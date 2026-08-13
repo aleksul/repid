@@ -88,11 +88,13 @@ kafka_container = container(
     entrypoint="/bin/sh",
     command=[
         "-c",
-        "while [ ! -f /tmp/port ]; do sleep 0.1; done && "
-        "PORT=$(cat /tmp/port) && "
-        "exec /usr/bin/rpk redpanda start --smp 1 --reserve-memory 0M --overprovisioned --node-id 0 "
-        "--kafka-addr PLAINTEXT://0.0.0.0:29092 "
-        "--advertise-kafka-addr PLAINTEXT://127.0.0.1:$PORT",
+        (
+            "while [ ! -f /tmp/port ]; do sleep 0.1; done && "
+            "PORT=$(cat /tmp/port) && "
+            "exec /usr/bin/rpk redpanda start --smp 1 --reserve-memory 0M --overprovisioned --node-id 0 "
+            "--kafka-addr PLAINTEXT://0.0.0.0:29092 "
+            "--advertise-kafka-addr PLAINTEXT://127.0.0.1:$PORT"
+        ),
     ],
     ports={"29092/tcp": None},
     scope="session",

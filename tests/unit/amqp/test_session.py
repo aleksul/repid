@@ -560,7 +560,7 @@ async def test_session_receiver_prefetch_raises_incoming_window(monkeypatch: Any
     session._state_machine.transition_sync("recv_begin")
     connection.sent.clear()
 
-    def fake_receiver_link(
+    def fake_receiver_link(  # noqa: PLR0917
         session: Session,
         name: str,
         address: str,

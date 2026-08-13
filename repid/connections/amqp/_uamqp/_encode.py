@@ -1001,7 +1001,7 @@ def performative_to_bytes(performative: EncodableT, channel: int = 0) -> bytes:
     return bytes(header + output)
 
 
-def message_to_transfer_frames(  # noqa: C901, PLR0912, PLR0915
+def message_to_transfer_frames(  # noqa: C901, PLR0912, PLR0915, PLR0917
     message: Message,
     max_frame_size: int,
     handle: int,

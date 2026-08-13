@@ -107,7 +107,7 @@ class AmqpSubscriber:
 
         for queue, callback in queues_to_callbacks.items():
             # Create wrapper callback that handles the message
-            async def wrapped_callback(
+            async def wrapped_callback(  # noqa: PLR0917
                 payload: bytes,
                 headers: dict[str, Any] | None,
                 delivery_id: int,

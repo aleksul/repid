@@ -514,7 +514,7 @@ class ReceiverLink(Link):
         receiver = await session.create_receiver("my-queue", on_message)
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0917
         self,
         session: Session,
         name: str,

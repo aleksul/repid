@@ -614,7 +614,7 @@ class AsyncAPIGenerator:
             )
         return operations
 
-    def _generate_router_operations(
+    def _generate_router_operations(  # noqa: PLR0917
         self,
         channel: str,
         actors: dict[str, ActorData],

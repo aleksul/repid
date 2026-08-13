@@ -93,9 +93,9 @@ class _RouterDefaults:
     channel: Channel | str | _NotSet
     middlewares: tuple[ActorMiddlewareT, ...]
     timeout: float | _NotSet
-    keep_alive: bool | float | None | _NotSet
+    keep_alive: bool | float | _NotSet | None
     run_in_process: bool | _NotSet
-    pool_executor: Executor | None | _NotSet
+    pool_executor: Executor | _NotSet | None
     converter: type[ConverterT] | _NotSet
 
     @classmethod

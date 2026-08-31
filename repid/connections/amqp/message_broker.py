@@ -7,6 +7,9 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlparse
 from uuid import uuid4
 
+from repid.connections._subscriber import (
+    SubscriberDispatcher,
+)
 from repid.connections.abc import CapabilitiesT, SentMessageT, SubscriberT
 from repid.connections.amqp._uamqp.message import Properties
 from repid.connections.amqp.protocol import (
@@ -146,8 +149,19 @@ class AmqpServer:
     def capabilities(self) -> CapabilitiesT:
         return {
             "supports_native_reply": True,
-            "supports_lightweight_pause": False,
             "supports_keep_alive": False,
+            "supports_pause": True,
+            "supports_pause_per_channel": True,
+            # The window is per-queue link credit (prefetch); there is no
+            # subscription-wide message window.
+            "supports_native_message_flow_control": False,
+            "supports_native_message_flow_control_per_channel": True,
+            # AMQP 1.0 has no payload-byte flow control: link credit is counted in
+            # messages, and the session incoming window is counted in transfer frames
+            # (a byte upper bound of window * max_frame_size, not an enforceable
+            # payload budget), shared by every link on the session.
+            "supports_native_payload_flow_control": False,
+            "supports_native_payload_flow_control_per_channel": False,
         }
 
     @property
@@ -202,7 +216,8 @@ class AmqpServer:
         # Close all active subscribers
         for subscriber in self._active_subscribers:
             try:
-                await subscriber.close()
+                await subscriber.stop()
+                await subscriber.finish()
             except Exception as exc:
                 logger.exception("subscriber.close.error", exc_info=exc)
 
@@ -323,7 +338,7 @@ class AmqpServer:
         self,
         *,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        dispatcher: SubscriberDispatcher,
     ) -> SubscriberT:
         logger.debug("channel.subscribe", extra={"channels": list(channels_to_callbacks.keys())})
 
@@ -333,7 +348,7 @@ class AmqpServer:
         # Create and store subscriber
         subscriber = await AmqpSubscriber.create(
             queues_to_callbacks=channels_to_callbacks,
-            concurrency_limit=concurrency_limit,
+            dispatcher=dispatcher,
             managed_session=self._managed_session,
             naming_strategy=self._subscribe_naming_strategy,
             publish_fn=self.publish,

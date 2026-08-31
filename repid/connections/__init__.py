@@ -1,4 +1,5 @@
 from repid._utils import is_installed
+from repid.connections._subscriber import SubscriberDispatcher
 from repid.connections.abc import (
     BaseMessageT,
     CapabilitiesT,
@@ -20,6 +21,7 @@ __all__ = [
     "ReceivedMessageT",
     "SentMessageT",
     "ServerT",
+    "SubscriberDispatcher",
     "SubscriberT",
 ]
 

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from repid import Repid
+from repid.connections import SubscriberDispatcher
 from repid.connections.abc import ReceivedMessageT
 from repid.connections.amqp import AmqpServer
 from repid.connections.amqp._uamqp.message import Properties
@@ -28,7 +29,10 @@ async def test_server_side_cancel(
             callback_event.set()
             await msg.ack()
 
-        subscriber = await conn.subscribe(channels_to_callbacks={"default": dummy_callback})
+        subscriber = await conn.subscribe(
+            channels_to_callbacks={"default": dummy_callback},
+            dispatcher=SubscriberDispatcher(),
+        )
 
         rabbit_list_result = rabbitmq_container.exec_run("rabbitmqctl list_consumers")
         assert rabbit_list_result.exit_code == 0, (
@@ -58,7 +62,8 @@ async def test_server_side_cancel(
 
         await asyncio.wait_for(callback_event.wait(), timeout=30.0)
 
-        await subscriber.close()
+        await subscriber.stop()
+        await subscriber.finish()
 
 
 async def test_message_id_is_set_to_uuid4(rabbitmq_connection: AmqpServer) -> None:
@@ -76,11 +81,15 @@ async def test_message_id_is_set_to_uuid4(rabbitmq_connection: AmqpServer) -> No
             done.set()
             await msg.ack()
 
-        subscriber = await conn.subscribe(channels_to_callbacks={"default": capture_callback})
+        subscriber = await conn.subscribe(
+            channels_to_callbacks={"default": capture_callback},
+            dispatcher=SubscriberDispatcher(),
+        )
 
         await repid_app.send_message(channel="default", payload=b"")
         await asyncio.wait_for(done.wait(), timeout=10.0)
-        await subscriber.close()
+        await subscriber.stop()
+        await subscriber.finish()
 
     assert received_message_id is not None
     UUID(received_message_id)  # raises ValueError if not a valid UUID
@@ -102,7 +111,10 @@ async def test_message_id_is_preserved_when_set_by_user(rabbitmq_connection: Amq
             done.set()
             await msg.ack()
 
-        subscriber = await conn.subscribe(channels_to_callbacks={"default": capture_callback})
+        subscriber = await conn.subscribe(
+            channels_to_callbacks={"default": capture_callback},
+            dispatcher=SubscriberDispatcher(),
+        )
 
         await repid_app.send_message(
             channel="default",
@@ -110,6 +122,7 @@ async def test_message_id_is_preserved_when_set_by_user(rabbitmq_connection: Amq
             server_specific_parameters={"properties": Properties(message_id=custom_id)},
         )
         await asyncio.wait_for(done.wait(), timeout=10.0)
-        await subscriber.close()
+        await subscriber.stop()
+        await subscriber.finish()
 
     assert received_message_id == custom_id

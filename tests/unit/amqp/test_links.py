@@ -597,9 +597,12 @@ async def test_receiver_link_send_disposition(receiver: ReceiverLink) -> None:
     await receiver._send_disposition(42, Accepted())
 
     sent = cast(Any, receiver.session.connection).sent
-    assert isinstance(sent[-1][1], DispositionFrame)
-    assert sent[-1][1].first == 42
-    assert receiver._delivery_settled_by_callback is True
+    disposition = sent[-1][1]
+    assert isinstance(disposition, DispositionFrame)
+    assert disposition.first == 42
+    assert disposition.last == 42
+    assert disposition.settled is True
+    assert isinstance(disposition.state, Accepted)
 
 
 async def test_receiver_link_settle_delivery_sends_disposition_and_releases_credit(
@@ -617,6 +620,24 @@ async def test_receiver_link_settle_delivery_sends_disposition_and_releases_cred
     sent = cast(Any, receiver.session.connection).sent
     assert isinstance(sent[0][1], DispositionFrame)
     assert isinstance(sent[1][1], FlowFrame)
+    assert receiver.link_credit == 1
+
+
+async def test_receiver_link_deferred_credit_survives_early_settlement(
+    receiver: ReceiverLink,
+) -> None:
+    receiver._state_machine.transition_sync("send_attach")
+    receiver._state_machine.transition_sync("recv_attach")
+    cast(Any, receiver.session.connection).sent.clear()
+    receiver._prefetch = 1
+    receiver._link_credit = 0
+    receiver._credit_pending_delivery_ids.add(42)
+    receiver.defer_delivery_credit(42)
+
+    await receiver.settle_delivery(42, Accepted())
+
+    assert receiver.link_credit == 0
+    await receiver.release_delivery_credit(42)
     assert receiver.link_credit == 1
 
 

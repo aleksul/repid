@@ -8,6 +8,9 @@ from typing import TYPE_CHECKING, Any
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 
+from repid.connections._subscriber import (
+    SubscriberDispatcher,
+)
 from repid.connections.abc import CapabilitiesT, SentMessageT, ServerT, SubscriberT
 from repid.connections.kafka.subscriber import KafkaSubscriber
 
@@ -141,8 +144,13 @@ class KafkaServer(ServerT):
     def capabilities(self) -> CapabilitiesT:
         return {
             "supports_native_reply": False,
-            "supports_lightweight_pause": False,
             "supports_keep_alive": False,
+            "supports_pause": True,
+            "supports_pause_per_channel": True,
+            "supports_native_message_flow_control": False,
+            "supports_native_message_flow_control_per_channel": False,
+            "supports_native_payload_flow_control": False,
+            "supports_native_payload_flow_control_per_channel": False,
         }
 
     @property
@@ -171,7 +179,8 @@ class KafkaServer(ServerT):
         # but we'll attempt to close any that are still active just in case
         for subscriber in list(self._active_subscribers):  # pragma: no cover
             try:
-                await subscriber.close()
+                await subscriber.stop()
+                await subscriber.finish()
             except Exception as exc:
                 logger.exception("server.disconnect.subscriber_close_error", exc_info=exc)
         self._active_subscribers.clear()
@@ -218,7 +227,7 @@ class KafkaServer(ServerT):
         self,
         *,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        dispatcher: SubscriberDispatcher,
     ) -> SubscriberT:
         if not self.is_connected:  # pragma: no cover
             raise ConnectionError("Kafka producer is not connected.")
@@ -240,7 +249,7 @@ class KafkaServer(ServerT):
             server=self,
             consumer=consumer,  # pyright: ignore[reportArgumentType]
             channels_to_callbacks=channels_to_callbacks,
-            concurrency_limit=concurrency_limit,
+            dispatcher=dispatcher,
         )
         self._active_subscribers.append(subscriber)
 

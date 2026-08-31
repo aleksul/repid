@@ -9,6 +9,9 @@ from typing import TYPE_CHECKING, Any
 
 import grpc.aio
 
+from repid.connections._subscriber import (
+    SubscriberDispatcher,
+)
 from repid.connections.abc import CapabilitiesT, ReceivedMessageT, SentMessageT, SubscriberT
 
 from .helpers import ChannelOverride
@@ -103,11 +106,8 @@ class PubsubServer:
             reconnect_jitter_factor: Jitter factor (0.0-1.0) for retry delays.
             stability_threshold: Seconds of stability before resetting retry counter.
             stream_ack_deadline_seconds: Ack deadline for StreamingPull.
-            max_outstanding_messages: Flow control for outstanding messages.
-            max_outstanding_bytes: Flow control for outstanding bytes (0=unlimited).
             credentials_provider: Custom credentials provider for auth. Overrides
                 automatic credential selection.
-            channel_factory: Custom gRPC channel factory.
         """
         self._dsn = dsn
         self._default_project = default_project
@@ -226,10 +226,21 @@ class PubsubServer:
 
     @property
     def capabilities(self) -> CapabilitiesT:
+        # Native flow control is the StreamingPull server-side window: the
+        # initial request's `max_outstanding_messages`/`max_outstanding_bytes`
+        # bound delivered-but-unacked messages per stream, and there is one
+        # stream (and thus one window) per channel.  The credit stays consumed
+        # until the message is settled, which happens after admission; the ack
+        # deadline is extended by keep-alive while processing runs.
         return {
             "supports_native_reply": False,
-            "supports_lightweight_pause": False,
             "supports_keep_alive": True,
+            "supports_pause": True,
+            "supports_pause_per_channel": True,
+            "supports_native_message_flow_control": False,
+            "supports_native_message_flow_control_per_channel": True,
+            "supports_native_payload_flow_control": False,
+            "supports_native_payload_flow_control_per_channel": True,
         }
 
     @property
@@ -295,7 +306,8 @@ class PubsubServer:
         while self._active_subscribers:
             subscriber = self._active_subscribers.pop()
             with suppress(Exception):
-                await subscriber.close()
+                await subscriber.stop()
+                await subscriber.finish()
 
         # Stop control batcher (flush any pending operations)
         if self._control_batcher is not None:
@@ -375,13 +387,13 @@ class PubsubServer:
         self,
         *,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        dispatcher: SubscriberDispatcher,
     ) -> SubscriberT:
         """Subscribe to Pub/Sub channels.
 
         Args:
             channels_to_callbacks: Mapping of channel names to callback functions.
-            concurrency_limit: Maximum concurrent message processing (None=unlimited).
+            dispatcher: Prepared intake and callback dispatch strategy.
 
         Returns:
             A subscriber that can be used to manage the subscription.
@@ -415,7 +427,7 @@ class PubsubServer:
             resilience_state=self._resilience_state,
             stream_ack_deadline_seconds=self._stream_ack_deadline_seconds,
             client_id=self._client_id,
-            concurrency_limit=concurrency_limit,
+            dispatcher=dispatcher,
             server=self,
         )
         self._active_subscribers.append(subscriber)

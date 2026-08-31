@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import grpc.aio
 import pytest
 
+from repid.connections import SubscriberDispatcher
 from repid.connections.pubsub import message_broker
 from repid.connections.pubsub.helpers import ChannelOverride
 from repid.connections.pubsub.protocol import (
@@ -75,7 +76,7 @@ def test_all_properties() -> None:
     assert server.external_docs is None
     assert server.bindings is None
     assert server.capabilities["supports_native_reply"] is False
-    assert server.capabilities["supports_lightweight_pause"] is False
+    assert server.capabilities["supports_pause"] is True
     assert server.resilience_config is not None
     assert server.resilience_state is not None
 
@@ -105,7 +106,8 @@ async def test_disconnect_closes_subscribers_and_channel() -> None:
 
     await server.disconnect()
 
-    mock_sub.close.assert_called_once()
+    mock_sub.stop.assert_called_once()
+    mock_sub.finish.assert_called_once()
     mock_channel.close.assert_called_once()
     assert server._channel is None
 
@@ -162,7 +164,10 @@ async def test_subscribe_creates_subscriber_via_factory() -> None:
         "repid.connections.pubsub.message_broker.PubsubSubscriber.create",
         new_callable=AsyncMock,
     ) as mock_create:
-        ret = await server.subscribe(channels_to_callbacks={"chan1": MagicMock()})
+        ret = await server.subscribe(
+            channels_to_callbacks={"chan1": MagicMock()},
+            dispatcher=SubscriberDispatcher(),
+        )
 
         assert ret is mock_create.return_value
         mock_create.assert_called_once()
@@ -179,7 +184,10 @@ async def test_subscribe_raises_error_when_disconnected() -> None:
     server = message_broker.PubsubServer(default_project="p")
 
     with pytest.raises(Exception, match=r"PubSub server is not connected\."):
-        await server.subscribe(channels_to_callbacks={"c": MagicMock()})
+        await server.subscribe(
+            channels_to_callbacks={"c": MagicMock()},
+            dispatcher=SubscriberDispatcher(),
+        )
 
 
 def test_resolve_topic_path() -> None:

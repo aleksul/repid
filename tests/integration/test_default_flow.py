@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from random import random
 
-from repid import Repid, Router
+from repid import MessageLimits, Repid, Router
 
 
 async def test_simple_job(autoconn: Repid) -> None:
@@ -24,7 +24,10 @@ async def test_simple_job(autoconn: Repid) -> None:
             payload=b"",
             headers={"topic": "awesome_job"},
         )
-        await asyncio.wait_for(autoconn.run_worker(messages_limit=1, tasks_limit=1), timeout=5.0)
+        await asyncio.wait_for(
+            autoconn.run_worker(messages_limit=1, limits=MessageLimits(max_messages=1)),
+            timeout=5.0,
+        )
 
     assert hit
 
@@ -52,7 +55,10 @@ async def test_args_job(autoconn: Repid) -> None:
             payload={"my_arg1": assertion1, "my_arg2": assertion2},
             headers={"topic": "awesome_job"},
         )
-        await asyncio.wait_for(autoconn.run_worker(messages_limit=1, tasks_limit=1), timeout=5.0)
+        await asyncio.wait_for(
+            autoconn.run_worker(messages_limit=1, limits=MessageLimits(max_messages=1)),
+            timeout=5.0,
+        )
 
     assert hit
 
@@ -77,7 +83,7 @@ async def test_3000_messages(autoconn: Repid) -> None:
                 headers={"topic": "awesome_job"},
             )
         await asyncio.wait_for(
-            autoconn.run_worker(messages_limit=3000, tasks_limit=100),
+            autoconn.run_worker(messages_limit=3000, limits=MessageLimits(max_messages=100)),
             timeout=60.0,
         )
 

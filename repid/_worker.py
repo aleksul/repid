@@ -4,13 +4,18 @@ import asyncio
 import logging
 import signal
 import sys
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING
 
 from repid._runner import _Runner
 from repid.asyncapi_server import AsyncAPIServer
 from repid.data.actor import ActorExecutionContext
 from repid.health_check_server import HealthCheckServer
+from repid.limits import (
+    ActorLimitsPropagation,
+    MessageLimits,
+    validate_actor_limits_propagation,
+)
 from repid.router import _MaterializedRouter
 
 logger = logging.getLogger("repid")
@@ -19,6 +24,7 @@ if TYPE_CHECKING:
     from repid.asyncapi import AsyncAPI3Schema
     from repid.asyncapi_server import AsyncAPIServerSettings
     from repid.health_check_server import HealthCheckServerSettings
+    from repid.limits import LimitPolicyT
 
 
 class _Worker:
@@ -26,20 +32,27 @@ class _Worker:
         self,
         actor_context: ActorExecutionContext,
         router: _MaterializedRouter,
+        limits: MessageLimits,
+        limit_policies: Sequence[LimitPolicyT] = (),
         graceful_shutdown_time: float = 25.0,
+        # Lifetime cap on processed messages — not a concurrency cap; concurrent
+        # in-flight caps live in `limits.max_messages` / `max_payload_bytes`.
         messages_limit: int = float("inf"),  # type: ignore[assignment]
-        tasks_limit: int = 1000,
         register_signals: Iterable[signal.Signals] | None = None,
         health_check_server: HealthCheckServerSettings | None = None,
         asyncapi_server: AsyncAPIServerSettings | None = None,
         asyncapi_schema: AsyncAPI3Schema | None = None,
+        actor_limits_propagation: ActorLimitsPropagation = "sum",
     ):
+        validate_actor_limits_propagation(actor_limits_propagation)
         self.actor_context = actor_context
         self.server = actor_context.server
         self.centralized_router = router
 
-        self.tasks_limit: int = tasks_limit
+        self.limits = limits
+        self.limit_policies = tuple(limit_policies)
         self.messages_limit: int = messages_limit
+        self.actor_limits_propagation = actor_limits_propagation
 
         self.graceful_shutdown_time: float = graceful_shutdown_time
         self.graceful_consumer_finish_time: float = 5.0
@@ -68,39 +81,53 @@ class _Worker:
         logger.info(
             "worker.run.start",
             extra={
-                "tasks_limit": self.tasks_limit,
+                "limits": self.limits,
+                "limit_policies": self.limit_policies,
                 "messages_limit": self.messages_limit,
                 "graceful_shutdown_time": self.graceful_shutdown_time,
             },
         )
 
-        if self.health_check_server is not None:
-            await self.health_check_server.start()
-
-        if self.asyncapi_server is not None:
-            await self.asyncapi_server.start()
-
         runner = _Runner(
             actor_context=self.actor_context,
+            limits=self.limits,
+            limit_policies=self.limit_policies,
             max_tasks=self.messages_limit,
-            tasks_concurrency_limit=self.tasks_limit,
             health_check_server=self.health_check_server,
+            channel_limits={
+                channel.address: channel.limits
+                for channel in self.centralized_router.channels
+                if channel.limits is not None
+            },
+            channel_limit_policies={
+                channel.address: channel.limit_policies
+                for channel in self.centralized_router.channels
+                if channel.limit_policies
+            },
+            actor_limits_propagation=self.actor_limits_propagation,
         )
 
-        if not self.centralized_router.actors:
-            logger.info("worker.run.exit.no_actors")
-            if self.health_check_server is not None:  # pragma: no cover
-                await self.health_check_server.stop()
-            if self.asyncapi_server is not None:  # pragma: no cover
-                await self.asyncapi_server.stop()
-            return runner
-
         loop = asyncio.get_running_loop()
-        self._register_signals(loop, runner)
-
-        logger.info("worker.consumer.start")
-
+        signals_registered = False
+        health_check_server_started = False
+        asyncapi_server_started = False
         try:
+            if self.health_check_server is not None:
+                await self.health_check_server.start()
+                health_check_server_started = True
+
+            if self.asyncapi_server is not None:
+                await self.asyncapi_server.start()
+                asyncapi_server_started = True
+
+            if not self.centralized_router.actors:
+                logger.info("worker.run.exit.no_actors")
+                return runner
+
+            self._register_signals(loop, runner)
+            signals_registered = True
+
+            logger.info("worker.consumer.start")
             await runner.run(
                 channels_to_actors=self.centralized_router._actors_per_channel_address,
                 graceful_termination_timeout=self.graceful_shutdown_time,
@@ -108,20 +135,21 @@ class _Worker:
         except asyncio.CancelledError as exc:
             logger.critical("worker.cancelled", exc_info=exc)
             raise
+        finally:
+            if signals_registered:
+                self._unregister_signals(loop)
 
-        if self.health_check_server is not None:
-            await asyncio.wait_for(
-                self.health_check_server.stop(),
-                timeout=self.graceful_health_check_server_finish_time,
-            )
+            if health_check_server_started and self.health_check_server is not None:
+                await asyncio.wait_for(
+                    self.health_check_server.stop(),
+                    timeout=self.graceful_health_check_server_finish_time,
+                )
 
-        if self.asyncapi_server is not None:
-            await asyncio.wait_for(
-                self.asyncapi_server.stop(),
-                timeout=self.graceful_asyncapi_server_finish_time,
-            )
-
-        self._unregister_signals(loop)
+            if asyncapi_server_started and self.asyncapi_server is not None:
+                await asyncio.wait_for(
+                    self.asyncapi_server.stop(),
+                    timeout=self.graceful_asyncapi_server_finish_time,
+                )
 
         logger.info("worker.run.exit")
 

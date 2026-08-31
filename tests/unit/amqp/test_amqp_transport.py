@@ -332,15 +332,12 @@ async def test_transport_connect_timeout() -> None:
 
 
 async def test_transport_connect_error() -> None:
-    # Use invalid host
-    config = TransportConfig(
-        host="invalid.host.that.does.not.exist",
-        port=5672,
-        connect_timeout=1.0,
-    )
-    transport = AmqpTransport(config)
+    transport = AmqpTransport(TransportConfig(host="invalid", port=5672))
 
-    with pytest.raises(TransportError, match="Could not connect"):
+    with (
+        patch.object(asyncio, "open_connection", side_effect=OSError("unreachable")),
+        pytest.raises(TransportError, match="Could not connect"),
+    ):
         await transport.connect()
 
 

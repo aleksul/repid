@@ -7,6 +7,11 @@ By default, Repid provides `DefaultConverter` (which in turn selects either `Bas
 `PydanticConverter`). However, if you are using a different validation library or
 want to define a custom argument injection logic, you can implement your own converter.
 
+!!! warning "Compatibility"
+    We try our best to preserve custom converter compatibility, but converter protocols may
+    change between minor releases. Check the release notes when upgrading and keep custom converter
+    implementations covered by integration tests.
+
 ## The `ConverterT` Protocol
 
 Your custom converter must implement the `ConverterT` protocol defined in `repid.converter`.

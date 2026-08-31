@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -11,6 +11,7 @@ from repid._utils import NotSet
 from repid.connections.abc import ReceivedMessageT
 from repid.converter import BasicConverter
 from repid.data import ActorData, Channel, MessageData
+from repid.limits import ActorLimits, BackpressurePolicy, MessageLimits
 from repid.middlewares import ActorMiddlewareT
 from repid.router import catch_all_routing_strategy, topic_based_routing_strategy
 
@@ -413,6 +414,122 @@ def test_contains_router_returns_false_for_seen_router() -> None:
     router2 = Router()
 
     assert router1._contains_router(router2, {id(router1)}) is False
+
+
+def test_router_accumulates_limits_and_materializes_actor_limit() -> None:
+    outer_limits = ActorLimits()
+    inner_limits = ActorLimits()
+    actor_limits = ActorLimits()
+    outer_router = Router(limits=outer_limits)
+    inner_router = Router(limits=inner_limits)
+
+    @inner_router.actor(limits=actor_limits)
+    async def my_actor() -> None:
+        pass
+
+    outer_router.include_router(inner_router)
+
+    actor = outer_router.actors[0]
+    assert actor.limits == (outer_limits, inner_limits, actor_limits)
+
+
+def test_router_accumulates_limit_policies_into_actor_data() -> None:
+    outer = cast(Any, object())
+    inner = cast(Any, object())
+    actor_policy = cast(Any, object())
+    outer_router = Router(limit_policies=(outer,))
+    inner_router = Router(limit_policies=(inner,))
+
+    @inner_router.actor(limit_policies=(actor_policy,))
+    async def my_actor() -> None:
+        pass
+
+    outer_router.include_router(inner_router)
+
+    assert outer_router.actors[0].limit_policies == (outer, inner, actor_policy)
+
+
+def test_router_channels_merge_omitted_limits_with_explicit_limits() -> None:
+    limits = MessageLimits()
+    router = Router()
+
+    @router.actor(channel=Channel(address="events"))
+    async def actor_without_limits() -> None:
+        pass
+
+    @router.actor(channel=Channel(address="events", limits=limits))
+    async def actor_with_limits() -> None:
+        pass
+
+    channels = router.channels
+    assert len(channels) == 1
+    assert channels[0].limits is limits
+
+
+def test_router_channels_compose_and_deduplicate_limit_policies() -> None:
+    shared = cast(Any, object())
+    first = cast(Any, object())
+    second = cast(Any, object())
+    router = Router()
+
+    @router.actor(channel=Channel(address="events", limit_policies=(shared, first)))
+    async def first_actor() -> None:
+        pass
+
+    @router.actor(channel=Channel(address="events", limit_policies=(shared, second)))
+    async def second_actor() -> None:
+        pass
+
+    assert router.channels[0].limit_policies == (shared, first, second)
+
+
+def test_router_channels_accept_same_explicit_limits_identity() -> None:
+    limits = MessageLimits()
+    router = Router()
+
+    @router.actor(channel=Channel(address="events", limits=limits))
+    async def first_actor() -> None:
+        pass
+
+    @router.actor(channel=Channel(address="events", limits=limits))
+    async def second_actor() -> None:
+        pass
+
+    channels = router.channels
+    assert len(channels) == 1
+    assert channels[0].limits is limits
+
+
+def test_router_channels_reject_conflicting_limits() -> None:
+    router = Router()
+
+    @router.actor(channel=Channel(address="events", limits=MessageLimits()))
+    async def first_actor() -> None:
+        pass
+
+    @router.actor(channel=Channel(address="events", limits=MessageLimits()))
+    async def second_actor() -> None:
+        pass
+
+    with pytest.raises(ValueError, match="Conflicting limits"):
+        _ = router.channels
+
+
+def test_router_channels_merge_unset_limits_with_explicit_value() -> None:
+    router = Router()
+    limits = MessageLimits(backpressure=BackpressurePolicy(strategies=()))
+
+    @router.actor(channel=Channel(address="events"))
+    async def unset_actor() -> None:
+        pass
+
+    @router.actor(channel=Channel(address="events", limits=limits))
+    async def wait_actor() -> None:
+        pass
+
+    channels = router.channels
+    assert len(channels) == 1
+    assert channels[0].limits is limits
 
 
 def test_actor_raises_on_both_run_in_process_and_pool_executor() -> None:

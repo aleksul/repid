@@ -1,8 +1,11 @@
 from repid._utils import is_installed
+from repid.connections._subscriber import SubscriberDispatcher
 from repid.connections.abc import (
     BaseMessageT,
     CapabilitiesT,
+    ChannelPausableSubscriberT,
     MessageAction,
+    NativeFlowControlSubscriberT,
     ReceivedMessageT,
     SentMessageT,
     ServerT,
@@ -15,11 +18,14 @@ __all__ = [
     "AmqpServer",
     "BaseMessageT",
     "CapabilitiesT",
+    "ChannelPausableSubscriberT",
     "InMemoryServer",
     "MessageAction",
+    "NativeFlowControlSubscriberT",
     "ReceivedMessageT",
     "SentMessageT",
     "ServerT",
+    "SubscriberDispatcher",
     "SubscriberT",
 ]
 

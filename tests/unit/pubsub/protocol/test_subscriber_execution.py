@@ -26,7 +26,6 @@ def _make_subscriber(**overrides: Any) -> sub_module.PubsubSubscriber:
         "server": MagicMock(),
         "stream_ack_deadline_seconds": 10,
         "client_id": "client",
-        "concurrency_limit": 10,
     }
     defaults.update(overrides)
     return sub_module.PubsubSubscriber(**defaults)
@@ -152,7 +151,7 @@ async def test_dispatch_loop() -> None:
     callback = AsyncMock()
     msg = MagicMock()
 
-    delivery = QueuedDelivery(callback=callback, message=msg)
+    delivery = QueuedDelivery(callback=callback, message=msg, lease=AsyncMock())
     await subscriber._delivery_queue.put(delivery)
 
     task = asyncio.create_task(subscriber._dispatch_loop())
@@ -205,20 +204,32 @@ async def test_process_response_directly() -> None:
     assert len(subscriber._in_flight_messages) == 1
 
 
-async def test_cancel_callback_tasks() -> None:
+async def test_process_response_skips_message_without_intake_lease() -> None:
     subscriber = _make_subscriber()
-    t1, t2 = MagicMock(), MagicMock()
-    subscriber._callback_tasks.add(t1)
-    subscriber._callback_tasks.add(t2)
+    subscriber._dispatcher = MagicMock(
+        reserve=AsyncMock(return_value=None),
+        close=AsyncMock(),
+    )
+    response = proto.StreamingPullResponse(
+        received_messages=[
+            proto.ReceivedMessage(message=proto.PubsubMessage(data=b"test-data"), ack_id="a1"),
+        ],
+    )
 
-    result = subscriber._cancel_callback_tasks()
+    await subscriber._process_response(response, _make_config())
 
-    assert len(result) == 2
-    t1.cancel.assert_called_once()
-    t2.cancel.assert_called_once()
-    assert len(subscriber._callback_tasks) == 0
+    assert subscriber._delivery_queue.empty()
 
 
-async def test_cancel_callback_tasks_empty() -> None:
+async def test_close_releases_queued_delivery_lease() -> None:
     subscriber = _make_subscriber()
-    assert subscriber._cancel_callback_tasks() == []
+    message = MagicMock()
+    message.is_acted_on = True
+    lease = AsyncMock()
+    await subscriber._delivery_queue.put(
+        QueuedDelivery(callback=AsyncMock(), message=message, lease=lease),
+    )
+
+    await subscriber.close()
+
+    lease.release.assert_awaited_once()

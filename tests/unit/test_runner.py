@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from repid import Repid, Router, ServerT
+from repid import MessageLimits, Repid, Router, ServerT
 from repid._runner import _keep_alive_loop, _run_with_keepalive, _Runner
 from repid.connections.in_memory import InMemoryServer
 from repid.data import ActorExecutionContext, MessageData
@@ -211,8 +211,8 @@ async def test_runner_max_tasks_hit(supports_lightweight_pause: bool) -> None:
     async with server.connection():
         runner = _Runner(
             actor_context=_make_actor_context(mocked_server),
+            limits=MessageLimits(max_messages=10),
             max_tasks=5,
-            tasks_concurrency_limit=10,
         )
 
         assert not runner.max_tasks_hit
@@ -236,18 +236,6 @@ async def test_runner_max_tasks_hit(supports_lightweight_pause: bool) -> None:
         assert runner.max_tasks_hit
 
 
-async def test_runner_unpause_threshold_validation() -> None:
-    server = InMemoryServer()
-
-    with pytest.raises(ValueError, match="Subscriber will never unpause"):
-        _Runner(
-            actor_context=_make_actor_context(server),
-            max_tasks=10,
-            tasks_concurrency_limit=1,
-            concurrency_unpause_percent=2.0,  # 200% - more than limit
-        )
-
-
 async def test_runner_cancel_event_during_actor_execution() -> None:
     server = InMemoryServer()
     router = Router()
@@ -268,6 +256,7 @@ async def test_runner_cancel_event_during_actor_execution() -> None:
     async with server.connection():
         runner = _Runner(
             actor_context=_make_actor_context(server),
+            limits=MessageLimits(max_messages=1000),
         )
 
         async def trigger_cancel() -> None:
@@ -314,6 +303,7 @@ async def test_runner_no_matching_actor_rejects_message(
     async with server.connection():
         runner = _Runner(
             actor_context=_make_actor_context(server),
+            limits=MessageLimits(max_messages=1000),
         )
 
         await server.publish(
@@ -325,22 +315,28 @@ async def test_runner_no_matching_actor_rejects_message(
             ),
         )
 
+        running = asyncio.create_task(
+            runner.run(
+                channels_to_actors=router._actors_per_channel_address,
+                graceful_termination_timeout=0.1,
+            ),
+        )
+        warning_log = None
+        for _ in range(100):
+            warning_log = next(
+                (r for r in caplog.get_records(when="call") if r.levelno == logging.WARNING),
+                None,
+            )
+            if warning_log is not None:
+                break
+            await asyncio.sleep(0)
         runner.stop_consume_event.set()
-
-        await runner.run(
-            channels_to_actors=router._actors_per_channel_address,
-            graceful_termination_timeout=0.1,
-        )
-
-        warning_log = next(
-            (r for r in caplog.get_records(when="call") if r.levelno == logging.WARNING),
-            None,
-        )
+        await running
         assert warning_log is not None
         assert warning_log.message == "actor.route.not_found"
 
 
-async def test_runner_pause_and_resume_with_concurrency_limit() -> None:
+async def test_runner_limits_concurrent_execution() -> None:
     server = InMemoryServer()
     router = Router()
 
@@ -358,7 +354,7 @@ async def test_runner_pause_and_resume_with_concurrency_limit() -> None:
     async with server.connection():
         runner = _Runner(
             actor_context=_make_actor_context(server),
-            tasks_concurrency_limit=2,
+            limits=MessageLimits(max_messages=2),
         )
 
         async def publish_messages() -> None:
@@ -427,6 +423,7 @@ async def test_runner_subscriber_exception_sets_unhealthy() -> None:
     async with server.connection():
         runner = _Runner(
             actor_context=_make_actor_context(server),
+            limits=MessageLimits(max_messages=1000),
             health_check_server=health_check_server,
         )
 
@@ -454,6 +451,7 @@ async def test_runner_graceful_shutdown_with_timeout(
     async with server.connection():
         runner = _Runner(
             actor_context=_make_actor_context(server),
+            limits=MessageLimits(max_messages=1000),
         )
 
         async def publish_and_stop() -> None:
@@ -523,6 +521,7 @@ async def test_runner_pause_exception_during_shutdown(
     async with server.connection():
         runner = _Runner(
             actor_context=_make_actor_context(server),
+            limits=MessageLimits(max_messages=1000),
         )
 
         runner.stop_consume_event.set()
@@ -579,6 +578,7 @@ async def test_runner_close_exception_during_shutdown(
     async with server.connection():
         runner = _Runner(
             actor_context=_make_actor_context(server),
+            limits=MessageLimits(max_messages=1000),
         )
 
         runner.stop_consume_event.set()
@@ -619,6 +619,7 @@ async def test_runner_tasks_not_finishing_after_cancellation(
     async with server.connection():
         runner = _Runner(
             actor_context=_make_actor_context(server),
+            limits=MessageLimits(max_messages=1000),
         )
 
         async def run_with_message() -> None:
@@ -758,7 +759,11 @@ def _make_unrouted_message(message_id: str | None) -> Mock:
 
 async def test_runner_unrouted_message_reject_below_threshold() -> None:
     server = InMemoryServer()
-    runner = _Runner(actor_context=_make_actor_context(server), max_unrouted_retries=3)
+    runner = _Runner(
+        actor_context=_make_actor_context(server),
+        limits=MessageLimits(max_messages=1000),
+        max_unrouted_retries=3,
+    )
 
     for _ in range(2):
         msg = _make_unrouted_message("msg-poison")
@@ -771,7 +776,11 @@ async def test_runner_unrouted_message_nack_at_threshold(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     server = InMemoryServer()
-    runner = _Runner(actor_context=_make_actor_context(server), max_unrouted_retries=3)
+    runner = _Runner(
+        actor_context=_make_actor_context(server),
+        limits=MessageLimits(max_messages=1000),
+        max_unrouted_retries=3,
+    )
 
     for _ in range(2):
         await runner._message_handler([], _make_unrouted_message("msg-poison"))
@@ -791,7 +800,11 @@ async def test_runner_unrouted_message_nack_at_threshold(
 
 async def test_runner_unrouted_message_counter_cleared_after_nack() -> None:
     server = InMemoryServer()
-    runner = _Runner(actor_context=_make_actor_context(server), max_unrouted_retries=2)
+    runner = _Runner(
+        actor_context=_make_actor_context(server),
+        limits=MessageLimits(max_messages=1000),
+        max_unrouted_retries=2,
+    )
 
     for _ in range(2):
         await runner._message_handler([], _make_unrouted_message("msg-poison"))
@@ -801,7 +814,11 @@ async def test_runner_unrouted_message_counter_cleared_after_nack() -> None:
 
 async def test_runner_unrouted_message_no_id_always_reject() -> None:
     server = InMemoryServer()
-    runner = _Runner(actor_context=_make_actor_context(server), max_unrouted_retries=1)
+    runner = _Runner(
+        actor_context=_make_actor_context(server),
+        limits=MessageLimits(max_messages=1000),
+        max_unrouted_retries=1,
+    )
 
     for _ in range(3):
         msg = _make_unrouted_message(None)

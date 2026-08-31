@@ -3,11 +3,13 @@ import contextlib
 import json
 from collections.abc import Callable, Coroutine
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from redis.exceptions import ResponseError
 
+from repid.admission import MessageLimits
+from repid.connections import SubscriberDispatcher
 from repid.connections.abc import MessageAction, ReceivedMessageT
 from repid.connections.redis.message_broker import (
     ChannelConfig,
@@ -330,7 +332,7 @@ async def test_redis_subscriber_consume_loop(mock_redis_cls: MagicMock) -> None:
 
 
 @patch("repid.connections.redis.message_broker.Redis")
-async def test_redis_subscriber_concurrency_limit(mock_redis_cls: MagicMock) -> None:
+async def test_redis_subscriber_message_limit(mock_redis_cls: MagicMock) -> None:
     mock_client = AsyncMock()
     mock_redis_cls.from_url.return_value = mock_client
     mock_client.xreadgroup.side_effect = lambda *_, **__: asyncio.Future()
@@ -341,18 +343,20 @@ async def test_redis_subscriber_concurrency_limit(mock_redis_cls: MagicMock) -> 
     callback = cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], AsyncMock())
     sub = cast(
         RedisSubscriber,
-        await server.subscribe(channels_to_callbacks={"c": callback}, concurrency_limit=1),
+        await server.subscribe(
+            channels_to_callbacks={"c": callback},
+            dispatcher=SubscriberDispatcher(MessageLimits(max_messages=1)),
+        ),
     )
-    assert sub._semaphore is not None
-    assert sub._semaphore._value == 1
+    assert sub._dispatcher.native_message_limit("c") == 1
     await sub.close()
 
     callback2 = cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], AsyncMock())
     sub2 = cast(
         RedisSubscriber,
-        await server.subscribe(channels_to_callbacks={"c": callback2}, concurrency_limit=0),
+        await server.subscribe(channels_to_callbacks={"c": callback2}),
     )
-    assert sub2._semaphore is None
+    assert sub2._dispatcher.native_message_limit("c") is None
     await sub2.close()
 
 
@@ -387,6 +391,33 @@ async def test_redis_subscriber_close(mock_redis_cls: MagicMock) -> None:
     assert not sub.is_active
     assert sub._closed
     assert task.done()
+
+
+async def test_redis_subscriber_rejects_cancelled_callback_message() -> None:
+    sub = RedisSubscriber(
+        redis_client=AsyncMock(),
+        channels={},
+        callbacks={},
+        consumer_name="c",
+        server=RedisServer("redis://localhost"),
+    )
+    callback_started = asyncio.Event()
+    message = Mock(
+        is_acted_on=False,
+        reject=AsyncMock(side_effect=RuntimeError("reject failed")),
+    )
+
+    async def callback(_: ReceivedMessageT) -> None:
+        callback_started.set()
+        await asyncio.Future()
+
+    task = asyncio.create_task(sub._run_callback(callback, message, "1-0"))
+    sub._callback_tasks.add(task)
+    await asyncio.wait_for(callback_started.wait(), timeout=1)
+
+    await sub.close()
+
+    message.reject.assert_awaited_once()
 
 
 @patch("repid.connections.redis.message_broker.Redis")
@@ -643,7 +674,6 @@ async def test_redis_consume_batch_when_closed() -> None:
         channels={},
         callbacks={},
         consumer_name="c",
-        concurrency_limit=None,
         server=server,
     )
     sub._closed = True
@@ -661,7 +691,6 @@ async def test_redis_consume_batch_empty_result() -> None:
         channels={"c": ChannelConfig(stream="s", group="g", dlq=None)},
         callbacks={},
         consumer_name="c",
-        concurrency_limit=None,
         server=server,
     )
 
@@ -680,7 +709,6 @@ async def test_redis_consume_batch_unknown_stream_and_missing_callback() -> None
         channels={"chan": chan_cfg},
         callbacks={"chan": AsyncMock()},
         consumer_name="c",
-        concurrency_limit=None,
         server=server,
     )
 
@@ -706,7 +734,6 @@ async def test_redis_run_callback_exception() -> None:
         channels={},
         callbacks={},
         consumer_name="c",
-        concurrency_limit=None,
         server=server,
     )
 
@@ -726,26 +753,21 @@ async def test_redis_run_callback_exception() -> None:
     msg.nack.assert_not_awaited()
 
 
-async def test_redis_semaphore_usage() -> None:
+async def test_redis_intake_gate_usage() -> None:
     server = RedisServer("redis://localhost")
     client = AsyncMock()
     client.xreadgroup.return_value = [[b"s", [(b"1", {b"payload": b"p"})]]]
 
     chan_cfg = ChannelConfig(stream="s", group="g", dlq=None)
+    dispatcher = SubscriberDispatcher(MessageLimits(max_messages=1))
+    dispatcher.reserve = AsyncMock(wraps=dispatcher.reserve)  # type: ignore[method-assign]
     sub = RedisSubscriber(
         redis_client=client,
         channels={"chan": chan_cfg},
         callbacks={"chan": AsyncMock()},
         consumer_name="c",
-        concurrency_limit=1,
         server=server,
-    )
-
-    actual_semaphore = sub._semaphore
-    assert actual_semaphore is not None
-    sub._semaphore = MagicMock(
-        wraps=actual_semaphore,
-        acquire=AsyncMock(wraps=actual_semaphore.acquire),
+        dispatcher=dispatcher,
     )
 
     callback_future: asyncio.Future[None] = asyncio.Future()
@@ -763,8 +785,7 @@ async def test_redis_semaphore_usage() -> None:
     await callback_future
     await asyncio.sleep(0)
 
-    sub._semaphore.acquire.assert_awaited()
-    sub._semaphore.release.assert_called()
+    dispatcher.reserve.assert_awaited()
 
 
 @patch("repid.connections.redis.message_broker.Redis")
@@ -917,7 +938,6 @@ async def test_redis_subscriber_in_flight_count() -> None:
         channels={},
         callbacks={},
         consumer_name="c",
-        concurrency_limit=None,
         server=RedisServer("redis://localhost"),
     )
     assert sub.in_flight_count == 0
@@ -933,7 +953,6 @@ async def test_redis_subscriber_start_with_claim_interval() -> None:
         channels={},
         callbacks={},
         consumer_name="c",
-        concurrency_limit=None,
         server=RedisServer("redis://localhost"),
         claim_interval=60.0,
     )
@@ -950,7 +969,6 @@ async def test_redis_subscriber_close_with_active_claim_task() -> None:
         channels={},
         callbacks={},
         consumer_name="c",
-        concurrency_limit=None,
         server=RedisServer("redis://localhost"),
         claim_interval=60.0,  # long interval — claim task blocks at asyncio.sleep
     )
@@ -972,7 +990,6 @@ async def test_redis_consume_group_loop_unexpected_exception() -> None:
         channels={},
         callbacks={},
         consumer_name="c",
-        concurrency_limit=None,
         server=RedisServer("redis://localhost"),
     )
 
@@ -1005,7 +1022,6 @@ async def test_redis_claim_loop_single_iteration() -> None:
             "chan": cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], callback),
         },
         consumer_name="c",
-        concurrency_limit=None,
         server=RedisServer("redis://localhost"),
         claim_interval=0.01,
     )
@@ -1032,7 +1048,6 @@ async def test_redis_claim_loop_stops_on_closed_after_sleep() -> None:
         channels={},
         callbacks={},
         consumer_name="c",
-        concurrency_limit=None,
         server=RedisServer("redis://localhost"),
         claim_interval=0.01,
     )
@@ -1052,7 +1067,6 @@ async def test_redis_claim_loop_callback_none() -> None:
         channels={"chan": chan_cfg},
         callbacks={},  # no callback registered for "chan"
         consumer_name="c",
-        concurrency_limit=None,
         server=RedisServer("redis://localhost"),
         claim_interval=0.01,
     )
@@ -1085,7 +1099,6 @@ async def test_redis_claim_loop_redis_error() -> None:
             "chan": cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], callback),
         },
         consumer_name="c",
-        concurrency_limit=None,
         server=RedisServer("redis://localhost"),
         claim_interval=0.01,
     )
@@ -1113,7 +1126,6 @@ async def test_redis_reclaim_pending_single_batch() -> None:
             "chan": cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], callback),
         },
         consumer_name="consumer1",
-        concurrency_limit=None,
         server=RedisServer("redis://localhost"),
         min_idle_ms=5000,
     )
@@ -1147,7 +1159,6 @@ async def test_redis_reclaim_pending_multi_batch() -> None:
             "chan": cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], callback),
         },
         consumer_name="c",
-        concurrency_limit=None,
         server=RedisServer("redis://localhost"),
     )
 
@@ -1255,7 +1266,6 @@ async def test_redis_consume_batch_str_stream_name() -> None:
             "chan": cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], callback),
         },
         consumer_name="c",
-        concurrency_limit=None,
         server=server,
     )
 
@@ -1279,7 +1289,6 @@ async def test_redis_process_stream_messages_str_msg_id() -> None:
             "chan": cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], callback),
         },
         consumer_name="c",
-        concurrency_limit=None,
         server=server,
     )
 
@@ -1311,7 +1320,6 @@ async def test_redis_reclaim_pending_closed_mid_iteration() -> None:
             "chan": cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], callback),
         },
         consumer_name="c",
-        concurrency_limit=None,
         server=RedisServer("redis://localhost"),
     )
 
@@ -1342,7 +1350,6 @@ async def test_redis_consume_loop_groups_channels_by_group() -> None:
         },
         callbacks={},
         consumer_name="c",
-        concurrency_limit=None,
         server=RedisServer("redis://localhost"),
     )
 
@@ -1376,3 +1383,25 @@ async def test_redis_publish_maxlen_default_approximate(mock_redis_cls: MagicMoc
     _, kwargs = mock_client.xadd.call_args
     assert kwargs["maxlen"] == 50
     assert kwargs["approximate"] is True
+
+
+async def test_redis_intake_drop_skips_callback() -> None:
+    callback = AsyncMock()
+    sub = RedisSubscriber(
+        redis_client=AsyncMock(),
+        channels={"jobs": ChannelConfig(stream="jobs", group="group", dlq=None)},
+        callbacks={"jobs": callback},
+        consumer_name="consumer",
+        server=RedisServer("redis://localhost"),
+    )
+    sub._dispatcher = MagicMock(
+        reserve=AsyncMock(return_value=None),
+    )
+
+    await sub._process_stream_messages(
+        [(b"1-0", {b"payload": b"{}"})],
+        "jobs",
+        "jobs",
+        cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], callback),
+    )
+    callback.assert_not_awaited()

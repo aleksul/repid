@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlparse
 from uuid import uuid4
 
+from repid.connections._subscriber import SubscriberDispatcher
 from repid.connections.abc import CapabilitiesT, SentMessageT, SubscriberT
 from repid.connections.amqp._uamqp.message import Properties
 from repid.connections.amqp.protocol import (
@@ -147,6 +148,7 @@ class AmqpServer:
         return {
             "supports_native_reply": True,
             "supports_lightweight_pause": False,
+            "supports_channel_pause": False,
             "supports_keep_alive": False,
         }
 
@@ -309,8 +311,9 @@ class AmqpServer:
         self,
         *,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        dispatcher: SubscriberDispatcher | None = None,
     ) -> SubscriberT:
+        dispatcher = dispatcher or SubscriberDispatcher()
         logger.debug("channel.subscribe", extra={"channels": list(channels_to_callbacks.keys())})
 
         if not self.is_connected or self._managed_session is None:
@@ -319,7 +322,7 @@ class AmqpServer:
         # Create and store subscriber
         subscriber = await AmqpSubscriber.create(
             queues_to_callbacks=channels_to_callbacks,
-            concurrency_limit=concurrency_limit,
+            dispatcher=dispatcher,
             managed_session=self._managed_session,
             naming_strategy=self._subscribe_naming_strategy,
             publish_fn=self.publish,

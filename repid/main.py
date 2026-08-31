@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import signal
+import warnings
 from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any, overload
 
+from repid._utils.not_set import NotSet, _NotSet
 from repid._worker import _Worker
 from repid.asyncapi import AsyncAPI3Schema, AsyncAPIGenerator
 from repid.asyncapi_server import AsyncAPIServer, get_asyncapi_html
 from repid.data import ActorExecutionContext, MessageData, RunnerInfo
+from repid.limits import ActorLimitsPropagation, MessageLimits
 from repid.message_registry import MessageRegistry
 from repid.middlewares import (
     ActorMiddlewareT,
@@ -22,6 +25,7 @@ if TYPE_CHECKING:
     from repid.asyncapi_server import AsyncAPIServerSettings
     from repid.data import Contact, ExternalDocs, License, Tag
     from repid.health_check_server import HealthCheckServerSettings
+    from repid.limits import LimitPolicyT
     from repid.serializer import SerializerT
 
 
@@ -78,12 +82,48 @@ class Repid:
         *,
         graceful_shutdown_time: float = 25.0,
         messages_limit: int = float("inf"),  # type: ignore[assignment]
-        tasks_limit: int = 1000,
+        limits: MessageLimits | _NotSet = NotSet,
+        limit_policies: Sequence[LimitPolicyT] = (),
+        tasks_limit: int | _NotSet = NotSet,
+        actor_limits_propagation: ActorLimitsPropagation = "sum",
         register_signals: Iterable[signal.Signals] | None = None,
         health_check_server: HealthCheckServerSettings | None = None,
         asyncapi_server: AsyncAPIServerSettings | None = None,
         server_name: str | None = None,
     ) -> RunnerInfo:
+        """Run a worker against one of the registered servers.
+
+        Args:
+            graceful_shutdown_time (float, optional): Seconds to wait for
+                in-flight messages to settle before cancelling them.
+            messages_limit (int, optional): Total number of messages this worker
+                may *process over its entire lifetime*, then it stops.
+                Defaults to infinity. This is not a concurrency cap; see
+                ``limits.max_messages`` for that.
+            limits (MessageLimits, optional): Built-in admission limits for
+                concurrently *in-flight* messages and total in-flight payload
+                bytes, plus backpressure and oversized-payload behavior.
+                Defaults to 1000 concurrent messages.
+            limit_policies (Sequence[LimitPolicyT], optional): Application-defined
+                limit policies applied to every message handled by this worker.
+            tasks_limit (int | None, optional): Deprecated alias for
+                ``limits=MessageLimits(max_messages=tasks_limit)``.
+            actor_limits_propagation (ActorLimitsPropagation, optional): How
+                actors' numeric limits propagate into their channel's intake
+                cap: summed over the channel's actors (``"sum"``, the default)
+                or ignored (``"off"``).
+            register_signals (Iterable[signal.Signals] | None, optional):
+                Signals that trigger graceful shutdown.
+            health_check_server (HealthCheckServerSettings | None, optional):
+                Settings for the health check HTTP server.
+            asyncapi_server (AsyncAPIServerSettings | None, optional):
+                Settings for the AsyncAPI HTTP server.
+            server_name (str | None, optional): Name of the server to run
+                against; defaults to the single registered server.
+
+        Returns:
+            RunnerInfo: information about the finished runner.
+        """
         server = self._servers.get_server(server_name)
         if server is None:
             raise ValueError(
@@ -91,6 +131,20 @@ class Repid:
                 if server_name
                 else "No default server configured.",
             )
+
+        if isinstance(tasks_limit, int):
+            warnings.warn(
+                "tasks_limit is deprecated; use limits=MessageLimits(max_messages=...) instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            if isinstance(limits, MessageLimits):
+                raise ValueError("Specify either 'limits' or 'tasks_limit', not both.")
+            resolved_limits = MessageLimits(max_messages=tasks_limit)
+        elif isinstance(limits, MessageLimits):
+            resolved_limits = limits
+        else:
+            resolved_limits = MessageLimits(max_messages=1000)
 
         worker = _Worker(
             actor_context=ActorExecutionContext(
@@ -101,7 +155,9 @@ class Repid:
             router=self._centralized_router._materialize(),
             graceful_shutdown_time=graceful_shutdown_time,
             messages_limit=messages_limit,
-            tasks_limit=tasks_limit,
+            limits=resolved_limits,
+            limit_policies=limit_policies,
+            actor_limits_propagation=actor_limits_propagation,
             register_signals=register_signals,
             health_check_server=health_check_server,
             asyncapi_server=asyncapi_server,

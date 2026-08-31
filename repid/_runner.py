@@ -2,15 +2,28 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
-from collections.abc import Awaitable, Callable
+from collections.abc import Sequence
 from contextlib import suppress
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
+from repid.admission import (
+    ExecutionAdmission,
+    ReservablePolicyT,
+    dispose_oversized,
+    release_leases,
+    reserve_limit_policies,
+)
+from repid.connections import SubscriberDispatcher
 from repid.connections.abc import SubscriberT
 from repid.data.actor import ActorExecutionContext
 from repid.health_check_server import HealthCheckStatus
+from repid.limits import (
+    ActorLimitsPropagation,
+    MessageLimits,
+    OversizedReservationError,
+    ReservationLeaseT,
+)
 
 logger = logging.getLogger("repid")
 
@@ -18,6 +31,7 @@ if TYPE_CHECKING:
     from repid.connections.abc import ReceivedMessageT
     from repid.data.actor import ActorData
     from repid.health_check_server import HealthCheckServer
+    from repid.limits import LimitPolicyT
 
 
 ActorResultT = Any
@@ -72,13 +86,27 @@ async def _run_with_keepalive(
             await keepalive_task
 
 
-async def _actor_execution_with_confirmation(  # noqa: C901, PLR0912
+async def _confirm_error(message: ReceivedMessageT, actor: ActorData, exc: BaseException) -> None:
+    if message.is_acted_on:
+        return
+    if actor.confirmation_mode in ("auto", "manual", "manual_explicit"):
+        action = actor.on_error if isinstance(actor.on_error, str) else actor.on_error(exc)
+        if action == "reject":
+            await message.reject()
+        elif action == "nack":
+            await message.nack()
+        elif action == "ack":
+            await message.ack()
+    elif actor.confirmation_mode == "always_ack":
+        await message.ack()
+
+
+async def _actor_execution_with_confirmation(  # noqa: C901
     message: ReceivedMessageT,
     actor: ActorData,
     actor_context: ActorExecutionContext,
 ) -> ActorResultT:
-    """Wraps `_actor_execution` to ack/nack the message immediately after the actor fn runs,
-    so middlewares unwinding above this leaf can observe `message.action`."""
+    """Run the actor and confirm before middleware unwinds."""
     try:
         if actor.timeout is None or actor.timeout <= 0 or actor.timeout == float("inf"):
             result = await _run_with_keepalive(message, actor, actor_context)
@@ -88,19 +116,7 @@ async def _actor_execution_with_confirmation(  # noqa: C901, PLR0912
                 timeout=actor.timeout,
             )
     except Exception as exc:
-        if not message.is_acted_on:
-            if actor.confirmation_mode in ("auto", "manual", "manual_explicit"):
-                error_action = (
-                    actor.on_error if isinstance(actor.on_error, str) else actor.on_error(exc)
-                )
-                if error_action == "reject":
-                    await message.reject()
-                elif error_action == "nack":
-                    await message.nack()
-                elif error_action == "ack":
-                    await message.ack()
-            elif actor.confirmation_mode == "always_ack":
-                await message.ack()
+        await _confirm_error(message, actor, exc)
         raise
     else:
         if not message.is_acted_on:
@@ -140,15 +156,9 @@ async def _actor_run(
         "time_limit": actor.timeout,
         "message_id": message.message_id,
     }
-
     exception = None
     result = None
-
-    leaf = partial(
-        _actor_execution_with_confirmation,
-        actor_context=actor_context,
-    )
-
+    leaf = partial(_actor_execution_with_confirmation, actor_context=actor_context)
     try:
         result = await actor.middleware_pipeline(leaf, message, actor)
     except Exception as exc:
@@ -159,51 +169,51 @@ async def _actor_run(
 
     if not message.is_acted_on and actor.confirmation_mode == "manual":
         logger.warning("actor.ack.manual.unacknowledged", extra=logger_extra)
-
     return exception if exception is not None else result
 
 
-async def _actor_run_with_cancel_event_and_callback(  # noqa: PLR0917
+async def _cancel_and_reject(process_task: asyncio.Task[Any], message: ReceivedMessageT) -> None:
+    process_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await process_task
+    if not message.is_acted_on:
+        await message.reject()
+
+
+async def _actor_run_with_cancel_event(
     actor: ActorData,
     message: ReceivedMessageT,
     actor_context: ActorExecutionContext,
     cancel_event: asyncio.Event,
     cancel_event_task: asyncio.Task,
-    callback: Callable[[], Awaitable],
 ) -> None:
     process_task = asyncio.create_task(_actor_run(actor, message, actor_context))
-    await asyncio.wait(
-        {cancel_event_task, process_task},
-        return_when=asyncio.FIRST_COMPLETED,
-    )
-    if cancel_event.is_set():
-        process_task.cancel()
-        if not message.is_acted_on:
-            await message.reject()
-        return
-    await process_task
-    await callback()
+    try:
+        await asyncio.wait({cancel_event_task, process_task}, return_when=asyncio.FIRST_COMPLETED)
+        if cancel_event.is_set():
+            await _cancel_and_reject(process_task, message)
+            return
+        await process_task
+    except asyncio.CancelledError:
+        await _cancel_and_reject(process_task, message)
+        raise
 
 
 class _Runner:
-    """State-management class for consuming messages and ensuring tasks are getting processed.
-    It ensures proper concurrency limit with semaphore. It can also track amount of processed tasks.
-    It has 2 events, which are used to create a graceful shutdown: stop_consume_event closes inflow
-    of new messages, and cancel_event cancels all currently running tasks. Objects of this class
-    are single-use only."""
+    """Consume and route messages while managing admission and shutdown.
+
+    ``stop_consume_event`` closes intake. ``cancel_event`` cancels work that did
+    not finish during graceful shutdown. Runner instances are single-use.
+    """
 
     __slots__ = (
+        "_admission",
         "_cancel_event_task",
         "_health_check_server",
-        "_limiter",
         "_processed",
         "_server_subscriber",
-        "_server_subscriber_concurrency_unpause_threshold",
-        "_server_subscriber_pause_lock",
-        "_server_subscriber_was_paused",
         "_stop_consume_event_task",
         "_tasks",
-        "_tasks_concurrency_limit",
         "_unrouted_seen_counts",
         "actor_context",
         "cancel_event",
@@ -217,41 +227,36 @@ class _Runner:
         self,
         *,
         actor_context: ActorExecutionContext,
+        limits: MessageLimits,
+        limit_policies: Sequence[LimitPolicyT] = (),
         max_tasks: int = float("inf"),  # type: ignore[assignment]
-        tasks_concurrency_limit: int = 1000,
-        concurrency_unpause_percent: float = 0.1,  # 10 percent
         health_check_server: HealthCheckServer | None = None,
         max_unrouted_retries: int = 10,
-    ):
+        channel_limits: dict[str, MessageLimits] | None = None,
+        channel_limit_policies: dict[str, Sequence[LimitPolicyT]] | None = None,
+        actor_limits_propagation: ActorLimitsPropagation = "sum",
+    ) -> None:
         self.server = actor_context.server
         self._server_subscriber: SubscriberT | None = None
-        self._server_subscriber_concurrency_unpause_threshold = max(
-            math.ceil(tasks_concurrency_limit * concurrency_unpause_percent),
-            1,
-        )
-        if self._server_subscriber_concurrency_unpause_threshold > tasks_concurrency_limit:
-            raise ValueError(
-                "Subscriber will never unpause, because unpause threshold is higher than concurrency limit.",
-            )
-        self._server_subscriber_was_paused = False
-        self._server_subscriber_pause_lock = asyncio.Lock()
 
         self._processed = 0
         self.max_unrouted_retries = max_unrouted_retries
         self._unrouted_seen_counts: dict[str, int] = {}
-
-        self._tasks: set[asyncio.Task] = set()
-
+        self._tasks: set[asyncio.Task[None]] = set()
         self.stop_consume_event = asyncio.Event()
         self.cancel_event = asyncio.Event()
-
         self.max_tasks = max_tasks
-        self._tasks_concurrency_limit = tasks_concurrency_limit
-        self._limiter = asyncio.Semaphore(tasks_concurrency_limit)
 
         self._health_check_server = health_check_server
-
         self.actor_context = actor_context
+        self._admission = ExecutionAdmission(
+            server=self.server,
+            limits=limits,
+            limit_policies=limit_policies,
+            channel_limits=channel_limits,
+            channel_limit_policies=channel_limit_policies,
+            actor_limits_propagation=actor_limits_propagation,
+        )
 
     @property
     def processed(self) -> int:
@@ -259,12 +264,18 @@ class _Runner:
 
     @property
     def max_tasks_hit(self) -> bool:
-        return (
-            self.max_tasks
-            - self._processed
-            - (self._tasks_concurrency_limit - self._limiter._value)
-            <= 0
-        )
+        return self.max_tasks - self._processed - len(self._tasks) <= 0
+
+    @property
+    def _can_admit(self) -> bool:
+        """Whether another message may be admitted into processing."""
+        return not self.stop_consume_event.is_set() and not self.max_tasks_hit
+
+    async def _reject_and_stop(self, message: ReceivedMessageT) -> None:
+        """Refuse a message and stop admitting further ones."""
+        self.stop_consume_event.set()
+        if not message.is_acted_on:
+            await message.reject()
 
     @property
     def cancel_event_task(self) -> asyncio.Task:
@@ -278,71 +289,126 @@ class _Runner:
             self._stop_consume_event_task = asyncio.create_task(self.stop_consume_event.wait())
         return self._stop_consume_event_task
 
-    def _task_callback(self, task: asyncio.Task) -> None:
+    def _task_callback(self, task: asyncio.Task[None]) -> None:
         self._tasks.discard(task)
-        self._limiter.release()
         self._processed += 1
         if self.max_tasks_hit:
             self.stop_consume_event.set()
 
-    async def _actor_run_callback(self) -> None:
-        if (
-            self._server_subscriber_was_paused
-            and self._server_subscriber is not None
-            and self._tasks_concurrency_limit - self._limiter._value
-            > self._server_subscriber_concurrency_unpause_threshold
-        ):
-            async with self._server_subscriber_pause_lock:
-                if self._server_subscriber_was_paused:  # double check inside of the lock
-                    await self._server_subscriber.resume()
-                    self._server_subscriber_was_paused = False
-
     async def _message_handler(self, actors: list[ActorData], message: ReceivedMessageT) -> None:
-        actor = next(filter(lambda actor: actor.routing_strategy(message), actors), None)
+        actor = next((actor for actor in actors if actor.routing_strategy(message)), None)
         if actor is None:
-            logger.warning("actor.route.not_found", extra={"channel": message.channel})
-            msg_id = message.message_id
-            if msg_id is not None:
-                count = self._unrouted_seen_counts.get(msg_id, 0) + 1
-                if count >= self.max_unrouted_retries:
-                    del self._unrouted_seen_counts[msg_id]
-                    logger.error(
-                        "actor.route.poison_message",
-                        extra={"channel": message.channel, "message_id": msg_id},
-                    )
-                    await message.nack()
-                else:
-                    self._unrouted_seen_counts[msg_id] = count
-                    await message.reject()
-            else:
-                await message.reject()
+            await self._handle_unrouted(message)
             return
 
-        if (
-            self._limiter.locked()
-            and self.server.capabilities["supports_lightweight_pause"]
-            and self._server_subscriber is not None
-        ):
-            async with self._server_subscriber_pause_lock:
-                if not self._server_subscriber_was_paused:
-                    await self._server_subscriber.pause()
-                    self._server_subscriber_was_paused = True
-            await self._limiter.acquire()
-        else:
-            await self._limiter.acquire()
+        if not self._can_admit:
+            await self._reject_and_stop(message)
+            return
 
-        t = asyncio.create_task(
-            _actor_run_with_cancel_event_and_callback(
+        task = asyncio.create_task(self._run_routed(actor, message))
+        self._tasks.add(task)
+        task.add_done_callback(self._task_callback)
+        await task
+
+    async def _handle_unrouted(self, message: ReceivedMessageT) -> None:
+        logger.warning("actor.route.not_found", extra={"channel": message.channel})
+        msg_id = message.message_id
+        if msg_id is None:
+            await message.reject()
+            return
+        count = self._unrouted_seen_counts.get(msg_id, 0) + 1
+        if count >= self.max_unrouted_retries:
+            del self._unrouted_seen_counts[msg_id]
+            logger.error(
+                "actor.route.poison_message",
+                extra={"channel": message.channel, "message_id": msg_id},
+            )
+            await message.nack()
+        else:
+            self._unrouted_seen_counts[msg_id] = count
+            await message.reject()
+
+    def _mark_fatal(self, event: str, exc: BaseException) -> None:
+        logger.critical(event, exc_info=exc)
+        if self._health_check_server is not None:
+            self._health_check_server.health_status = HealthCheckStatus.UNHEALTHY
+
+    async def _on_reservation_wait(
+        self,
+        waited_channels: list[str],
+        channel: str,
+        policy: ReservablePolicyT,
+    ) -> None:
+        waited_channels.extend(await self._admission.on_wait(channel, policy))
+
+    async def _reserve_leases(
+        self,
+        actor: ActorData,
+        message: ReceivedMessageT,
+    ) -> tuple[ReservationLeaseT, ...] | None:
+        """Hold every reservation needed to run ``message`` through ``actor``.
+
+        Returns the leases, or ``None`` when the message was already disposed of
+        (estimate failure, oversized payload action, or fatal reservation error).
+        Re-raises ``CancelledError`` after rejecting the message.
+        """
+        waited_channels: list[str] = []
+        on_wait = partial(self._on_reservation_wait, waited_channels, message.channel)
+        try:
+            try:
+                reservations = self._admission.reservations(actor, message)
+            except OversizedReservationError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                await _confirm_error(message, actor, exc)
+                return None
+            return await reserve_limit_policies(reservations, on_wait)
+        except asyncio.CancelledError:
+            if not message.is_acted_on:
+                await message.reject()
+            raise
+        except OversizedReservationError as exc:
+            await dispose_oversized(message, exc.action)
+            return None
+        except Exception as exc:  # noqa: BLE001
+            self._mark_fatal("runner.reservation.error", exc)
+            await self._reject_and_stop(message)
+            return None
+        finally:
+            try:
+                await self._admission.on_ready(waited_channels)
+            except Exception as exc:
+                logger.exception("runner.execution_backpressure.resume.error", exc_info=exc)
+
+    async def _run_routed(
+        self,
+        actor: ActorData,
+        message: ReceivedMessageT,
+    ) -> None:
+        if (
+            not message.is_acted_on  # A server may acknowledge a message when it receives it.
+            and actor.confirmation_mode == "ack_first"
+        ):
+            await message.ack()
+
+        leases = await self._reserve_leases(actor, message)
+        if leases is None:
+            return
+
+        try:
+            await _actor_run_with_cancel_event(
                 actor,
                 message,
                 self.actor_context,
                 self.cancel_event,
                 self.cancel_event_task,
-                self._actor_run_callback,
-            ),
-        )
-        self._tasks.add(t)
-        t.add_done_callback(self._task_callback)
+            )
+        finally:
+            try:
+                await release_leases(leases)
+            except Exception as exc:  # noqa: BLE001
+                self._mark_fatal("runner.reservation.release.error", exc)
+                self.stop_consume_event.set()
 
     async def run(
         self,
@@ -350,13 +416,25 @@ class _Runner:
         graceful_termination_timeout: float,
         cancellation_timeout: float = 1.0,
     ) -> None:
+        dispatcher = SubscriberDispatcher(
+            self._admission.limits,
+            self._admission.prepare(channels_to_actors),
+            active=False,
+        )
         self._server_subscriber = await self.server.subscribe(
             channels_to_callbacks={
                 channel: partial(self._message_handler, actors)
                 for channel, actors in channels_to_actors.items()
             },
-            concurrency_limit=self._tasks_concurrency_limit,
+            dispatcher=dispatcher,
         )
+        self._admission.server_subscriber = self._server_subscriber
+        try:
+            self._admission.validate_backpressure()
+        except BaseException:
+            await self._server_subscriber.close()
+            raise
+        dispatcher.activate()
         subscriber_task = self._server_subscriber.task
         await asyncio.wait(
             {self.stop_consume_event_task, subscriber_task},
@@ -367,9 +445,7 @@ class _Runner:
             and not subscriber_task.cancelled()
             and (exc := subscriber_task.exception()) is not None
         ):
-            logger.critical("runner.consumer.error", exc_info=exc)
-            if self._health_check_server is not None:
-                self._health_check_server.health_status = HealthCheckStatus.UNHEALTHY
+            self._mark_fatal("runner.consumer.error", exc)
 
         logger.debug("runner.shutdown.start")
         try:
@@ -387,10 +463,10 @@ class _Runner:
             if pending:
                 logger.error("runner.shutdown.tasks_timeout")
         self.cancel_event.set()
-
-        # Give cancelled tasks a moment to clean up (reject messages, etc.)
         if self._tasks:
             logger.debug("runner.shutdown.tasks_pending")
+            for task in tuple(self._tasks):
+                task.cancel()
             await asyncio.wait(
                 self._tasks,
                 return_when=asyncio.ALL_COMPLETED,
@@ -398,10 +474,8 @@ class _Runner:
             )
             if self._tasks:
                 logger.error("runner.shutdown.tasks_unfinished")
-
         try:
             await self._server_subscriber.close()
         except Exception as exc:
             logger.exception("runner.subscriber.close.error", exc_info=exc)
-
         logger.debug("runner.shutdown.complete")

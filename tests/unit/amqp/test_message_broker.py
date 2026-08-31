@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from typing import Any, ClassVar, cast
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from repid.connections import SubscriberDispatcher
 from repid.connections.abc import MessageAction, SentMessageT
 from repid.connections.amqp._uamqp.message import Properties
 from repid.connections.amqp._uamqp.outcomes import Accepted, Rejected, Released
@@ -20,6 +22,7 @@ from repid.connections.amqp.protocol.connection import (
 from repid.connections.amqp.protocol.managed import ReceiverPool, SenderPool
 from repid.connections.amqp.subscriber import AmqpSubscriber
 from repid.data import MessageData
+from repid.limits import MessageLimits
 
 from .utils import (
     FakeConnection,
@@ -197,12 +200,66 @@ async def test_amqp_subscriber_create_pause_resume_and_close() -> None:
 
     await subscriber.resume()
     await task
+    await asyncio.gather(*subscriber._callback_tasks)
 
     assert received == [b"data"]
     assert address == "/queues/queue"
+    assert receiver_links[0].released_delivery_ids == [1]
+
+    subscriber._dispatcher = MagicMock(
+        reserve=AsyncMock(side_effect=RuntimeError("failed")),
+    )
+    await wrapped_callback(b"data", None, 2, b"tag", receiver_links[0])
+    await asyncio.gather(*subscriber._callback_tasks)
+    assert receiver_links[0].released_delivery_ids == [1, 2]
 
     await subscriber.close()
     assert managed.receiver_pool.unsubscribed == ["/queues/queue"]
+
+
+async def test_amqp_subscriber_create_cleans_up_after_partial_subscription_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class DummyReceiverPool:
+        def __init__(self) -> None:
+            self.unsubscribed: list[str] = []
+            self.calls = 0
+
+        async def subscribe(self, _address: str, *_args: Any, **_kwargs: Any) -> MagicMock:
+            self.calls += 1
+            if self.calls == 2:
+                raise RuntimeError("second subscription failed")
+            return MagicMock()
+
+        async def unsubscribe(self, address: str) -> None:
+            self.unsubscribed.append(address)
+
+    class DummyManagedSession:
+        def __init__(self) -> None:
+            self.receiver_pool = DummyReceiverPool()
+
+    tasks: list[asyncio.Task[Any]] = []
+    create_task = asyncio.create_task
+
+    def track_task(coro: Any, **kwargs: Any) -> asyncio.Task[Any]:
+        task = create_task(coro, **kwargs)
+        tasks.append(task)
+        return task
+
+    monkeypatch.setattr(asyncio, "create_task", track_task)
+    managed = DummyManagedSession()
+
+    with pytest.raises(RuntimeError, match="second subscription failed"):
+        await AmqpSubscriber.create(
+            managed_session=cast(ManagedSession, managed),
+            queues_to_callbacks={"first": AsyncMock(), "second": AsyncMock()},
+            naming_strategy=lambda queue: f"/queues/{queue}",
+            publish_fn=lambda **_kwargs: asyncio.sleep(0),
+        )
+
+    assert len(tasks) == 1
+    assert tasks[0].cancelled()
+    assert managed.receiver_pool.unsubscribed == ["/queues/first", "/queues/second"]
 
 
 async def test_amqp_received_message_headers_and_ack_nack_reply() -> None:
@@ -671,12 +728,17 @@ async def test_subscriber_pause_resume() -> None:
         managed_session=managed,
         links=[cast(Any, receiver_link)],
         queues_to_callbacks={"test": lambda _x: asyncio.sleep(0)},
-        concurrency_limit=None,
+        dispatcher=SubscriberDispatcher(MessageLimits(max_messages=1)),
         paused_event=paused_event,
         naming_strategy=lambda x: x,
     )
 
     assert subscriber.is_active is True
+    assert subscriber.supports_native_flow_control("test", "messages")
+    assert not subscriber.supports_native_flow_control("test", "payload_bytes")
+    subscriber._queues_to_callbacks["other"] = lambda _x: asyncio.sleep(0)
+    assert not subscriber.supports_native_flow_control("test", "messages")
+    del subscriber._queues_to_callbacks["other"]
 
     await subscriber.pause()
     assert subscriber.is_active is False
@@ -799,7 +861,6 @@ async def test_subscriber_task_property() -> None:
         managed_session=managed,
         links=[],
         queues_to_callbacks={},
-        concurrency_limit=None,
         paused_event=paused_event,
         naming_strategy=lambda x: x,
     )

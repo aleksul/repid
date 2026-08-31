@@ -4,11 +4,13 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable, Coroutine, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
+from functools import partial
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
 import nats
 
+from repid.connections._subscriber import SubscriberDispatcher, cancel_and_drain
 from repid.connections.abc import (
     CapabilitiesT,
     MessageAction,
@@ -181,25 +183,21 @@ class NatsReceivedMessage(ReceivedMessageT):
         logger.debug("message.reply", extra={"channel": self._channel})
 
 
-class NatsSubscriber(SubscriberT):
+class NatsSubscriber:
     def __init__(
         self,
         server: NatsServer,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        dispatcher: SubscriberDispatcher | None = None,
     ) -> None:
         self._server = server
         self._channels_to_callbacks = channels_to_callbacks
-        self._concurrency_limit = concurrency_limit
+        self._dispatcher = dispatcher or SubscriberDispatcher()
         self._subs: dict[str, Subscription] = {}
+        self._callback_tasks: set[asyncio.Task[None]] = set()
+        self._subscription_lock = asyncio.Lock()
         self._closed = False
         self._active = False
-
-        self._semaphore = (
-            asyncio.Semaphore(concurrency_limit)
-            if concurrency_limit and concurrency_limit > 0
-            else None
-        )
 
         self._task = asyncio.create_task(self._start())
 
@@ -212,17 +210,63 @@ class NatsSubscriber(SubscriberT):
         return self._task
 
     async def _start(self) -> None:
-        self._active = True
         try:
-            for channel, callback in self._channels_to_callbacks.items():
-                await self._subscribe_channel(channel, callback)
+            async with self._subscription_lock:
+                if self._closed:
+                    return
+                for channel, callback in self._channels_to_callbacks.items():
+                    await self._subscribe_channel(channel, callback)
+                self._active = True
 
-            while not self._closed:
-                await asyncio.sleep(1)
-        except asyncio.CancelledError:
-            pass
+            # Handlers are dispatched by the NATS library itself; this task
+            # keeps the subscription open until close() cancels it.
+            await asyncio.Future()
         finally:
             await self.close()
+
+    @staticmethod
+    async def _run_callback(
+        callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+        channel: str,
+        message: ReceivedMessageT,
+    ) -> None:
+        try:
+            await callback(message)
+        except Exception:
+            logger.exception("consumer.error.unexpected", extra={"channel": channel})
+            if not message.is_acted_on:
+                await message.nack()
+
+    async def _dispatch_message(
+        self,
+        channel: str,
+        callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+        message: NatsReceivedMessage,
+    ) -> None:
+        lease = await self._dispatcher.reserve(message)
+        if lease is not None:
+            await self._dispatcher.run_admitted(
+                lease,
+                message,
+                partial(self._run_callback, callback, channel),
+            )
+
+    async def _handle_message(
+        self,
+        channel: str,
+        callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+        ack_wait: float | None,
+        message: Msg,
+    ) -> None:
+        task = asyncio.create_task(
+            self._dispatch_message(
+                channel,
+                callback,
+                NatsReceivedMessage(message, self._server, channel, ack_wait=ack_wait),
+            ),
+        )
+        self._callback_tasks.add(task)
+        task.add_done_callback(self._callback_tasks.discard)
 
     async def _subscribe_channel(
         self,
@@ -235,30 +279,12 @@ class NatsSubscriber(SubscriberT):
                 consumer_info = await self._server._js.consumer_info(channel, f"{channel}_group")
                 ack_wait = consumer_info.config.ack_wait
 
-        async def message_handler(msg: Msg) -> None:
-            wrapped = NatsReceivedMessage(msg, self._server, channel, ack_wait=ack_wait)
-            if self._semaphore:
-                async with self._semaphore:
-                    try:
-                        await callback(wrapped)
-                    except Exception:
-                        logger.exception("consumer.error.unexpected", extra={"channel": channel})
-                        if not wrapped.is_acted_on:
-                            await wrapped.nack()
-            else:
-                try:
-                    await callback(wrapped)
-                except Exception:
-                    logger.exception("consumer.error.unexpected", extra={"channel": channel})
-                    if not wrapped.is_acted_on:
-                        await wrapped.nack()
-
         if self._server._js is not None:
             sub = await self._server._js.subscribe(
                 channel,
                 queue=f"{channel}_group",
                 durable=f"{channel}_group",
-                cb=message_handler,
+                cb=partial(self._handle_message, channel, callback, ack_wait),
                 manual_ack=True,
             )
             self._subs[channel] = sub
@@ -267,33 +293,42 @@ class NatsSubscriber(SubscriberT):
             raise ConnectionError("JetStream context is not initialized. Call connect() first.")
 
     async def pause(self) -> None:
-        if not self._active:
-            return
-        self._active = False
-        for _channel, sub in self._subs.items():
-            with suppress(Exception):
+        async with self._subscription_lock:
+            if not self._active and not self._subs:
+                return
+            self._active = False
+            for channel, sub in tuple(self._subs.items()):
                 await sub.unsubscribe()
-        self._subs.clear()
-        logger.debug("subscriber.pause", extra={"channel": "all"})
+                self._subs.pop(channel, None)
+            logger.debug("subscriber.pause", extra={"channel": "all"})
 
     async def resume(self) -> None:
-        if self._closed or self._active:
-            return
-        self._active = True
-        for channel, callback in self._channels_to_callbacks.items():
-            await self._subscribe_channel(channel, callback)
-        logger.debug("subscriber.resume", extra={"channel": "all"})
+        async with self._subscription_lock:
+            if self._closed or self._active:
+                return
+            for channel, callback in self._channels_to_callbacks.items():
+                if channel not in self._subs:
+                    await self._subscribe_channel(channel, callback)
+            self._active = True
+            logger.debug("subscriber.resume", extra={"channel": "all"})
 
     async def close(self) -> None:
         if self._closed:
             return
         self._closed = True
-        await self.pause()
+        pause_error: Exception | None = None
+        try:
+            await self.pause()
+        except Exception as exc:  # noqa: BLE001
+            pause_error = exc
         if not self._task.done() and asyncio.current_task() != self._task:
             self._task.cancel()
             with suppress(asyncio.CancelledError):
                 await self._task
+        await cancel_and_drain(self._callback_tasks)
         logger.debug("subscriber.close", extra={"channel": "all"})
+        if pause_error is not None:
+            raise pause_error
 
 
 class NatsServer(ServerT):
@@ -380,6 +415,7 @@ class NatsServer(ServerT):
         return {
             "supports_native_reply": True,
             "supports_lightweight_pause": False,
+            "supports_channel_pause": False,
             "supports_keep_alive": True,
         }
 
@@ -457,15 +493,16 @@ class NatsServer(ServerT):
         self,
         *,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        dispatcher: SubscriberDispatcher | None = None,
     ) -> SubscriberT:
+        dispatcher = dispatcher or SubscriberDispatcher()
         if not self.is_connected or self._js is None:
             raise ConnectionError("NATS connection is not initialized. Call connect() first.")
 
         subscriber = NatsSubscriber(
             server=self,
             channels_to_callbacks=channels_to_callbacks,
-            concurrency_limit=concurrency_limit,
+            dispatcher=dispatcher,
         )
         self._active_subscribers.add(subscriber)
         subscriber.task.add_done_callback(lambda _: self._active_subscribers.discard(subscriber))

@@ -19,6 +19,7 @@ To create an actor middleware, you implement the `ActorMiddlewareT` protocol.
     from typing import Any, Coroutine, Callable
     from repid import ReceivedMessageT, ActorData
 
+
     async def logging_middleware[T](
         call_next: Callable[[ReceivedMessageT, ActorData], Coroutine[None, None, T]],
         message: ReceivedMessageT,
@@ -43,6 +44,7 @@ To create an actor middleware, you implement the `ActorMiddlewareT` protocol.
     from repid import ReceivedMessageT, ActorData
 
     T = TypeVar("T")
+
 
     async def logging_middleware(
         call_next: Callable[[ReceivedMessageT, ActorData], Coroutine[None, None, T]],
@@ -75,6 +77,7 @@ To create a producer middleware, you implement the `ProducerMiddlewareT` protoco
     import uuid
     from typing import Any, Coroutine, Callable
     from repid import MessageData
+
 
     async def producer_tracing_middleware[T](
         call_next: Callable[
@@ -112,6 +115,7 @@ To create a producer middleware, you implement the `ProducerMiddlewareT` protoco
     from repid import MessageData
 
     T = TypeVar("T")
+
 
     async def producer_tracing_middleware(
         call_next: Callable[
@@ -156,11 +160,12 @@ from repid import Repid, Router
 # Register on the main app
 app = Repid(
     actor_middlewares=[MetricsMiddleware(), LoggingActorMiddleware()],
-    producer_middlewares=[TraceIdProducerMiddleware(), ValidationMiddleware()]
+    producer_middlewares=[TraceIdProducerMiddleware(), ValidationMiddleware()],
 )
 
 # Or register specifically on a router
 router = Router(middlewares=[SpecificRouterMiddleware()])
+
 
 # Or even a single actor!
 @router.actor(middlewares=[SingleActorMiddleware()])

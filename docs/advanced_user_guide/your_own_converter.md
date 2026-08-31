@@ -19,6 +19,7 @@ from repid.connections.abc import ReceivedMessageT, ServerT
 from repid.data import ActorData, CorrelationId, ConverterInputSchema
 from repid.serializer import SerializerT
 
+
 class MyCustomConverter:
     def __init__(
         self,
@@ -59,7 +60,7 @@ class MyCustomConverter:
                 "$id": "https://example.com/product.schema.json",
                 "title": "Product",
                 "description": "A product in the catalog",
-                "type": "object"
+                "type": "object",
             },
             content_type="application/json",
             headers_schema=None,  # or a JSON schema
@@ -76,6 +77,7 @@ to the `@router.actor` decorator:
 from repid import Router
 
 router = Router()
+
 
 @router.actor(converter=MyCustomConverter)
 async def my_actor(data: dict) -> None:

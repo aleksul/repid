@@ -166,6 +166,7 @@ from repid import Message, Router
 P = ParamSpec("P")
 R = TypeVar("R")
 
+
 def with_rabbitmq_retries(
     max_retries: int = 5,
     backoff_delays: list[int] | None = None,
@@ -188,7 +189,7 @@ def with_rabbitmq_retries(
         if "message" not in sig.parameters:
             new_params = [
                 *list(sig.parameters.values()),
-                inspect.Parameter("message", inspect.Parameter.KEYWORD_ONLY, annotation=Message)
+                inspect.Parameter("message", inspect.Parameter.KEYWORD_ONLY, annotation=Message),
             ]
             new_sig = sig.replace(parameters=new_params)
         else:
@@ -221,7 +222,7 @@ def with_rabbitmq_retries(
                 new_headers["x-retry-count"] = str(retry_count + 1)
 
                 amqp_to_address = (
-                  f"/exchanges/{retry_exchange}/delay.{delay_ms}.{message.channel}"  # (5)!
+                    f"/exchanges/{retry_exchange}/delay.{delay_ms}.{message.channel}"  # (5)!
                 )
 
                 await message.send_message(
@@ -263,6 +264,7 @@ your business logic, and the decorator handles the rest:
 
 ```python
 router = Router()
+
 
 @router.actor(channel="my_work_queue")
 @with_rabbitmq_retries(max_retries=5, retry_exceptions=(ConnectionError, TimeoutError))

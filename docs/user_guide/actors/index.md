@@ -15,6 +15,7 @@ from repid import Router
 
 router = Router()
 
+
 @router.actor(channel="user_tasks")
 async def send_welcome_email() -> None:
     print("Sending welcome email...")

@@ -17,15 +17,19 @@ app.servers.register_server("default", AmqpServer("amqp://localhost"), is_defaul
 
 router = Router()
 
+
 @router.actor(channel="user_events")
 async def process_user_event(event_type: str):
     print(f"Event: {event_type}")
 
+
 app.include_router(router)
+
 
 async def main():
     async with app.servers.default.connection():
         await app.run_worker()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

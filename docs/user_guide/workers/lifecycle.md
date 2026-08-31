@@ -16,12 +16,14 @@ this worker as a completely independent background process, separate from your m
 
 ```python title="worker.py"
 import asyncio
-from app import app # your Repid app instance
+from app import app  # your Repid app instance
+
 
 async def main():
     async with app.servers.default.connection():
         # Starts the worker event loop and blocks until shutdown signal
         await app.run_worker()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -113,9 +115,7 @@ To specify custom signals:
 ```python
 import signal
 
-await app.run_worker(
-    register_signals=[signal.SIGUSR1]
-)
+await app.run_worker(register_signals=[signal.SIGUSR1])
 ```
 
 To disable Repid listening for signals:

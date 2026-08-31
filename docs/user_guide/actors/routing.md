@@ -29,6 +29,7 @@ regardless of the topic header, you can switch to the **Catch-all routing strate
 ```python
 from repid import catch_all_routing_strategy
 
+
 @router.actor(
     channel="user_tasks",
     routing_strategy=catch_all_routing_strategy,
@@ -55,6 +56,7 @@ should process the message.
 ```python
 from repid import BaseMessageT
 
+
 def my_custom_routing_strategy(*, actor_name: str, **kwargs) -> callable:
     def strategy(message: BaseMessageT) -> bool:
         # Example: route based on a custom "action" header
@@ -64,10 +66,9 @@ def my_custom_routing_strategy(*, actor_name: str, **kwargs) -> callable:
 
     return strategy
 
+
 @router.actor(
-    channel="user_tasks",
-    name="send_email_action",
-    routing_strategy=my_custom_routing_strategy
+    channel="user_tasks", name="send_email_action", routing_strategy=my_custom_routing_strategy
 )
 async def process_something() -> None:
     pass

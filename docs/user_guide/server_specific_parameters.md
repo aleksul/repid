@@ -18,7 +18,7 @@ await app.send_message_json(
     headers={"topic": "video_worker"},
     server_specific_parameters={
         # Your broker-specific flags go here
-    }
+    },
 )
 ```
 
@@ -47,16 +47,16 @@ await app.send_message_json(
             durable=True,
             priority=10,
             ttl=5000,  # Time to live in ms
-            delivery_count=0
+            delivery_count=0,
         ),
         "properties": AmqpMessageProperties(
             subject="task_subject",
             reply_to="reply_queue",
             group_id="group_1",
-            absolute_expiry_time=1700000000
+            absolute_expiry_time=1700000000,
         ),
-        "routing_key": "my.custom.routing.key"
-    }
+        "routing_key": "my.custom.routing.key",
+    },
 )
 ```
 

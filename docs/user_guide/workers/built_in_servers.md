@@ -33,7 +33,7 @@ from repid import Repid, HealthCheckServerSettings
 
 app = Repid()
 
-... # broker configuration is omitted
+...  # broker configuration is omitted
 
 await app.run_worker(
     health_check_server=HealthCheckServerSettings(

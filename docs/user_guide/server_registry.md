@@ -66,11 +66,7 @@ fallback to the default server in the registry.
 await app.send_message(channel="tasks", payload=b"...")
 
 # Will explicitly use the "redis" server
-await app.send_message(
-    channel="tasks",
-    payload=b"...",
-    server_name="redis"
-)
+await app.send_message(channel="tasks", payload=b"...", server_name="redis")
 ```
 
 Likewise, when running a worker:

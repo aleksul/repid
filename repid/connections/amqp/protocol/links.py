@@ -685,7 +685,8 @@ class ReceiverLink(Link):
     async def settle_delivery(self, delivery_id: int, state: ReceiverSettlementState) -> None:
         if not self.is_delivery_settled(delivery_id):
             await self._send_disposition(delivery_id, state)
-        await self.release_delivery_credit(delivery_id)
+        if delivery_id not in self._deferred_credit_delivery_ids:
+            await self.release_delivery_credit(delivery_id)
 
     @staticmethod
     def _body_to_bytes(body: Any) -> bytes:

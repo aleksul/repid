@@ -3,14 +3,16 @@ from __future__ import annotations
 import asyncio
 import signal
 from typing import Any
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 
-from repid import Router
+from repid import BackpressurePolicy, MessageLimits, Router
 from repid._worker import _Worker
 from repid.asyncapi import AsyncAPI3Schema
 from repid.asyncapi_server import AsyncAPIServerSettings
+from repid.connections.abc import CapabilitiesT
 from repid.connections.in_memory import InMemoryServer
 from repid.data import ActorExecutionContext, MessageData
 from repid.health_check_server import HealthCheckServerSettings
@@ -44,6 +46,7 @@ async def test_worker_with_no_actors() -> None:
         worker = _Worker(
             actor_context=_make_actor_context(server),
             router=router._materialize(),
+            limits=MessageLimits(max_messages=1000),
             graceful_shutdown_time=1.0,
         )
 
@@ -61,6 +64,7 @@ async def test_worker_without_asyncapi_schema_raises() -> None:
         _Worker(
             actor_context=_make_actor_context(server),
             router=router._materialize(),
+            limits=MessageLimits(max_messages=1000),
             asyncapi_server=AsyncAPIServerSettings(address="127.0.0.1", port=18125),
             asyncapi_schema=None,
         )
@@ -79,6 +83,7 @@ async def test_worker_run_with_health_check_server_lifecycle() -> None:
         worker = _Worker(
             actor_context=_make_actor_context(server),
             router=router._materialize(),
+            limits=MessageLimits(max_messages=1000),
             graceful_shutdown_time=0.1,
             messages_limit=1,
             health_check_server=HealthCheckServerSettings(address="127.0.0.1", port=18126),
@@ -124,6 +129,7 @@ async def test_worker_run_with_asyncapi_server_lifecycle() -> None:
         worker = _Worker(
             actor_context=_make_actor_context(server),
             router=router._materialize(),
+            limits=MessageLimits(max_messages=1000),
             graceful_shutdown_time=0.1,
             messages_limit=1,
             asyncapi_server=AsyncAPIServerSettings(address="127.0.0.1", port=18127),
@@ -171,6 +177,7 @@ async def test_worker_run_with_both_servers_lifecycle() -> None:
         worker = _Worker(
             actor_context=_make_actor_context(server),
             router=router._materialize(),
+            limits=MessageLimits(max_messages=1000),
             graceful_shutdown_time=0.1,
             messages_limit=1,
             health_check_server=HealthCheckServerSettings(address="127.0.0.1", port=18128),
@@ -214,6 +221,7 @@ async def test_worker_run_graceful_shutdown() -> None:
         worker = _Worker(
             actor_context=_make_actor_context(server),
             router=router._materialize(),
+            limits=MessageLimits(max_messages=1000),
             graceful_shutdown_time=0.1,
             register_signals=[signal.SIGUSR1],
         )
@@ -239,6 +247,7 @@ async def test_worker_run_cancel() -> None:
         worker = _Worker(
             actor_context=_make_actor_context(server),
             router=router._materialize(),
+            limits=MessageLimits(max_messages=1000),
             graceful_shutdown_time=0.1,
             register_signals=[signal.SIGUSR1],
         )
@@ -250,3 +259,47 @@ async def test_worker_run_cancel() -> None:
 
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, timeout=3.0)
+
+
+async def test_worker_stops_auxiliary_server_when_subscription_setup_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class NoPauseServer(InMemoryServer):
+        @property
+        def capabilities(self) -> CapabilitiesT:
+            return {
+                "supports_native_reply": True,
+                "supports_lightweight_pause": False,
+                "supports_channel_pause": False,
+                "supports_keep_alive": False,
+            }
+
+    router = Router()
+
+    @router.actor
+    async def task() -> None:
+        pass
+
+    start = AsyncMock()
+    stop = AsyncMock()
+    monkeypatch.setattr("repid._worker.HealthCheckServer.start", start)
+    monkeypatch.setattr("repid._worker.HealthCheckServer.stop", stop)
+
+    server = NoPauseServer()
+    async with server.connection():
+        worker = _Worker(
+            actor_context=_make_actor_context(server),
+            router=router._materialize(),
+            limits=MessageLimits(
+                max_messages=1,
+                backpressure=BackpressurePolicy(on_unavailable="error"),
+            ),
+            health_check_server=HealthCheckServerSettings(address="127.0.0.1", port=18130),
+            register_signals=[],
+        )
+
+        with pytest.raises(ValueError, match="no available strategy"):
+            await worker.run()
+
+    start.assert_awaited_once()
+    stop.assert_awaited_once()

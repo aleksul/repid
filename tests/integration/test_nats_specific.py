@@ -8,6 +8,8 @@ import nats
 import pytest
 from pytest_docker_tools import wrappers
 
+from repid import MessageLimits
+from repid.connections import SubscriberDispatcher
 from repid.connections.nats import NatsServer
 from repid.connections.nats.message_broker import NatsReceivedMessage, NatsSubscriber
 
@@ -171,7 +173,7 @@ async def test_nats_exception(nats_connection: NatsServer) -> None:
         await nats_connection.publish(channel="test_exc_channel", message=MockSentMsg())
         sub_exc = await nats_connection.subscribe(
             channels_to_callbacks={"test_exc_channel": cb_exc},
-            concurrency_limit=1,
+            dispatcher=SubscriberDispatcher(MessageLimits(max_messages=1)),
         )
         await asyncio.wait_for(event_exc.wait(), timeout=5.0)
         assert hit_exc
@@ -449,7 +451,6 @@ async def test_nats_subscribe_callback_exception_calls_term() -> None:
     with patch.object(NatsServer, "is_connected", new_callable=PropertyMock, return_value=True):
         sub_test = await server.subscribe(
             channels_to_callbacks={"test": AsyncMock(side_effect=ValueError)},
-            concurrency_limit=None,
         )
         await asyncio.sleep(0.1)
 
@@ -465,6 +466,7 @@ async def test_nats_subscribe_callback_exception_calls_term() -> None:
     )
 
     await message_handler(fake_nats_msg)
+    await asyncio.sleep(0)
     fake_nats_msg.term.assert_called_once()
     await sub_test.close()
 

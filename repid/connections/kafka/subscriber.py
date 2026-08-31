@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from collections.abc import Callable, Coroutine
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from aiokafka import OffsetAndMetadata
 from aiokafka.structs import TopicPartition
 
-from repid.connections.abc import SubscriberT
+from repid.connections._subscriber import SubscriberDispatcher
 from repid.connections.kafka.message import KafkaReceivedMessage
 
 if TYPE_CHECKING:
@@ -20,31 +20,25 @@ if TYPE_CHECKING:
 logger = logging.getLogger("repid.connections.kafka")
 
 
-class KafkaSubscriber(SubscriberT):
+class KafkaSubscriber:
     def __init__(
         self,
         server: KafkaServer,
         consumer: AIOKafkaConsumerProtocol,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        dispatcher: SubscriberDispatcher | None = None,
     ) -> None:
         self._server = server
         self._consumer = consumer
         self._channels_to_callbacks = channels_to_callbacks
-        self._concurrency_limit = concurrency_limit
+        self._dispatcher = dispatcher or SubscriberDispatcher()
 
         self._closed = False
         self._paused_event = asyncio.Event()
         self._paused_event.set()
 
-        self._semaphore = (
-            asyncio.Semaphore(concurrency_limit)
-            if concurrency_limit and concurrency_limit > 0
-            else None
-        )
-
         self._offset_tracker: dict[TopicPartition, dict[int, bool]] = {}  # type: ignore[no-any-unimported]
-        self._background_tasks: set[asyncio.Task[Any]] = set()
+        self._background_tasks: set[asyncio.Task[None]] = set()
         self._task = asyncio.create_task(self._consume_loop())
 
     @property
@@ -70,15 +64,12 @@ class KafkaSubscriber(SubscriberT):
     async def close(self) -> None:
         self._closed = True
         self._task.cancel()
-        tasks_to_await = list(self._background_tasks)
-        for task in tasks_to_await:
+        await asyncio.gather(self._task, return_exceptions=True)
+        background_tasks = tuple(self._background_tasks)
+        for task in background_tasks:
             task.cancel()
-
-        with contextlib.suppress(asyncio.CancelledError):
-            await self._task
-
-        if tasks_to_await:
-            await asyncio.gather(*tasks_to_await, return_exceptions=True)
+        if background_tasks:
+            await asyncio.gather(*background_tasks, return_exceptions=True)
 
         try:
             await self._consumer.stop()
@@ -86,27 +77,22 @@ class KafkaSubscriber(SubscriberT):
             logger.exception("subscriber.close.error", exc_info=exc)
 
     async def _consume_loop(self) -> None:
-        try:
-            while not self._closed:
-                await self._paused_event.wait()
+        native_limit = self._dispatcher.native_message_limit()
+        max_records = None if native_limit is None else max(native_limit, 1)
 
-                result = await self._consumer.getmany(timeout_ms=1000)
+        while not self._closed:
+            await self._paused_event.wait()
 
-                for tp, messages in result.items():
-                    if tp not in self._offset_tracker:
-                        self._offset_tracker[tp] = {}
+            result = await self._consumer.getmany(timeout_ms=1000, max_records=max_records)
 
-                    for msg in messages:
-                        self._offset_tracker[tp][msg.offset] = False
+            for tp, messages in result.items():
+                if tp not in self._offset_tracker:
+                    self._offset_tracker[tp] = {}
 
-                        if self._semaphore:
-                            await self._semaphore.acquire()
+                for msg in messages:
+                    self._offset_tracker[tp][msg.offset] = False
 
-                        task = asyncio.create_task(self._process_message(msg, tp))
-                        self._background_tasks.add(task)
-                        task.add_done_callback(self._background_tasks.discard)
-        except asyncio.CancelledError:
-            pass
+                    await self._process_message(msg, tp)
 
     async def _mark_complete(  # type: ignore[no-any-unimported]
         self,
@@ -123,46 +109,50 @@ class KafkaSubscriber(SubscriberT):
             else:
                 break
 
+        if highest_completed >= 0:
+            await self._consumer.commit(
+                {
+                    tp: OffsetAndMetadata(highest_completed + 1, ""),
+                },
+            )
+            # Clean up completed offsets
+            for offset in list(self._offset_tracker[tp].keys()):
+                if offset <= highest_completed:
+                    del self._offset_tracker[tp][offset]
+
+    @staticmethod
+    async def _run_callback(
+        callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]] | None,
+        message: ReceivedMessageT,
+    ) -> None:
+        if callback is None:
+            return
         try:
-            if highest_completed >= 0:
-                await self._consumer.commit(
-                    {
-                        tp: OffsetAndMetadata(highest_completed + 1, ""),
-                    },
-                )
-                # Clean up completed offsets
-                for offset in list(self._offset_tracker[tp].keys()):
-                    if offset <= highest_completed:
-                        del self._offset_tracker[tp][offset]
-        finally:
-            if self._semaphore:
-                self._semaphore.release()
+            await callback(message)
+        except Exception as exc:
+            logger.exception("consumer.error.unexpected", exc_info=exc)
+            if not message.is_acted_on:
+                await message.nack()
 
     async def _process_message(  # type: ignore[no-any-unimported]
         self,
         record: ConsumerRecordProtocol,
         tp: TopicPartition,
     ) -> None:
-        msg: KafkaReceivedMessage | None = None
-        try:
-            msg = KafkaReceivedMessage(
-                server=self._server,
-                record=record,
-                mark_complete_callback=lambda r: self._mark_complete(r, tp),
-            )
-
-            callback = self._channels_to_callbacks.get(record.topic)
-            if callback:
-                try:
-                    await callback(msg)
-                except Exception as exc:
-                    logger.exception("consumer.error.unexpected", exc_info=exc)
-                    if not msg.is_acted_on:
-                        await msg.nack()
-        except Exception as exc:  # pragma: no cover
-            logger.exception("consumer.error.message_processing", exc_info=exc)
-        finally:
-            # If the message was never instantiated, or wasn't acted on, we must release the semaphore.
-            # (If it was acted on, the _mark_complete_callback handled the semaphore release.)
-            if self._semaphore and (msg is None or not msg.is_acted_on):
-                self._semaphore.release()
+        msg = KafkaReceivedMessage(
+            server=self._server,
+            record=record,
+            mark_complete_callback=lambda r: self._mark_complete(r, tp),
+        )
+        lease = await self._dispatcher.reserve(msg)
+        if lease is None:
+            return
+        task = asyncio.create_task(
+            self._dispatcher.run_admitted(
+                lease,
+                msg,
+                partial(self._run_callback, self._channels_to_callbacks.get(record.topic)),
+            ),
+        )
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)

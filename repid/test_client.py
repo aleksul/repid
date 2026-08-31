@@ -30,6 +30,7 @@ class _MockServer:
         return {
             "supports_native_reply": True,
             "supports_lightweight_pause": False,
+            "supports_channel_pause": False,
             "supports_keep_alive": False,
         }
 

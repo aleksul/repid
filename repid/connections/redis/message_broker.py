@@ -8,6 +8,7 @@ import uuid
 from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from functools import partial
 from itertools import groupby
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -17,13 +18,17 @@ from redis.backoff import ExponentialBackoff
 from redis.exceptions import ResponseError
 from redis.retry import Retry
 
+from repid.connections._subscriber import (
+    SubscriberDispatcher,
+    cancel_and_drain,
+    run_supervised,
+)
 from repid.connections.abc import (
     CapabilitiesT,
     MessageAction,
     ReceivedMessageT,
     SentMessageT,
     ServerT,
-    SubscriberT,
 )
 
 logger = logging.getLogger("repid.connections.redis")
@@ -31,6 +36,7 @@ logger = logging.getLogger("repid.connections.redis")
 if TYPE_CHECKING:
     from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
+    from repid.connections.abc import SubscriberT
     from repid.data import ExternalDocs, Tag
 
 
@@ -314,7 +320,7 @@ class RedisReceivedMessage(ReceivedMessageT):
         raise NotImplementedError("Redis does not support native replies.")
 
 
-class RedisSubscriber(SubscriberT):
+class RedisSubscriber:
     """Subscriber for Redis Streams using consumer groups."""
 
     def __init__(
@@ -324,8 +330,8 @@ class RedisSubscriber(SubscriberT):
         channels: dict[str, ChannelConfig],
         callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
         consumer_name: str,
-        concurrency_limit: int | None,
         server: RedisServer,
+        dispatcher: SubscriberDispatcher | None = None,
         block_ms: int = 5000,
         batch_size: int = 10,
         retry_delay: float = 1.0,
@@ -342,18 +348,14 @@ class RedisSubscriber(SubscriberT):
         self._retry_delay = retry_delay
         self._claim_interval = claim_interval
         self._min_idle_ms = min_idle_ms
+        self._dispatcher = dispatcher or SubscriberDispatcher()
 
         self._closed = False
         self._paused_event = asyncio.Event()
         self._paused_event.set()  # Start in resumed state
 
-        self._semaphore: asyncio.Semaphore | None = (
-            asyncio.Semaphore(concurrency_limit)
-            if concurrency_limit and concurrency_limit > 0
-            else None
-        )
-        self._callback_tasks: set[asyncio.Task[None]] = set()
         self._in_flight_messages: set[str] = set()
+        self._callback_tasks: set[asyncio.Task[None]] = set()
 
         self._task: asyncio.Task[None] | None = None
         self._claim_task: asyncio.Task[None] | None = None
@@ -405,8 +407,7 @@ class RedisSubscriber(SubscriberT):
             with contextlib.suppress(asyncio.CancelledError):
                 await self._claim_task
 
-        if self._callback_tasks:
-            await asyncio.gather(*self._callback_tasks, return_exceptions=True)
+        await cancel_and_drain(self._callback_tasks)
 
     async def _consume_loop(self) -> None:
         """Main consumption loop — one concurrent task per unique consumer group."""
@@ -415,9 +416,11 @@ class RedisSubscriber(SubscriberT):
         for group_name, items in groupby(sorted_channels, key=lambda item: item[1].group):
             groups[group_name] = dict(items)
 
-        await asyncio.gather(
-            *(self._consume_group_loop(gn, gc) for gn, gc in groups.items()),
-            return_exceptions=True,
+        await run_supervised(
+            *(
+                self._consume_group_loop(group_name, channels)
+                for group_name, channels in groups.items()
+            ),
         )
 
     async def _consume_group_loop(
@@ -519,11 +522,17 @@ class RedisSubscriber(SubscriberT):
                 min_idle_ms=self._min_idle_ms,
             )
 
-            if self._semaphore is not None:
-                await self._semaphore.acquire()
-
+            lease = await self._dispatcher.reserve(received_msg)
+            if lease is None:
+                # No callback task will clean up in-flight tracking.
+                self._in_flight_messages.discard(msg_id)
+                continue
             task = asyncio.create_task(
-                self._run_callback(callback, received_msg, msg_id),
+                self._dispatcher.run_admitted(
+                    lease,
+                    received_msg,
+                    partial(self._run_callback, callback, message_id=msg_id),
+                ),
             )
             self._callback_tasks.add(task)
             task.add_done_callback(self._callback_tasks.discard)
@@ -531,12 +540,23 @@ class RedisSubscriber(SubscriberT):
     async def _run_callback(
         self,
         callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
-        message: RedisReceivedMessage,
+        message: ReceivedMessageT,
         message_id: str,
     ) -> None:
-        """Run a callback and handle cleanup."""
+        """Run a callback and clean up in-flight tracking."""
         try:
             await callback(message)
+        except asyncio.CancelledError:
+            if not message.is_acted_on:
+                try:
+                    await message.reject()
+                except Exception as exc:
+                    logger.exception(
+                        "message.reject.error",
+                        extra={"message_id": message_id},
+                        exc_info=exc,
+                    )
+            raise
         except Exception as exc:
             logger.exception(
                 "message.callback.error",
@@ -547,8 +567,6 @@ class RedisSubscriber(SubscriberT):
                 await message.nack()
         finally:
             self._in_flight_messages.discard(message_id)
-            if self._semaphore is not None:
-                self._semaphore.release()
 
     async def _claim_loop(self) -> None:
         """Periodically reclaim stale pending messages using XAUTOCLAIM."""
@@ -743,6 +761,7 @@ class RedisServer(ServerT):
         return {
             "supports_native_reply": False,
             "supports_lightweight_pause": True,
+            "supports_channel_pause": False,
             "supports_keep_alive": True,
         }
 
@@ -845,9 +864,10 @@ class RedisServer(ServerT):
         self,
         *,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        dispatcher: SubscriberDispatcher | None = None,
     ) -> SubscriberT:
         """Subscribe to channels using Redis Streams consumer groups."""
+        dispatcher = dispatcher or SubscriberDispatcher()
         if self._redis is None:
             raise ConnectionError("Not connected to Redis server")
 
@@ -877,8 +897,8 @@ class RedisServer(ServerT):
             channels=channels,
             callbacks=channels_to_callbacks,
             consumer_name=consumer_name,
-            concurrency_limit=concurrency_limit,
             server=self,
+            dispatcher=dispatcher,
             block_ms=self._block_ms,
             batch_size=self._batch_size,
             retry_delay=self._retry_delay,

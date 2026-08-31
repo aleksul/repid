@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from aiobotocore.session import get_session
 
+from repid.connections._subscriber import SubscriberDispatcher
 from repid.connections.abc import CapabilitiesT, SentMessageT, ServerT, SubscriberT
 from repid.connections.sqs.constants import (
     EMPTY_PAYLOAD_ATTRIBUTE,
@@ -134,6 +135,7 @@ class SqsServer(ServerT):
         return {
             "supports_native_reply": False,
             "supports_lightweight_pause": False,
+            "supports_channel_pause": False,
             "supports_keep_alive": True,
         }
 
@@ -237,8 +239,9 @@ class SqsServer(ServerT):
         self,
         *,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        dispatcher: SubscriberDispatcher | None = None,
     ) -> SubscriberT:
+        dispatcher = dispatcher or SubscriberDispatcher()
         logger.debug("channel.subscribe", extra={"channels": list(channels_to_callbacks.keys())})
 
         if self._client is None:
@@ -247,7 +250,7 @@ class SqsServer(ServerT):
         sub = SqsSubscriber(
             server=self,
             channels_to_callbacks=channels_to_callbacks,
-            concurrency_limit=concurrency_limit,
+            dispatcher=dispatcher,
         )
         self._active_subscribers.add(sub)
         sub.task.add_done_callback(lambda _: self._active_subscribers.discard(sub))

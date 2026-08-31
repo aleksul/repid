@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from repid import Repid
+from repid import MessageLimits, Repid
+from repid.connections import SubscriberDispatcher
 from repid.connections.abc import ReceivedMessageT, SentMessageT
 from repid.connections.kafka.subscriber import KafkaSubscriber
 
@@ -75,7 +76,7 @@ async def test_kafka_reject(kafka_repid: Repid, kafka_connection: ServerT) -> No
 
         subscriber = await kafka_connection.subscribe(
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            dispatcher=SubscriberDispatcher(MessageLimits(max_messages=1)),
         )
 
         await asyncio.wait_for(event.wait(), timeout=10.0)
@@ -98,7 +99,7 @@ async def test_kafka_reject(kafka_repid: Repid, kafka_connection: ServerT) -> No
 
         requeued_subscriber = await kafka_connection.subscribe(
             channels_to_callbacks={channel_name: on_requeued_message},
-            concurrency_limit=1,
+            dispatcher=SubscriberDispatcher(MessageLimits(max_messages=1)),
         )
 
         await asyncio.wait_for(requeued_event.wait(), timeout=10.0)
@@ -132,7 +133,7 @@ async def test_kafka_nack_to_dlq(kafka_repid: Repid, kafka_connection: ServerT) 
 
         subscriber = await kafka_connection.subscribe(
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            dispatcher=SubscriberDispatcher(MessageLimits(max_messages=1)),
         )
 
         await asyncio.wait_for(event.wait(), timeout=10.0)
@@ -154,7 +155,7 @@ async def test_kafka_nack_to_dlq(kafka_repid: Repid, kafka_connection: ServerT) 
 
         dlq_subscriber = await kafka_connection.subscribe(
             channels_to_callbacks={dlq_channel_name: on_dlq_message},
-            concurrency_limit=1,
+            dispatcher=SubscriberDispatcher(MessageLimits(max_messages=1)),
         )
 
         await asyncio.wait_for(dlq_event.wait(), timeout=10.0)
@@ -188,7 +189,7 @@ async def test_kafka_reply(kafka_repid: Repid, kafka_connection: ServerT) -> Non
 
         subscriber = await kafka_connection.subscribe(
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            dispatcher=SubscriberDispatcher(MessageLimits(max_messages=1)),
         )
 
         await asyncio.wait_for(event.wait(), timeout=10.0)
@@ -237,6 +238,7 @@ async def test_kafka_message_properties_and_double_actions(  # noqa: PLR0915
         assert kafka_connection.capabilities == {
             "supports_native_reply": False,
             "supports_lightweight_pause": False,
+            "supports_channel_pause": False,
             "supports_keep_alive": False,
         }
 
@@ -311,11 +313,11 @@ async def test_kafka_subscriber_callback_exception(
 
         subscriber = await kafka_connection.subscribe(
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            dispatcher=SubscriberDispatcher(MessageLimits(max_messages=1)),
         )
 
         await asyncio.wait_for(event.wait(), timeout=10.0)
-        # Give it a moment to process the exception and release semaphore
+        # Give it a moment to process the exception and release intake capacity
         await asyncio.sleep(0.5)
         await subscriber.close()
 
@@ -338,13 +340,13 @@ async def test_kafka_subscriber_close_exception_and_cancellation(
 
         async def on_message(msg: ReceivedMessageT) -> None:  # noqa: ARG001
             event.set()
-            # Sleep a long time so that the task is still in background_tasks
+            # Sleep a long time so that the task is still tracked
             # when subscriber.close() is called.
             await asyncio.sleep(60.0)
 
         subscriber = await kafka_connection.subscribe(
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            dispatcher=SubscriberDispatcher(MessageLimits(max_messages=1)),
         )
 
         await asyncio.wait_for(event.wait(), timeout=10.0)

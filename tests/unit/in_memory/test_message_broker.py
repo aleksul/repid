@@ -5,6 +5,7 @@ from typing import cast
 
 import pytest
 
+from repid.connections import SubscriberDispatcher
 from repid.connections.abc import MessageAction, ReceivedMessageT
 from repid.connections.in_memory.message_broker import (
     InMemoryReceivedMessage,
@@ -13,6 +14,7 @@ from repid.connections.in_memory.message_broker import (
     InMemorySubscriber,
 )
 from repid.connections.in_memory.utils import DummyQueue
+from repid.limits import MessageLimits
 
 
 def test_sent_message_properties() -> None:
@@ -151,6 +153,7 @@ def test_server_properties() -> None:
     assert server.external_docs is None
     assert server.bindings is None
     assert server.capabilities["supports_native_reply"]
+    assert server.capabilities["supports_channel_pause"]
     assert not server.is_connected
 
 
@@ -246,16 +249,23 @@ async def test_server_subscribe_and_consume() -> None:
     assert not subscriber.is_active
 
 
-async def test_server_subscribe_callback_exception_releases_semaphore() -> None:
+async def test_server_subscribe_callback_exception_releases_intake() -> None:
     server = InMemoryServer()
     await server.connect()
 
     error_event = asyncio.Event()
+    second_ack_event = asyncio.Event()
+    calls = 0
 
-    async def failing_callback(msg: InMemoryReceivedMessage) -> None:
+    async def callback(msg: InMemoryReceivedMessage) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            await msg.ack()
+            error_event.set()
+            raise RuntimeError("boom")
         await msg.ack()
-        error_event.set()
-        raise RuntimeError("boom")
+        second_ack_event.set()
 
     subscriber = cast(
         InMemorySubscriber,
@@ -263,25 +273,62 @@ async def test_server_subscribe_callback_exception_releases_semaphore() -> None:
             channels_to_callbacks={
                 "chan1": cast(
                     Callable[[ReceivedMessageT], Coroutine[None, None, None]],
-                    failing_callback,
+                    callback,
                 ),
             },
-            concurrency_limit=2,
+            dispatcher=SubscriberDispatcher(MessageLimits(max_messages=1)),
         ),
     )
 
     await server.publish(channel="chan1", message=InMemorySentMessage(payload=b"1"))
     await asyncio.wait_for(error_event.wait(), timeout=1.0)
-    await asyncio.sleep(0.05)  # Let the finally block complete
 
-    # Semaphore should have been released despite the exception
-    assert subscriber._semaphore is not None
-    assert subscriber._semaphore._value == 2  # Back to full capacity
+    # The first lease must be released despite the exception, so a second
+    # message is admitted under the max_messages=1 cap.
+    await server.publish(channel="chan1", message=InMemorySentMessage(payload=b"2"))
+    await asyncio.wait_for(second_ack_event.wait(), timeout=1.0)
 
     await subscriber.close()
 
 
-async def test_server_subscribe_concurrency_limit() -> None:
+async def test_subscriber_close_requeues_message_waiting_for_intake() -> None:
+    server = InMemoryServer()
+    await server.connect()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    finished = asyncio.Event()
+
+    async def callback(msg: InMemoryReceivedMessage) -> None:
+        entered.set()
+        await release.wait()
+        await msg.ack()
+        finished.set()
+
+    subscriber = await server.subscribe(
+        channels_to_callbacks={
+            "chan1": cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], callback),
+        },
+        dispatcher=SubscriberDispatcher(MessageLimits(max_messages=1)),
+    )
+    await server.publish(channel="chan1", message=InMemorySentMessage(payload=b"first"))
+    await asyncio.wait_for(entered.wait(), timeout=1)
+    await server.publish(channel="chan1", message=InMemorySentMessage(payload=b"second"))
+
+    queue = server.queues["chan1"]
+    for _ in range(10):
+        if len(queue.processing) == 2:
+            break
+        await asyncio.sleep(0)
+    assert len(queue.processing) == 2
+
+    await subscriber.close()
+    assert queue.queue.get_nowait().payload == b"second"
+
+    release.set()
+    await asyncio.wait_for(finished.wait(), timeout=1)
+
+
+async def test_server_subscribe_message_limit() -> None:
     server = InMemoryServer()
     await server.connect()
 
@@ -300,7 +347,7 @@ async def test_server_subscribe_concurrency_limit() -> None:
                     callback,
                 ),
             },
-            concurrency_limit=2,
+            dispatcher=SubscriberDispatcher(MessageLimits(max_messages=2)),
         ),
     )
 
@@ -308,12 +355,12 @@ async def test_server_subscribe_concurrency_limit() -> None:
 
     await asyncio.wait_for(ack_event.wait(), timeout=1.0)
 
-    assert subscriber._semaphore is not None  # Implementation detail check
+    assert subscriber._dispatcher.native_message_limit("chan1") == 2
 
     await subscriber.close()
 
 
-async def test_server_subscribe_no_concurrency_limit() -> None:
+async def test_server_subscribe_no_limits() -> None:
     server = InMemoryServer()
     await server.connect()
 
@@ -329,11 +376,10 @@ async def test_server_subscribe_no_concurrency_limit() -> None:
                     callback,
                 ),
             },
-            concurrency_limit=0,
         ),
     )
 
-    assert subscriber._semaphore is None
+    assert subscriber._dispatcher.native_message_limit("chan1") is None
 
     await subscriber.close()
 
@@ -384,6 +430,78 @@ async def test_subscriber_close_twice() -> None:
     )
     await subscriber.close()
     await subscriber.close()  # Should be fine
+
+
+async def test_subscribe_limits_hold_worker_and_channel_budgets() -> None:
+    server = InMemoryServer()
+    await server.connect()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    completed = asyncio.Event()
+    payloads: list[bytes] = []
+
+    async def callback(message: InMemoryReceivedMessage) -> None:
+        payloads.append(message.payload)
+        entered.set()
+        await release.wait()
+        await message.ack()
+        if len(payloads) == 3:
+            completed.set()
+
+    subscriber = await server.subscribe(
+        channels_to_callbacks={
+            "a": cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], callback),
+            "b": cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], callback),
+        },
+        dispatcher=SubscriberDispatcher(
+            MessageLimits(max_payload_bytes=3),
+            {"a": MessageLimits(max_messages=1)},
+        ),
+    )
+    await server.publish(channel="a", message=InMemorySentMessage(payload=b"aa"))
+    await server.publish(channel="a", message=InMemorySentMessage(payload=b"c"))
+    await server.publish(channel="b", message=InMemorySentMessage(payload=b"bb"))
+
+    await asyncio.wait_for(entered.wait(), timeout=1)
+    await asyncio.sleep(0)
+    assert payloads == [b"aa"]
+
+    release.set()
+    await asyncio.wait_for(completed.wait(), timeout=1)
+    await subscriber.close()
+
+
+async def test_subscriber_pause_channel_keeps_other_channels_active() -> None:
+    server = InMemoryServer()
+    await server.connect()
+    received: list[str] = []
+
+    async def callback(message: InMemoryReceivedMessage) -> None:
+        received.append(message.channel)
+        await message.ack()
+
+    subscriber = cast(
+        InMemorySubscriber,
+        await server.subscribe(
+            channels_to_callbacks={
+                "a": cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], callback),
+                "b": cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], callback),
+            },
+        ),
+    )
+    await subscriber.pause_channel("a")
+    await server.publish(channel="a", message=InMemorySentMessage(payload=b"a"))
+    await server.publish(channel="b", message=InMemorySentMessage(payload=b"b"))
+
+    for _ in range(10):
+        await asyncio.sleep(0.01)
+    assert received == ["b"]
+
+    await subscriber.resume_channel("a")
+    for _ in range(10):
+        await asyncio.sleep(0.01)
+    assert received == ["b", "a"]
+    await subscriber.close()
 
 
 async def test_supervisor_cancellation() -> None:

@@ -620,6 +620,24 @@ async def test_receiver_link_settle_delivery_sends_disposition_and_releases_cred
     assert receiver.link_credit == 1
 
 
+async def test_receiver_link_deferred_credit_survives_early_settlement(
+    receiver: ReceiverLink,
+) -> None:
+    receiver._state_machine.transition_sync("send_attach")
+    receiver._state_machine.transition_sync("recv_attach")
+    cast(Any, receiver.session.connection).sent.clear()
+    receiver._prefetch = 1
+    receiver._link_credit = 0
+    receiver._credit_pending_delivery_ids.add(42)
+    receiver.defer_delivery_credit(42)
+
+    await receiver.settle_delivery(42, Accepted())
+
+    assert receiver.link_credit == 0
+    await receiver.release_delivery_credit(42)
+    assert receiver.link_credit == 1
+
+
 async def test_receiver_link_multi_frame_uses_first_transfer_delivery_metadata(
     receiver: ReceiverLink,
 ) -> None:

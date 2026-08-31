@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable, Coroutine, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, overload
 
@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from repid.converter import ConverterT
     from repid.data import Channel, ExternalDocs, Tag
     from repid.data.message_schema import ActorMessageMetadata
+    from repid.limits import ActorLimits, LimitPolicyT
 
 
 class RoutingStrategyT(Protocol):
@@ -51,6 +52,18 @@ def catch_all_routing_strategy(*, actor_name: str, **_: Any) -> Callable[[BaseMe
     return strategy
 
 
+def _channel_has_docs(channel: Channel) -> bool:
+    return any(
+        (
+            channel.title,
+            channel.summary,
+            channel.description,
+            channel.bindings,
+            channel.external_docs,
+        ),
+    )
+
+
 YourFunc = TypeVar("YourFunc", bound=Callable)
 ExplicitFunc = TypeVar("ExplicitFunc", bound=Callable[..., Coroutine[Any, Any, ManualActionT]])
 
@@ -63,6 +76,8 @@ class _ActorDefinition:
     confirmation_mode: Literal["auto", "always_ack", "ack_first", "manual", "manual_explicit"]
     routing_strategy: RoutingStrategyT
     channel: Channel | str | None
+    limits: ActorLimits | None
+    limit_policies: Sequence[LimitPolicyT]
     middlewares: Sequence[ActorMiddlewareT] | None
     timeout: float | None
     keep_alive: bool | float | None
@@ -91,6 +106,8 @@ class _IncludedRouter:
 @dataclass(slots=True, kw_only=True, frozen=True)
 class _RouterDefaults:
     channel: Channel | str | _NotSet
+    limits: tuple[ActorLimits, ...]
+    limit_policies: tuple[LimitPolicyT, ...]
     middlewares: tuple[ActorMiddlewareT, ...]
     timeout: float | _NotSet
     keep_alive: bool | float | _NotSet | None
@@ -102,6 +119,8 @@ class _RouterDefaults:
     def empty(cls) -> _RouterDefaults:
         return cls(
             channel=NotSet,
+            limits=(),
+            limit_policies=(),
             middlewares=(),
             timeout=NotSet,
             keep_alive=NotSet,
@@ -124,6 +143,8 @@ class Router:
         "channel",
         "converter",
         "keep_alive",
+        "limit_policies",
+        "limits",
         "middlewares",
         "pool_executor",
         "run_in_process",
@@ -134,6 +155,8 @@ class Router:
         self,
         *,
         channel: str | Channel = NotSet,
+        limits: ActorLimits | None = None,
+        limit_policies: Sequence[LimitPolicyT] = (),
         middlewares: Sequence[ActorMiddlewareT] | None = None,
         timeout: float = NotSet,
         keep_alive: bool | float | None = NotSet,
@@ -143,6 +166,8 @@ class Router:
     ) -> None:
         self._entries: list[_ActorDefinition | _IncludedRouter] = []
         self.channel = channel
+        self.limits = limits
+        self.limit_policies = tuple(limit_policies)
         self.middlewares = middlewares
         self.timeout = timeout
         self.keep_alive = keep_alive
@@ -219,6 +244,8 @@ class Router:
     def _merge_defaults(self, defaults: _RouterDefaults) -> _RouterDefaults:
         return _RouterDefaults(
             channel=(defaults.channel if isinstance(self.channel, _NotSet) else self.channel),
+            limits=(*defaults.limits, self.limits) if self.limits is not None else defaults.limits,
+            limit_policies=(*defaults.limit_policies, *self.limit_policies),
             middlewares=(
                 defaults.middlewares
                 if self.middlewares is None
@@ -245,29 +272,38 @@ class Router:
 
     @staticmethod
     def _add_channel(channels: dict[str, Channel], channel: Channel) -> None:
+        """Register a channel, merging into an already-registered twin.
+
+        Merge precedence when both sides declare the same address:
+
+        - distinct non-``None`` limits objects are a conflict and raise;
+        - custom limit policies compose and deduplicate by identity;
+        - otherwise the side carrying AsyncAPI docs (title, summary, ...)
+          provides the channel identity, defaulting to the earlier one;
+        - limits and backpressure are taken from whichever side defines them.
+        """
         if channel.address not in channels:
             channels[channel.address] = channel
             return
 
         existing = channels[channel.address]
-        if not any(
-            (
-                existing.title,
-                existing.summary,
-                existing.description,
-                existing.bindings,
-                existing.external_docs,
-            ),
-        ) and any(
-            (
-                channel.title,
-                channel.summary,
-                channel.description,
-                channel.bindings,
-                channel.external_docs,
-            ),
+        if (
+            existing.limits is not None
+            and channel.limits is not None
+            and existing.limits is not channel.limits
         ):
-            channels[channel.address] = channel
+            raise ValueError(f"Conflicting limits for channel {channel.address!r}.")
+        # Keep whichever side carries docs, then merge limits from whichever
+        # side defines them.
+        selected = (
+            channel if _channel_has_docs(channel) and not _channel_has_docs(existing) else existing
+        )
+        policies = (*existing.limit_policies, *channel.limit_policies)
+        channels[channel.address] = replace(
+            selected,
+            limits=existing.limits if existing.limits is not None else channel.limits,
+            limit_policies=tuple({id(policy): policy for policy in policies}.values()),
+        )
 
     def _materialize_actor(
         self,
@@ -343,6 +379,12 @@ class Router:
             routing_strategy=actual_routing_strategy,
             middleware_pipeline=middleware_pipeline,
             channel_address=channel_address,
+            limits=(
+                (*defaults.limits, definition.limits)
+                if definition.limits is not None
+                else defaults.limits
+            ),
+            limit_policies=(*defaults.limit_policies, *definition.limit_policies),
             timeout=timeout_val,
             keep_alive=keep_alive_val,
             converter=converter_cls(
@@ -402,6 +444,8 @@ class Router:
         confirmation_mode: Literal["auto"] = "auto",
         routing_strategy: RoutingStrategyT = topic_based_routing_strategy,
         channel: Channel | str | None = None,
+        limits: ActorLimits | None = None,
+        limit_policies: Sequence[LimitPolicyT] = (),
         middlewares: Sequence[ActorMiddlewareT] | None = None,
         timeout: float | None = None,
         keep_alive: bool | float | None = None,
@@ -431,6 +475,8 @@ class Router:
         confirmation_mode: Literal["auto"] = "auto",
         routing_strategy: RoutingStrategyT = topic_based_routing_strategy,
         channel: Channel | str | None = None,
+        limits: ActorLimits | None = None,
+        limit_policies: Sequence[LimitPolicyT] = (),
         middlewares: Sequence[ActorMiddlewareT] | None = None,
         timeout: float | None = None,
         keep_alive: bool | float | None = None,
@@ -460,6 +506,8 @@ class Router:
         confirmation_mode: Literal["always_ack", "ack_first"],
         routing_strategy: RoutingStrategyT = topic_based_routing_strategy,
         channel: Channel | str | None = None,
+        limits: ActorLimits | None = None,
+        limit_policies: Sequence[LimitPolicyT] = (),
         middlewares: Sequence[ActorMiddlewareT] | None = None,
         timeout: float | None = None,
         keep_alive: bool | float | None = None,
@@ -488,6 +536,8 @@ class Router:
         confirmation_mode: Literal["always_ack", "ack_first"],
         routing_strategy: RoutingStrategyT = topic_based_routing_strategy,
         channel: Channel | str | None = None,
+        limits: ActorLimits | None = None,
+        limit_policies: Sequence[LimitPolicyT] = (),
         middlewares: Sequence[ActorMiddlewareT] | None = None,
         timeout: float | None = None,
         keep_alive: bool | float | None = None,
@@ -516,6 +566,8 @@ class Router:
         confirmation_mode: Literal["manual"],
         routing_strategy: RoutingStrategyT = topic_based_routing_strategy,
         channel: Channel | str | None = None,
+        limits: ActorLimits | None = None,
+        limit_policies: Sequence[LimitPolicyT] = (),
         middlewares: Sequence[ActorMiddlewareT] | None = None,
         timeout: float | None = None,
         keep_alive: bool | float | None = None,
@@ -545,6 +597,8 @@ class Router:
         confirmation_mode: Literal["manual"],
         routing_strategy: RoutingStrategyT = topic_based_routing_strategy,
         channel: Channel | str | None = None,
+        limits: ActorLimits | None = None,
+        limit_policies: Sequence[LimitPolicyT] = (),
         middlewares: Sequence[ActorMiddlewareT] | None = None,
         timeout: float | None = None,
         keep_alive: bool | float | None = None,
@@ -574,6 +628,8 @@ class Router:
         confirmation_mode: Literal["manual_explicit"],
         routing_strategy: RoutingStrategyT = topic_based_routing_strategy,
         channel: Channel | str | None = None,
+        limits: ActorLimits | None = None,
+        limit_policies: Sequence[LimitPolicyT] = (),
         middlewares: Sequence[ActorMiddlewareT] | None = None,
         timeout: float | None = None,
         keep_alive: bool | float | None = None,
@@ -603,6 +659,8 @@ class Router:
         confirmation_mode: Literal["manual_explicit"],
         routing_strategy: RoutingStrategyT = topic_based_routing_strategy,
         channel: Channel | str | None = None,
+        limits: ActorLimits | None = None,
+        limit_policies: Sequence[LimitPolicyT] = (),
         middlewares: Sequence[ActorMiddlewareT] | None = None,
         timeout: float | None = None,
         keep_alive: bool | float | None = None,
@@ -637,6 +695,8 @@ class Router:
         ] = "auto",
         routing_strategy: RoutingStrategyT = topic_based_routing_strategy,
         channel: Channel | str | None = None,
+        limits: ActorLimits | None = None,
+        limit_policies: Sequence[LimitPolicyT] = (),
         middlewares: Sequence[ActorMiddlewareT] | None = None,
         timeout: float | None = None,
         keep_alive: bool | float | None = None,
@@ -686,6 +746,10 @@ class Router:
             channel (Channel | str | None, optional):
                 AsyncAPI channel for this actor.
                 Defaults to Router's default channel.
+            limits (ActorLimits | None, optional): Built-in numeric execution
+                limits composed with enclosing routers.
+            limit_policies (Sequence[LimitPolicyT], optional): Application-defined
+                limit policies composed with enclosing routers.
             middlewares (Sequence[ActorMiddlewareT] | None, optional):
                 Sequence of middlewares to apply to this actor.
                 If specified, concatenated with Router's default middlewares.
@@ -750,6 +814,8 @@ class Router:
                 confirmation_mode=confirmation_mode,
                 routing_strategy=routing_strategy,
                 channel=channel,
+                limits=limits,
+                limit_policies=limit_policies,
                 middlewares=middlewares,
                 timeout=timeout,
                 keep_alive=keep_alive,
@@ -806,6 +872,8 @@ class Router:
                 confirmation_mode=confirmation_mode,
                 routing_strategy=routing_strategy,
                 channel=channel,
+                limits=limits,
+                limit_policies=limit_policies,
                 middlewares=middlewares,
                 timeout=timeout,
                 keep_alive=keep_alive,

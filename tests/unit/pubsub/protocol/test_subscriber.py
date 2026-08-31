@@ -8,6 +8,8 @@ import grpc
 import grpc.aio
 import pytest
 
+from repid.admission import MessageLimits
+from repid.connections import SubscriberDispatcher
 from repid.connections.pubsub.message_broker import PubsubServer
 from repid.connections.pubsub.protocol._helpers import ChannelConfig, QueuedDelivery
 from repid.connections.pubsub.protocol.credentials import InsecureCredentials
@@ -31,7 +33,6 @@ def _make_subscriber(**overrides: Any) -> PubsubSubscriber:
         "server": MagicMock(spec=PubsubServer),
         "stream_ack_deadline_seconds": 10,
         "client_id": "test-client",
-        "concurrency_limit": 1,
     }
     defaults.update(overrides)
     return PubsubSubscriber(**defaults)
@@ -58,7 +59,6 @@ async def test_create_starts_background_tasks() -> None:
         server=MagicMock(spec=PubsubServer),
         stream_ack_deadline_seconds=10,
         client_id="id",
-        concurrency_limit=1,
     )
     assert sub.is_active
     assert sub._task is not None
@@ -165,7 +165,9 @@ async def test_request_iterator_initial_request() -> None:
     sub = _make_subscriber(
         stream_ack_deadline_seconds=20,
         client_id="cid",
-        concurrency_limit=5,
+        dispatcher=SubscriberDispatcher(
+            MessageLimits(max_messages=5, max_payload_bytes=7),
+        ),
     )
     config = _make_config(subscription_path="sub/1")
 
@@ -240,7 +242,7 @@ async def test_execute_callback_success() -> None:
     msg = MagicMock()
     sub._in_flight_messages.add(msg)
     callback = AsyncMock()
-    delivery = QueuedDelivery(callback=callback, message=msg)
+    delivery = QueuedDelivery(callback=callback, message=msg, lease=AsyncMock())
 
     await sub._execute_callback(delivery)
 
@@ -256,6 +258,7 @@ async def test_execute_callback_exception_nacks_unacted_message() -> None:
     delivery = QueuedDelivery(
         callback=AsyncMock(side_effect=ValueError("boom")),
         message=msg,
+        lease=AsyncMock(),
     )
 
     await sub._execute_callback(delivery)
@@ -271,6 +274,7 @@ async def test_execute_callback_exception_skips_nack_when_acted_on() -> None:
     delivery = QueuedDelivery(
         callback=AsyncMock(side_effect=ValueError("boom")),
         message=msg,
+        lease=AsyncMock(),
     )
 
     await sub._execute_callback(delivery)
@@ -286,6 +290,7 @@ async def test_execute_callback_cancelled_rejects_unacted_message() -> None:
     delivery = QueuedDelivery(
         callback=AsyncMock(side_effect=asyncio.CancelledError),
         message=msg,
+        lease=AsyncMock(),
     )
     with pytest.raises(asyncio.CancelledError):
         await sub._execute_callback(delivery)
@@ -301,6 +306,7 @@ async def test_execute_callback_cancelled_skips_reject_when_acted_on() -> None:
     delivery = QueuedDelivery(
         callback=AsyncMock(side_effect=asyncio.CancelledError),
         message=msg,
+        lease=AsyncMock(),
     )
     with pytest.raises(asyncio.CancelledError):
         await sub._execute_callback(delivery)
@@ -314,7 +320,7 @@ async def test_dispatch_loop_dispatches_and_cancels() -> None:
     sub = _make_subscriber()
     callback = AsyncMock()
     msg = MagicMock()
-    delivery = QueuedDelivery(callback=callback, message=msg)
+    delivery = QueuedDelivery(callback=callback, message=msg, lease=AsyncMock())
     await sub._delivery_queue.put(delivery)
 
     task = asyncio.create_task(sub._dispatch_loop())
@@ -375,29 +381,6 @@ async def test_task_property_returns_task() -> None:
         await sub._task  # type: ignore[misc]
 
 
-# --- _cancel_callback_tasks ---
-
-
-def test_cancel_callback_tasks_empty() -> None:
-    sub = _make_subscriber()
-    result = sub._cancel_callback_tasks()
-    assert result == []
-
-
-def test_cancel_callback_tasks_cancels_all() -> None:
-    sub = _make_subscriber()
-    t1, t2 = MagicMock(), MagicMock()
-    sub._callback_tasks.add(t1)
-    sub._callback_tasks.add(t2)
-
-    result = sub._cancel_callback_tasks()
-
-    assert len(result) == 2
-    t1.cancel.assert_called_once()
-    t2.cancel.assert_called_once()
-    assert len(sub._callback_tasks) == 0
-
-
 # --- close ---
 
 
@@ -427,21 +410,20 @@ async def test_close_cancels_main_task() -> None:
 
 async def test_close_cancels_pending_callbacks() -> None:
     sub = _make_subscriber()
-    t = MagicMock()
-    sub._callback_tasks.add(t)
+    task = asyncio.create_task(asyncio.sleep(10))
+    sub._callback_tasks.add(task)
+    await asyncio.sleep(0)
 
-    with patch("asyncio.wait", return_value=(set(), set())):
-        await sub.close()
+    await sub.close()
 
-    t.cancel.assert_called_once()
-    assert len(sub._callback_tasks) == 0
+    assert task.cancelled()
 
 
 async def test_close_rejects_delivery_queue_messages() -> None:
     sub = _make_subscriber()
     msg = MagicMock()
     msg.is_acted_on = False
-    delivery = QueuedDelivery(callback=AsyncMock(), message=msg)
+    delivery = QueuedDelivery(callback=AsyncMock(), message=msg, lease=AsyncMock())
     await sub._delivery_queue.put(delivery)
 
     await sub.close()
@@ -731,3 +713,55 @@ async def test_process_background_runs_all_tasks() -> None:
 
         mock_stream.assert_called_once_with(config)
         mock_dispatch.assert_called_once()
+
+
+async def test_process_background_cancels_siblings_after_fatal_stream_error() -> None:
+    fatal_config = _make_config(channel="fatal")
+    sibling_config = _make_config(channel="sibling")
+    sub = _make_subscriber(channel_configs=[fatal_config, sibling_config])
+    sibling_started = asyncio.Event()
+    dispatch_started = asyncio.Event()
+    sibling_cancelled = asyncio.Event()
+    dispatch_cancelled = asyncio.Event()
+    sibling_finished = asyncio.Event()
+    dispatch_finished = asyncio.Event()
+    release = asyncio.Event()
+
+    async def stream(config: ChannelConfig) -> None:
+        if config is fatal_config:
+            await asyncio.gather(sibling_started.wait(), dispatch_started.wait())
+            raise RuntimeError("fatal")
+        sibling_started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            sibling_cancelled.set()
+            raise
+        finally:
+            sibling_finished.set()
+
+    async def dispatch() -> None:
+        dispatch_started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            dispatch_cancelled.set()
+            raise
+        finally:
+            dispatch_finished.set()
+
+    try:
+        with (
+            patch.object(sub, "_streaming_pull_loop", side_effect=stream),
+            patch.object(sub, "_dispatch_loop", side_effect=dispatch),
+        ):
+            with pytest.raises(RuntimeError, match="fatal"):
+                await sub._process_background()
+            assert sibling_cancelled.is_set()
+            assert dispatch_cancelled.is_set()
+    finally:
+        release.set()
+        await asyncio.wait_for(
+            asyncio.gather(sibling_finished.wait(), dispatch_finished.wait()),
+            timeout=1,
+        )

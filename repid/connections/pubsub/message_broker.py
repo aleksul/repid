@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 import grpc.aio
 
+from repid.connections._subscriber import SubscriberDispatcher
 from repid.connections.abc import CapabilitiesT, ReceivedMessageT, SentMessageT, SubscriberT
 
 from .helpers import ChannelOverride
@@ -229,6 +230,7 @@ class PubsubServer:
         return {
             "supports_native_reply": False,
             "supports_lightweight_pause": False,
+            "supports_channel_pause": False,
             "supports_keep_alive": True,
         }
 
@@ -359,13 +361,13 @@ class PubsubServer:
         self,
         *,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        dispatcher: SubscriberDispatcher | None = None,
     ) -> SubscriberT:
         """Subscribe to Pub/Sub channels.
 
         Args:
             channels_to_callbacks: Mapping of channel names to callback functions.
-            concurrency_limit: Maximum concurrent message processing (None=unlimited).
+            dispatcher: Prepared intake and callback dispatch strategy.
 
         Returns:
             A subscriber that can be used to manage the subscription.
@@ -373,6 +375,7 @@ class PubsubServer:
         Raises:
             ConnectionError: If not connected.
         """
+        dispatcher = dispatcher or SubscriberDispatcher()
         if not self.is_connected or self._channel is None:
             raise ConnectionError("PubSub server is not connected.")
 
@@ -399,7 +402,7 @@ class PubsubServer:
             resilience_state=self._resilience_state,
             stream_ack_deadline_seconds=self._stream_ack_deadline_seconds,
             client_id=self._client_id,
-            concurrency_limit=concurrency_limit,
+            dispatcher=dispatcher,
             server=self,
         )
         self._active_subscribers.append(subscriber)

@@ -4,14 +4,16 @@ import asyncio
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, TypedDict
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, TypedDict, runtime_checkable
 
 from repid.data.message import MessageData
 
 if TYPE_CHECKING:
     from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
+    from repid.connections._subscriber import SubscriberDispatcher
     from repid.data import ExternalDocs, Tag
+    from repid.limits import BackpressureResource
 
 
 class MessageAction(str, Enum):
@@ -87,6 +89,7 @@ class ReceivedMessageT(BaseMessageT, Protocol):
 class CapabilitiesT(TypedDict):
     supports_native_reply: bool
     supports_lightweight_pause: bool
+    supports_channel_pause: bool
     supports_keep_alive: bool
 
 
@@ -102,6 +105,22 @@ class SubscriberT(Protocol):
     async def resume(self) -> None: ...
 
     async def close(self) -> None: ...
+
+
+@runtime_checkable
+class ChannelPausableSubscriberT(Protocol):
+    async def pause_channel(self, channel: str) -> None: ...
+
+    async def resume_channel(self, channel: str) -> None: ...
+
+
+@runtime_checkable
+class NativeFlowControlSubscriberT(Protocol):
+    def supports_native_flow_control(
+        self,
+        channel: str,
+        resource: BackpressureResource,
+    ) -> bool: ...
 
 
 class ServerT(Protocol):
@@ -173,5 +192,5 @@ class ServerT(Protocol):
         self,
         *,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        dispatcher: SubscriberDispatcher | None = None,
     ) -> SubscriberT: ...

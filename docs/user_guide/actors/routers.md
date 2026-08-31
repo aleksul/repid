@@ -25,9 +25,11 @@ from repid import Router
 # and have a timeout of 10 seconds.
 router = Router(channel="background_jobs", timeout=10.0)
 
+
 @router.actor()  # Inherits "background_jobs" and 10s timeout
 async def task_a():
     pass
+
 
 @router.actor(timeout=30.0)  # Overrides timeout, but inherits "background_jobs"
 async def task_b():
@@ -48,9 +50,11 @@ configuration!
 parent_router = Router(channel="main_queue", timeout=60.0)
 child_router = Router()
 
+
 @child_router.actor()
 async def my_nested_actor():
     pass
+
 
 # The child_router will now inherit `channel="main_queue"` and `timeout=60.0`
 parent_router.include_router(child_router)

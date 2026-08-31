@@ -89,6 +89,7 @@ app = Repid()
 server = AmqpServer("amqp://localhost")
 app.servers.register_server("my_rabbitmq", server, is_default=True)
 
+
 async def main():
     # Retrieve the default server and open a connection
     async with app.servers.default.connection():
@@ -96,8 +97,9 @@ async def main():
         await app.send_message_json(
             channel="default_queue",
             payload={"message": "Hello, Repid!"},
-            headers={"topic": "my_actor"} # Don't forget the topic if using topic routing!
+            headers={"topic": "my_actor"},  # Don't forget the topic if using topic routing!
         )
+
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -132,11 +134,14 @@ app.servers.register_server("my_rabbitmq", server, is_default=True)
 # 2. Create a router and an actor
 router = Router()
 
+
 @router.actor(channel="default_queue")
 async def my_action(message: str):
     print(f"Executing with payload: {message}")
 
+
 app.include_router(router)
+
 
 # 3. Start the worker loop!
 async def run_worker():
@@ -144,6 +149,7 @@ async def run_worker():
     async with app.servers.default.connection():
         # Blocks forever, constantly pulling new messages and running actors
         await app.run_worker()
+
 
 if __name__ == "__main__":
     asyncio.run(run_worker())

@@ -17,13 +17,13 @@ from repid import Repid, Router, Depends
 app = Repid()
 router = Router()
 
+
 def dependency_function() -> str:
     return "Hello!"
 
+
 @router.actor
-async def my_actor(
-    my_dependency: Annotated[str, Depends(dependency_function)]
-) -> None:
+async def my_actor(my_dependency: Annotated[str, Depends(dependency_function)]) -> None:
     print(my_dependency)  # Will print `Hello!`
 ```
 
@@ -37,18 +37,17 @@ from repid import Depends, Router
 
 router = Router()
 
+
 def subdependency_function() -> str:
     return "world!"
 
-def dependency_function(
-    sub: Annotated[str, Depends(subdependency_function)]
-) -> str:
+
+def dependency_function(sub: Annotated[str, Depends(subdependency_function)]) -> str:
     return "Hello " + sub
 
+
 @router.actor
-async def my_actor(
-    my_dependency: Annotated[str, Depends(dependency_function)]
-) -> None:
+async def my_actor(my_dependency: Annotated[str, Depends(dependency_function)]) -> None:
     print(my_dependency)  # Will print `Hello world!`
 ```
 
@@ -66,23 +65,25 @@ dependencies, combining all requested fields into one big model that is parsed s
 from repid import Header
 from typing import Annotated
 
+
 async def verify_user(
     # These fields must exist in the payload
     user_id: int,
     verification_token: str,
     # This will extract a header
-    correlation_id: Annotated[str | None, Header(alias="X-Correlation-ID")] = None
+    correlation_id: Annotated[str | None, Header(alias="X-Correlation-ID")] = None,
 ):
     if user_id <= 0:
         raise ValueError("Invalid user_id")
     return True
+
 
 @router.actor
 async def update_user(
     # user_id is requested by BOTH the actor and the dependency!
     user_id: int,
     # The dependency requires verification_token, so it becomes required in the payload!
-    is_verified: Annotated[bool, Depends(verify_user)]
+    is_verified: Annotated[bool, Depends(verify_user)],
 ):
     # `user_id` and `verification_token` from the payload were passed to `verify_user` first!
     return f"User {user_id} is verified: {is_verified}"
@@ -99,6 +100,7 @@ async def dependency_function() -> str:
     await asyncio.sleep(0.1)  # Imitates some async work
     return "Hello world!"
 
+
 Depends(dependency_function)
 ```
 
@@ -107,6 +109,7 @@ Depends(dependency_function)
 ```python hl_lines="1"
 def dependency_function() -> str:
     return "Hello world!"
+
 
 Depends(dependency_function)
 ```
@@ -130,6 +133,7 @@ def dependency_function() -> int:
     # some CPU-heavy computation here
     return 123
 
+
 Depends(dependency_function, run_in_process=True)
 ```
 
@@ -147,13 +151,13 @@ You can override a dependency globally.
 def dependency_function() -> str:
     return "Hello!"
 
+
 d = Depends(dependency_function)
 
 d.override(lambda: "Overridden!")
 
+
 @router.actor
-async def my_actor(
-    my_dependency: Annotated[str, d]
-) -> None:
+async def my_actor(my_dependency: Annotated[str, d]) -> None:
     print(my_dependency)  # Will print `Overridden!`
 ```

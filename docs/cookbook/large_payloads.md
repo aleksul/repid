@@ -46,6 +46,7 @@ from repid import Repid
 
 # Assuming `app` is your initialized and configured Repid instance
 
+
 async def enqueue_audience_processing(job_id: int, s3_key: str) -> None:
     await app.send_message_json(
         channel="process_audience",
@@ -72,15 +73,12 @@ from repid import Router
 
 router = Router()
 
+
 def _heavy_computation(file_data: bytes) -> bytes:  # (1)!
     df = pl.read_csv(io.BytesIO(file_data))
 
     # Perform heavy lifting: e.g., aggregations and deduplication
-    summary_df = (
-        df.unique(subset=["email"])
-        .group_by("country")
-        .agg(pl.len().alias("user_count"))
-    )
+    summary_df = df.unique(subset=["email"]).group_by("country").agg(pl.len().alias("user_count"))
 
     buffer = io.BytesIO()
     summary_df.write_csv(buffer)

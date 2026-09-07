@@ -14,16 +14,17 @@ from repid import Repid, InMemoryServer
 app = Repid()
 app.servers.register_server("default", InMemoryServer(), is_default=True)
 
+
 async def main():
     # A connection must be active to publish!
     async with app.servers.default.connection():
-
         await app.send_message(
             channel="my_channel",
             payload=b"Hello, world!",
             content_type="text/plain",
-            headers={"topic": "my_actor"}  # Routing topic
+            headers={"topic": "my_actor"},  # Routing topic
         )
+
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -42,7 +43,7 @@ await app.send_message_json(
         "to": "user@example.com",
         "subject": "Welcome!",
     },
-    headers={"topic": "send_welcome_email"}
+    headers={"topic": "send_welcome_email"},
 )
 ```
 
@@ -62,9 +63,7 @@ name of the actor function you want to execute
 
 ```python
 await app.send_message_json(
-    channel="email_queue",
-    payload={"msg": "hi"},
-    headers={"topic": "send_welcome_email"}
+    channel="email_queue", payload={"msg": "hi"}, headers={"topic": "send_welcome_email"}
 )
 ```
 
@@ -78,16 +77,13 @@ You can register an `operation_id` to a specific channel in Repid's message regi
 ```python
 # During setup, tell Repid that the "send_welcome_email" operation
 # happens on "email_queue"
-app.messages.register_operation(
-    operation_id="send_welcome_email",
-    channel="email_queue"
-)
+app.messages.register_operation(operation_id="send_welcome_email", channel="email_queue")
 
 # Later, send by operation_id instead of channel!
 await app.send_message_json(
     operation_id="send_welcome_email",
     payload={"user_id": 123},
-    headers={"topic": "send_welcome_email"}
+    headers={"topic": "send_welcome_email"},
 )
 ```
 

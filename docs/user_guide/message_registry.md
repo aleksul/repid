@@ -21,7 +21,7 @@ app.messages.register_operation(
     operation_id="send_welcome_email",
     channel="email_queue",
     title="Send Welcome Email",
-    description="Publishes a message to send a welcome email to a newly registered user."
+    description="Publishes a message to send a welcome email to a newly registered user.",
 )
 ```
 
@@ -41,7 +41,7 @@ sending messages:
 await app.send_message_json(
     operation_id="send_welcome_email",
     payload={"user_id": 123},
-    headers={"topic": "send_email_actor"}
+    headers={"topic": "send_email_actor"},
 )
 ```
 
@@ -60,7 +60,7 @@ You can retrieve a registered operation to inspect its details:
 operation = app.messages.get_operation("send_welcome_email")
 
 print(operation.channel.address)  # "email_queue"
-print(operation.title)            # "Send Welcome Email"
+print(operation.title)  # "Send Welcome Email"
 ```
 
 ## Integration with AsyncAPI

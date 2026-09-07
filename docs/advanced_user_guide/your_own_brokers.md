@@ -15,7 +15,14 @@ Here is a simplified overview of what you need to implement:
 import asyncio
 from typing import Mapping, Sequence, Callable, Coroutine, Any
 from collections.abc import AbstractAsyncContextManager
-from repid.connections.abc import ServerT, SubscriberT, SentMessageT, ReceivedMessageT, CapabilitiesT
+from repid.connections.abc import (
+    ServerT,
+    SubscriberT,
+    SentMessageT,
+    ReceivedMessageT,
+    CapabilitiesT,
+)
+
 
 class MyCustomServer:
     # 1. Server Metadata Properties for AsyncAPI

@@ -39,25 +39,27 @@ app.servers.register_server("default", InMemoryServer(), is_default=True)
 # 2. Create a router and an actor
 router = Router()
 
+
 @router.actor(channel="tasks")
 async def my_awesome_actor(user_id: int) -> None:
     print(f"Processing for {user_id}")
     await asyncio.sleep(1.0)
 
+
 app.include_router(router)
+
 
 async def main() -> None:
     # 3. Open connection to interact with the queue
     async with app.servers.default.connection():
         # Producer: Send a message
         await app.send_message_json(
-            channel="tasks",
-            payload={"user_id": 123},
-            headers={"topic": "my_awesome_actor"}
+            channel="tasks", payload={"user_id": 123}, headers={"topic": "my_awesome_actor"}
         )
 
         # Consumer: Run the worker loop (in a real app, this would be a separate process)
         await app.run_worker(messages_limit=1)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

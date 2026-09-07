@@ -57,18 +57,18 @@ from pydantic import BaseModel, Field
 from annotated_types import Gt
 import uuid
 
+
 class UserAddress(BaseModel):
     city: str
     country: str
+
 
 @router.actor
 async def process_order(
     # Use annotated-types for simple constraints
     quantity: Annotated[int, Gt(0)],
-
     # Use Pydantic's Field for complex defaults (like UUIDs or timestamps)
     order_id: Annotated[str, Field(default_factory=lambda: uuid.uuid4().hex)],
-
     # Use nested Pydantic models for complex nested payload data
     shipping_address: UserAddress,
 ):
@@ -89,9 +89,11 @@ from typing import Annotated
 from pydantic import BaseModel
 from repid import FullPayload
 
+
 class UserPayload(BaseModel):
     user_id: int
     is_active: bool
+
 
 @router.actor
 async def process_user(user: Annotated[UserPayload, FullPayload()]):
@@ -112,11 +114,12 @@ dependency injection.
 from typing import Annotated
 from repid import Header
 
+
 @router.actor
 async def my_actor(
     payload_data: str,
     correlation_id: Annotated[str, Header(alias="correlation-id")],
-    custom_trace: Annotated[str | None, Header()] = None
+    custom_trace: Annotated[str | None, Header()] = None,
 ):
     print(f"Tracking: {correlation_id} / {custom_trace}")
 ```
@@ -137,6 +140,7 @@ To use the lightweight `BasicConverter` even when Pydantic is installed:
 from repid import Router, BasicConverter
 
 router = Router(converter=BasicConverter)  # (1)
+
 
 @router.actor
 async def my_actor(user_id: int, is_active: bool):

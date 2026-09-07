@@ -62,15 +62,13 @@ app = Repid()
 broker = AmqpServer("amqp://localhost")
 app.servers.register_server("rabbitmq_default", broker, is_default=True)
 
+
 async def main():
     async with app.servers.default.connection():
         await app.run_worker(
-            asyncapi_server=AsyncAPIServerSettings(
-                address="0.0.0.0",
-                port=8081,
-                endpoint_name="/"
-            )
+            asyncapi_server=AsyncAPIServerSettings(address="0.0.0.0", port=8081, endpoint_name="/")
         )
+
 
 asyncio.run(main())
 ```

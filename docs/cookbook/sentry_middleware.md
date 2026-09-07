@@ -23,6 +23,7 @@ from repid.data import ActorData
 
 T = TypeVar("T")
 
+
 async def sentry_actor_middleware(
     call_next: Callable[[ReceivedMessageT, ActorData], Coroutine[None, None, T]],
     message: ReceivedMessageT,
@@ -62,6 +63,7 @@ sentry_sdk.init()  # (1)!
 app = Repid(actor_middlewares=[sentry_actor_middleware])  # (2)!
 
 router = Router()
+
 
 @router.actor(channel="my_queue")  # (3)!
 async def process_task(data: dict) -> None:

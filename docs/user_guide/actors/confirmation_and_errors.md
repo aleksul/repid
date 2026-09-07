@@ -29,7 +29,7 @@ acknowledge it even on failure:
 @router.actor(
     channel="tasks",
     confirmation_mode="auto",
-    on_error="reject"  # Can be "nack", "reject", or "ack"
+    on_error="reject",  # Can be "nack", "reject", or "ack"
 )
 async def my_actor():
     pass
@@ -44,6 +44,7 @@ def handle_error(exc: Exception) -> Literal["reject", "nack", "ack"]:
     if isinstance(exc, ValueError):
         return "reject"
     return "nack"
+
 
 @router.actor(channel="tasks", on_error=handle_error)
 async def my_smart_actor():
@@ -63,6 +64,7 @@ helps to prevent accidentally leaving a message without a confirmation.
 
 ```python
 from typing import Literal
+
 
 @router.actor(channel="tasks", confirmation_mode="manual_explicit")
 async def my_explicit_actor() -> Literal["ack", "nack", "reject", "no_action"]:
@@ -98,10 +100,7 @@ By default, in `manual` and `manual_explicit` modes `on_error` is set to
 directly:
 
 ```python
-@router.actor(
-    confirmation_mode="manual_explicit",
-    on_error="nack"
-)
+@router.actor(confirmation_mode="manual_explicit", on_error="nack")
 async def my_actor(payload: MyPydanticModel) -> Literal["ack", "nack", "reject", "no_action"]:
     # the actor body won't run if MyPydanticModel fails validation
     return "ack"

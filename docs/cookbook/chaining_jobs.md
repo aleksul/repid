@@ -21,6 +21,7 @@ app.servers.register_server("default", InMemoryServer(), is_default=True)
 
 router = Router()
 
+
 @router.actor(channel="registration")
 async def create_user(username: str, message: Message) -> None:
     # 1. Pretend we save to the database and generate an ID
@@ -32,24 +33,25 @@ async def create_user(username: str, message: Message) -> None:
     await message.send_message_json(
         channel="email",
         payload={"user_id": user_id, "username": username},
-        headers={"topic": "send_welcome_email"}
+        headers={"topic": "send_welcome_email"},
     )
 
     # The current message is automatically acknowledged when this actor finishes successfully.
+
 
 @router.actor(channel="email")
 async def send_welcome_email(user_id: int, username: str) -> None:
     print(f"Sending welcome email to User #{user_id} ({username})!")
 
+
 app.include_router(router)
+
 
 async def main() -> None:
     async with app.servers.default.connection():
         # Kick off the chain by sending the first message
         await app.send_message_json(
-            channel="registration",
-            payload={"username": "Alex"},
-            headers={"topic": "create_user"}
+            channel="registration", payload={"username": "Alex"}, headers={"topic": "create_user"}
         )
 
         # Process the queue.
@@ -57,6 +59,7 @@ async def main() -> None:
         # which will then enqueue the 'send_welcome_email' message,
         # which will then be processed in the next iteration!
         await app.run_worker(messages_limit=2)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

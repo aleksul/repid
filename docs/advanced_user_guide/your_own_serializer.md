@@ -12,10 +12,12 @@ It's a callable that takes `Any` data and returns `bytes`.
 from typing import Any
 import msgpack
 
+
 def my_custom_serializer(data: Any) -> bytes:
     # 1. Convert `data` into a storable string or binary format
     # 2. Return the encoded bytes
     return msgpack.packb(data)
+
 
 # You can also use a class with a `__call__` method:
 class MsgPackSerializer:
@@ -44,6 +46,7 @@ app = Repid(
 from repid import Repid
 
 app = Repid()
+
 
 async def main() -> None:
     await app.send_message_json(

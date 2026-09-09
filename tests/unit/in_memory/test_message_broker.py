@@ -1,7 +1,8 @@
 import asyncio
 import contextlib
 from collections.abc import Callable, Coroutine
-from typing import cast
+from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -28,6 +29,35 @@ def test_sent_message_properties() -> None:
     assert msg.reply_to == "reply_chan"
     assert msg.content_type == "text"
     assert msg.message_id == "msg_id"
+
+
+async def test_in_memory_subscriber_acks_duplicate_ids_after_header_mutation() -> None:
+    server = InMemoryServer()
+    received = 0
+    completed = asyncio.Event()
+
+    async def callback(message: ReceivedMessageT) -> None:
+        nonlocal received
+        received += 1
+        assert message.headers is not None
+        message.headers["mutated"] = "yes"
+        await message.ack()
+        if received == 2:
+            completed.set()
+
+    async with server.connection():
+        subscriber = await server.subscribe(channels_to_callbacks={"jobs": callback})
+        for _ in range(2):
+            await server.publish(
+                channel="jobs",
+                message=InMemorySentMessage(payload=b"same", headers={"key": "value"}),
+                server_specific_parameters={"message_id": "same-id"},
+            )
+        await asyncio.wait_for(completed.wait(), timeout=1)
+        await subscriber.close()
+
+    assert received == 2
+    assert not server.queues["jobs"].processing
 
 
 async def test_received_message_ack() -> None:

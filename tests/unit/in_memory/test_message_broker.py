@@ -1,8 +1,7 @@
 import asyncio
 import contextlib
 from collections.abc import Callable, Coroutine
-from typing import Any, cast
-from unittest.mock import AsyncMock
+from typing import cast
 
 import pytest
 

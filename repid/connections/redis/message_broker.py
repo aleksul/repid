@@ -370,7 +370,7 @@ class RedisSubscriber(SubscriberT):
             else None
         )
         self._callback_tasks: set[asyncio.Task[None]] = set()
-        self._in_flight_messages: set[str] = set()
+        self._in_flight_messages: set[tuple[str, str]] = set()
 
         self._task: asyncio.Task[None] | None = None
         self._claim_task: asyncio.Task[None] | None = None
@@ -521,7 +521,10 @@ class RedisSubscriber(SubscriberT):
         cfg = self._channels[channel]
         for msg_id_raw, fields in messages:
             msg_id = msg_id_raw.decode() if isinstance(msg_id_raw, bytes) else msg_id_raw
-            self._in_flight_messages.add(msg_id)
+            key = (channel, msg_id)
+            if key in self._in_flight_messages:
+                continue
+            self._in_flight_messages.add(key)
 
             payload, headers, content_type, reply_to = _parse_message_fields(fields)
 
@@ -569,7 +572,7 @@ class RedisSubscriber(SubscriberT):
             if not message.is_acted_on:
                 await message.nack()
         finally:
-            self._in_flight_messages.discard(message_id)
+            self._in_flight_messages.discard((message.channel, message_id))
             if self._semaphore is not None:
                 self._semaphore.release()
 

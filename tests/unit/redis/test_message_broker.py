@@ -988,9 +988,9 @@ async def test_redis_subscriber_in_flight_count() -> None:
         server=RedisServer("redis://localhost"),
     )
     assert sub.in_flight_count == 0
-    sub._in_flight_messages.add("1-0")
+    sub._in_flight_messages.add(("jobs", "1-0"))
     assert sub.in_flight_count == 1
-    sub._in_flight_messages.discard("1-0")
+    sub._in_flight_messages.discard(("jobs", "1-0"))
     assert sub.in_flight_count == 0
 
 
@@ -1558,3 +1558,65 @@ async def test_redis_server_connect_uses_async_retry(
 
     assert operation.await_count == expected_attempts
     on_failure.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        pytest.param("ack", id="ack"),
+        pytest.param("nack", id="nack"),
+        pytest.param("reject", id="reject"),
+    ],
+)
+async def test_redis_failed_confirmation_can_be_retried(
+    action: str,
+    pipeline_mock: tuple[MagicMock, MagicMock],
+    make_received_message: Any,
+) -> None:
+    client, pipe = pipeline_mock
+    client.xack.side_effect = [ConnectionError("offline"), None]
+    pipe.execute.side_effect = [ConnectionError("offline"), None]
+    message = make_received_message()
+
+    with pytest.raises(ConnectionError, match="offline"):
+        await getattr(message, action)()
+    assert not message.is_acted_on
+    await getattr(message, action)()
+    assert message.is_acted_on
+
+
+async def test_redis_reclaim_deduplicates_only_within_the_same_channel() -> None:
+    subscriber = RedisSubscriber(
+        redis_client=AsyncMock(),
+        channels={
+            channel: ChannelConfig(stream=channel, group="group", dlq=None)
+            for channel in ("first", "second")
+        },
+        callbacks={},
+        consumer_name="consumer",
+        concurrency_limit=None,
+        server=MagicMock(),
+    )
+    started: list[str] = []
+    release = asyncio.Event()
+
+    async def callback(message: ReceivedMessageT) -> None:
+        started.append(message.channel)
+        await message.ack()
+        await release.wait()
+
+    try:
+        for channel in ("first", "second", "first"):
+            await subscriber._process_stream_messages(
+                [(b"1-0", {b"payload": b"x"})],
+                channel,
+                channel,
+                callback,
+            )
+        await asyncio.sleep(0)
+        assert started == ["first", "second"]
+        assert subscriber.in_flight_count == 2
+    finally:
+        release.set()
+        await subscriber.close()
+    assert subscriber.in_flight_count == 0

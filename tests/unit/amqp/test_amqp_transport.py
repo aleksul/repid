@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 import struct
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -331,8 +332,13 @@ async def test_transport_connect_timeout() -> None:
         await transport.connect()
 
 
+@patch(
+    "asyncio.open_connection",
+    new=AsyncMock(
+        side_effect=socket.gaierror(socket.EAI_NONAME, "Name or service not known"),
+    ),
+)
 async def test_transport_connect_error() -> None:
-    # Use invalid host
     config = TransportConfig(
         host="invalid.host.that.does.not.exist",
         port=5672,

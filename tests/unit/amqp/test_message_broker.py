@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from typing import Any, ClassVar, cast
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -1017,6 +1018,109 @@ async def test_amqp_received_message_reply_requires_channel_or_reply_to() -> Non
 
     with pytest.raises(ValueError, match="Reply channel is not set"):
         await msg.reply(payload=b"response")
+
+
+async def test_amqp_connect_failure_closes_connection_and_can_retry(monkeypatch: Any) -> None:
+    server = AmqpServer("amqp://localhost:5672")
+
+    class DummyConnection:
+        def __init__(self, _config: ConnectionConfig, succeed: bool) -> None:
+            self.is_connected = False
+            self.closed = False
+            self._succeed = succeed
+            self.events = MagicMock()
+
+        async def connect(self) -> None:
+            if not self._succeed:
+                raise ConnectionError("offline")
+            self.is_connected = True
+
+        async def close(self) -> None:
+            self.closed = True
+
+    instances: list[DummyConnection] = []
+
+    def factory(config: ConnectionConfig) -> DummyConnection:
+        instance = DummyConnection(config, succeed=len(instances) > 0)
+        instances.append(instance)
+        return instance
+
+    monkeypatch.setattr(
+        "repid.connections.amqp.message_broker.AmqpConnection",
+        factory,
+    )
+
+    with pytest.raises(ConnectionError, match="offline"):
+        await server.connect()
+
+    assert server._connection is None
+    assert server.is_connected is False
+    assert instances[0].closed is True
+
+    await server.connect()
+
+    assert server.is_connected is True
+    assert len(instances) == 2
+    assert instances[1].closed is False
+
+
+async def test_amqp_connect_preserves_error_when_cleanup_fails(monkeypatch: Any) -> None:
+    server = AmqpServer("amqp://localhost:5672")
+
+    class DummyConnection:
+        def __init__(self, _config: ConnectionConfig) -> None:
+            self.is_connected = False
+            self.events = MagicMock()
+
+        async def connect(self) -> None:
+            raise ConnectionError("startup failed")
+
+        async def close(self) -> None:
+            raise RuntimeError("cleanup failed")
+
+    monkeypatch.setattr(
+        "repid.connections.amqp.message_broker.AmqpConnection",
+        DummyConnection,
+    )
+
+    with pytest.raises(ConnectionError, match="startup failed"):
+        await server.connect()
+
+    assert server._connection is None
+    assert server.is_connected is False
+
+
+async def test_amqp_connect_closes_stale_connection_before_reconnect(monkeypatch: Any) -> None:
+    server = AmqpServer("amqp://localhost:5672")
+
+    class DummyConnection:
+        def __init__(self, _config: ConnectionConfig) -> None:
+            self.is_connected = True
+            self.closed = False
+            self.events = MagicMock()
+
+        async def connect(self) -> None:
+            self.is_connected = True
+
+        async def close(self) -> None:
+            self.closed = True
+
+    stale_connection = DummyConnection(cast(ConnectionConfig, None))
+    stale_connection.is_connected = False
+    server._connection = cast(Any, stale_connection)
+    server._managed_session = cast(Any, object())
+
+    monkeypatch.setattr(
+        "repid.connections.amqp.message_broker.AmqpConnection",
+        DummyConnection,
+    )
+
+    await server.connect()
+
+    assert stale_connection.closed is True
+    assert server._connection is not stale_connection
+    assert server.is_connected is True
+
 
 class FailingSettleLink:
     async def settle_delivery(

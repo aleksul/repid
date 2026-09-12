@@ -256,20 +256,36 @@ class PubsubServer:
         await self._credentials_provider.ensure_valid()
 
         # Create gRPC channel
-        self._channel = await create_channel(
+        channel = await create_channel(
             dsn=self._dsn,
             credentials_provider=self._credentials_provider,
             options=self._channel_options,
         )
 
         # Start protocol client and control batcher for Pub/Sub control RPCs
-        self._protocol_client = PubsubProtocolClient(
-            channel=self._channel,
+        protocol_client = PubsubProtocolClient(
+            channel=channel,
             credentials_provider=self._credentials_provider,
             resilience_state=self._resilience_state,
         )
-        self._control_batcher = PubsubControlBatcher(self._protocol_client)
-        await self._control_batcher.start()
+        control_batcher = PubsubControlBatcher(protocol_client)
+        try:
+            await control_batcher.start()
+        except BaseException:
+            try:
+                await control_batcher.stop()
+            except BaseException as cleanup_error:
+                logger.exception("server.connect.cleanup_error", exc_info=cleanup_error)
+            try:
+                await channel.close()
+            except BaseException as cleanup_error:
+                logger.exception("server.connect.cleanup_error", exc_info=cleanup_error)
+            raise
+
+        # Only expose the broker as connected once every piece is up and running
+        self._channel = channel
+        self._protocol_client = protocol_client
+        self._control_batcher = control_batcher
 
         logger.debug("server.connect")
 

@@ -409,6 +409,13 @@ class NatsServer(ServerT):
         if self.is_connected:
             return
 
+        # Drop a stale, no-longer-connected client before reconnecting
+        if self._nc is not None:
+            with suppress(Exception):
+                await self._nc.close()
+            self._nc = None
+            self._js = None
+
         self._nc = await nats.connect(self.dsn)
         self._js = self._nc.jetstream()
         logger.info("server.connect", extra={"host": self.host})

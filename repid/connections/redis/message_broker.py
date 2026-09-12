@@ -13,9 +13,11 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from redis.asyncio import Redis
+from redis.asyncio.retry import Retry
 from redis.backoff import ExponentialBackoff
+from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import ResponseError
-from redis.retry import Retry
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from repid.connections.abc import (
     CapabilitiesT,
@@ -447,7 +449,13 @@ class RedisSubscriber(SubscriberT):
                 await self._consume_batch(group_name, group_channels)
             except asyncio.CancelledError:
                 break
-            except (ConnectionError, TimeoutError, ResponseError) as exc:
+            except (
+                ConnectionError,
+                TimeoutError,
+                RedisConnectionError,
+                RedisTimeoutError,
+                ResponseError,
+            ) as exc:
                 if self._closed:  # pragma: no cover
                     break
                 logger.exception("consumer.error.redis", exc_info=exc)
@@ -577,7 +585,13 @@ class RedisSubscriber(SubscriberT):
                     continue
                 try:
                     await self._reclaim_pending(cfg, channel, callback)
-                except (ConnectionError, TimeoutError, ResponseError) as exc:
+                except (
+                    ConnectionError,
+                    TimeoutError,
+                    RedisConnectionError,
+                    RedisTimeoutError,
+                    ResponseError,
+                ) as exc:
                     logger.exception(
                         "consumer.reclaim.error",
                         exc_info=exc,
@@ -778,26 +792,35 @@ class RedisServer(ServerT):
 
         retry = Retry(ExponentialBackoff(), self._retry_attempts)
 
-        self._redis = Redis.from_url(
+        redis = Redis.from_url(
             self._dsn,
             retry=retry,
             retry_on_error=[ConnectionError, TimeoutError],
             decode_responses=False,  # We handle decoding ourselves
         )
+        try:
+            await redis.ping()  # type: ignore[misc]
+        except BaseException:
+            try:
+                await redis.aclose()
+            except BaseException as cleanup_error:
+                logger.exception("server.connect.cleanup_error", exc_info=cleanup_error)
+            raise
 
-        await self._redis.ping()  # type: ignore[misc]
+        self._redis = redis
 
     async def disconnect(self) -> None:
         """Disconnect from Redis server."""
         logger.info("server.disconnect")
 
-        for subscriber in self._active_subscribers:
+        subscribers = tuple(self._active_subscribers)
+        self._active_subscribers.clear()
+
+        for subscriber in subscribers:
             try:
                 await subscriber.close()
             except Exception as exc:
                 logger.exception("subscriber.close.error", exc_info=exc)
-
-        self._active_subscribers.clear()
 
         if self._redis is not None:
             await self._redis.aclose()

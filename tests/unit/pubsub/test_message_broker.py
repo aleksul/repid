@@ -258,3 +258,98 @@ def test_build_attributes() -> None:
     msg3.reply_to = None
     attrs3 = server._build_attributes(msg3, {"attributes": {"extra": "val"}})
     assert attrs3 == {"h1": "v1", "content_type": "application/json", "extra": "val"}
+
+
+async def test_connect_failure_after_channel_creation_cleans_up_and_can_retry() -> None:
+    server = message_broker.PubsubServer(default_project="p", use_google_auth=False)
+
+    mock_channel = MagicMock(spec=grpc.aio.Channel)
+    with (
+        patch(
+            "repid.connections.pubsub.message_broker.create_channel",
+            new_callable=AsyncMock,
+            return_value=mock_channel,
+        ),
+        patch(
+            "repid.connections.pubsub.message_broker.PubsubControlBatcher",
+        ) as mock_batcher_cls,
+    ):
+        failing_batcher = MagicMock(
+            start=AsyncMock(side_effect=ConnectionError("offline")),
+            stop=AsyncMock(),
+        )
+        ok_batcher = MagicMock(start=AsyncMock(), stop=AsyncMock())
+        mock_batcher_cls.side_effect = [failing_batcher, ok_batcher]
+
+        with pytest.raises(ConnectionError, match="offline"):
+            await server.connect()
+
+        assert server.is_connected is False
+        assert server._channel is None
+        assert server._protocol_client is None
+        assert server._control_batcher is None
+        failing_batcher.stop.assert_awaited_once()
+        mock_channel.close.assert_called_once()
+
+        await server.connect()
+
+        assert server.is_connected is True
+        assert server._control_batcher is ok_batcher
+        assert mock_batcher_cls.call_count == 2
+
+
+async def test_connect_failure_preserves_error_when_cleanup_fails() -> None:
+    server = message_broker.PubsubServer(default_project="p", use_google_auth=False)
+
+    mock_channel = MagicMock(spec=grpc.aio.Channel)
+    with (
+        patch(
+            "repid.connections.pubsub.message_broker.create_channel",
+            new_callable=AsyncMock,
+            return_value=mock_channel,
+        ),
+        patch(
+            "repid.connections.pubsub.message_broker.PubsubControlBatcher",
+        ) as mock_batcher_cls,
+    ):
+        failing_batcher = MagicMock(
+            start=AsyncMock(side_effect=ConnectionError("startup failed")),
+            stop=AsyncMock(side_effect=RuntimeError("cleanup failed")),
+        )
+        mock_batcher_cls.return_value = failing_batcher
+
+        with pytest.raises(ConnectionError, match="startup failed"):
+            await server.connect()
+
+        assert server.is_connected is False
+        assert server._channel is None
+        mock_channel.close.assert_called_once()
+
+
+async def test_connect_failure_survives_channel_close_failure() -> None:
+    server = message_broker.PubsubServer(default_project="p", use_google_auth=False)
+
+    mock_channel = MagicMock(spec=grpc.aio.Channel)
+    mock_channel.close = AsyncMock(side_effect=RuntimeError("close failed"))
+    with (
+        patch(
+            "repid.connections.pubsub.message_broker.create_channel",
+            new_callable=AsyncMock,
+            return_value=mock_channel,
+        ),
+        patch(
+            "repid.connections.pubsub.message_broker.PubsubControlBatcher",
+        ) as mock_batcher_cls,
+    ):
+        failing_batcher = MagicMock(
+            start=AsyncMock(side_effect=ConnectionError("startup failed")),
+            stop=AsyncMock(),
+        )
+        mock_batcher_cls.return_value = failing_batcher
+
+        with pytest.raises(ConnectionError, match="startup failed"):
+            await server.connect()
+
+        assert server.is_connected is False
+        assert server._channel is None
+        mock_channel.close.assert_awaited_once()

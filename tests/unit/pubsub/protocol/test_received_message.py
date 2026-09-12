@@ -1,3 +1,4 @@
+import asyncio
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
@@ -5,12 +6,19 @@ import pytest
 
 from repid.connections.abc import MessageAction
 from repid.connections.pubsub.protocol import proto, received_message
+from repid.connections.pubsub.protocol.control_batcher import PubsubControlBatcher
 
 
 class _FakeBatcher:
     def __init__(self) -> None:
         self.add_ack = AsyncMock()
         self.add_modify_deadline = AsyncMock()
+
+
+class _FakeControlClient:
+    def __init__(self) -> None:
+        self.acknowledge = AsyncMock()
+        self.modify_ack_deadline = AsyncMock()
 
 
 @pytest.fixture
@@ -47,6 +55,130 @@ def test_basic_properties(msg: received_message.PubsubReceivedMessage) -> None:
     assert not msg.is_acted_on
     assert msg.message_id == "msg1"
     assert msg.delivery_attempt == 1
+
+
+async def test_concurrent_settlement_and_keep_alive_issue_only_one_broker_operation(
+    msg: received_message.PubsubReceivedMessage,
+) -> None:
+    ack_started = asyncio.Event()
+    release_ack = asyncio.Event()
+
+    async def block_ack(*_: str) -> None:
+        ack_started.set()
+        await release_ack.wait()
+
+    _batcher(msg).add_ack.side_effect = block_ack
+    ack_task = asyncio.create_task(msg.ack())
+    await ack_started.wait()
+    other_tasks = [
+        asyncio.create_task(msg.nack()),
+        asyncio.create_task(msg.reject()),
+        asyncio.create_task(msg.keep_alive()),
+    ]
+    release_ack.set()
+
+    await asyncio.gather(ack_task, *other_tasks)
+
+    assert msg.action is MessageAction.acked
+    _batcher(msg).add_ack.assert_awaited_once_with("sub1", "ack1")
+    _batcher(msg).add_modify_deadline.assert_not_awaited()
+
+
+async def test_cancelled_settlement_stays_reserved_and_blocks_retry(
+    msg: received_message.PubsubReceivedMessage,
+) -> None:
+    ack_started = asyncio.Event()
+    release_ack = asyncio.Event()
+
+    async def block_ack(*_: str) -> None:
+        ack_started.set()
+        await release_ack.wait()
+
+    _batcher(msg).add_ack.side_effect = block_ack
+    task = asyncio.create_task(msg.ack())
+    await ack_started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # Cancellation may have left the operation in flight, so the disposition
+    # stays reserved and a retry must not send another operation.
+    assert msg.action is MessageAction.acked
+    _batcher(msg).add_ack.side_effect = None
+    await msg.ack()
+    _batcher(msg).add_ack.assert_awaited_once_with("sub1", "ack1")
+    assert msg.action is MessageAction.acked
+
+
+async def test_cancelled_queued_settlement_is_withdrawn_and_stays_reserved() -> None:
+    client = _FakeControlClient()
+    batcher = PubsubControlBatcher(client, flush_interval=10)
+    server = MagicMock()
+    server._control_batcher = batcher
+    message = received_message.PubsubReceivedMessage(
+        raw_message=proto.PubsubMessage(data=b"data"),
+        ack_id="ack1",
+        delivery_attempt=1,
+        subscription_path="sub1",
+        channel_name="chan1",
+        server=server,
+        stream_ack_deadline_seconds=300,
+    )
+    await batcher.start()
+
+    task = asyncio.create_task(message.ack())
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # The queued operation was withdrawn (nothing reached the server), but
+    # the caller cannot know that — the disposition stays reserved and later
+    # settlement attempts must not send anything.
+    assert message.action is MessageAction.acked
+    nack_task = asyncio.create_task(message.nack())
+    await asyncio.sleep(0)
+    await batcher.stop()
+    await nack_task
+    client.acknowledge.assert_not_awaited()
+    client.modify_ack_deadline.assert_not_awaited()
+
+
+async def test_cancelled_flushing_settlement_reserves_its_disposition() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    client = _FakeControlClient()
+
+    async def acknowledge(*_: object) -> None:
+        started.set()
+        await release.wait()
+
+    client.acknowledge.side_effect = acknowledge
+    batcher = PubsubControlBatcher(client, flush_interval=10, max_batch_ids=1)
+    server = MagicMock()
+    server._control_batcher = batcher
+    message = received_message.PubsubReceivedMessage(
+        raw_message=proto.PubsubMessage(data=b"data"),
+        ack_id="ack1",
+        delivery_attempt=1,
+        subscription_path="sub1",
+        channel_name="chan1",
+        server=server,
+        stream_ack_deadline_seconds=300,
+    )
+    await batcher.start()
+
+    task = asyncio.create_task(message.ack())
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert message.action is MessageAction.acked
+    await message.nack()
+    client.modify_ack_deadline.assert_not_awaited()
+    release.set()
+    await batcher.stop()
 
 
 async def test_ack_calls_batcher_add_ack(msg: received_message.PubsubReceivedMessage) -> None:
@@ -194,6 +326,17 @@ async def test_nack_failure_does_not_set_action(
 
     with pytest.raises(RuntimeError):
         await msg.nack()
+
+    assert not msg.is_acted_on
+
+
+async def test_reject_failure_does_not_set_action(
+    msg: received_message.PubsubReceivedMessage,
+) -> None:
+    _batcher(msg).add_modify_deadline.side_effect = RuntimeError("RPC failed")
+
+    with pytest.raises(RuntimeError):
+        await msg.reject()
 
     assert not msg.is_acted_on
 

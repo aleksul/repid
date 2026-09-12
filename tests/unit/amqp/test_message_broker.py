@@ -1017,3 +1017,54 @@ async def test_amqp_received_message_reply_requires_channel_or_reply_to() -> Non
 
     with pytest.raises(ValueError, match="Reply channel is not set"):
         await msg.reply(payload=b"response")
+
+class FailingSettleLink:
+    async def settle_delivery(
+        self,
+        _delivery_id: int,
+        _state: ReceiverSettlementState,
+    ) -> None:
+        raise RuntimeError("settle failed")
+
+
+def _make_failing_settle_message() -> AmqpReceivedMessage:
+    return AmqpReceivedMessage(
+        payload=b"test",
+        headers=None,
+        link=cast(Any, FailingSettleLink()),
+        delivery_id=1,
+        delivery_tag=b"tag",
+        channel_name="q",
+        managed_session=cast(ManagedSession, object()),
+        publish_fn=lambda: asyncio.sleep(0),
+    )
+
+
+async def test_amqp_received_message_ack_settle_failure_resets_action() -> None:
+    msg = _make_failing_settle_message()
+
+    with pytest.raises(RuntimeError, match="settle failed"):
+        await msg.ack()
+
+    assert msg.action is None
+    assert not msg.is_acted_on
+
+
+async def test_amqp_received_message_nack_settle_failure_resets_action() -> None:
+    msg = _make_failing_settle_message()
+
+    with pytest.raises(RuntimeError, match="settle failed"):
+        await msg.nack()
+
+    assert msg.action is None
+    assert not msg.is_acted_on
+
+
+async def test_amqp_received_message_reject_settle_failure_resets_action() -> None:
+    msg = _make_failing_settle_message()
+
+    with pytest.raises(RuntimeError, match="settle failed"):
+        await msg.reject()
+
+    assert msg.action is None
+    assert not msg.is_acted_on

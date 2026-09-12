@@ -635,6 +635,70 @@ async def test_redis_received_message_already_acted_guard(
     redis_client.pipeline.assert_not_called()
 
 
+async def test_redis_concurrent_settlement_issues_only_one_operation(
+    make_received_message: Any,
+    pipeline_mock: tuple[MagicMock, MagicMock],
+) -> None:
+    redis_client, pipe = pipeline_mock
+    msg = make_received_message(message_id="1-0", stream_name="s", consumer_group="g")
+
+    xack_started = asyncio.Event()
+    release_xack = asyncio.Event()
+
+    async def block_xack(*_: object) -> None:
+        xack_started.set()
+        await release_xack.wait()
+
+    redis_client.xack.side_effect = block_xack
+
+    ack_task = asyncio.create_task(msg.ack())
+    await xack_started.wait()
+    other_tasks = [
+        asyncio.create_task(msg.nack()),
+        asyncio.create_task(msg.reject()),
+        asyncio.create_task(msg.keep_alive()),
+    ]
+    release_xack.set()
+
+    await asyncio.gather(ack_task, *other_tasks)
+
+    assert msg.action is MessageAction.acked
+    redis_client.xack.assert_awaited_once_with("s", "g", "1-0")
+    pipe.xack.assert_not_called()
+    pipe.xadd.assert_not_called()
+    redis_client.xclaim.assert_not_called()
+
+
+async def test_redis_cancelled_settlement_stays_reserved_and_blocks_retry(
+    make_received_message: Any,
+    pipeline_mock: tuple[MagicMock, MagicMock],
+) -> None:
+    redis_client, _ = pipeline_mock
+    msg = make_received_message()
+
+    xack_started = asyncio.Event()
+    release_xack = asyncio.Event()
+
+    async def block_xack(*_: object) -> None:
+        xack_started.set()
+        await release_xack.wait()
+
+    redis_client.xack.side_effect = block_xack
+    task = asyncio.create_task(msg.ack())
+    await xack_started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # Cancellation may have left the RPC in flight, so the settlement
+    # stays reserved and a retry must not issue a second operation.
+    assert msg.action is MessageAction.acked
+    redis_client.xack.side_effect = None
+    await msg.ack()
+    redis_client.xack.assert_awaited_once_with("s", "g", "1-0")
+    assert msg.action is MessageAction.acked
+
+
 async def test_redis_consume_batch_when_closed() -> None:
     server = RedisServer("redis://localhost")
     client = AsyncMock()

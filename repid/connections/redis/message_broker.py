@@ -247,35 +247,47 @@ class RedisReceivedMessage(ReceivedMessageT):
 
     async def ack(self) -> None:
         """Acknowledge the message - removes it from the pending entries list."""
+        # Reserve the action before the RPC: in a single event loop the
+        # check-and-set is atomic, so concurrent settlements are deduplicated,
+        # and a settlement cancelled mid-RPC is never followed by a second one.
         if self._action is not None:
             return
         self._action = MessageAction.acked
-        await self._redis.xack(self._stream_name, self._consumer_group, self._message_id)
+        try:
+            await self._redis.xack(self._stream_name, self._consumer_group, self._message_id)
+        except Exception:
+            # Cancellation is not caught, so a cancelled settlement stays
+            # reserved even if the RPC may have reached the server.
+            self._action = None
+            raise
 
     async def nack(self) -> None:
         """Negative acknowledge - move to DLQ if configured, otherwise just ack and discard."""
         if self._action is not None:
             return
         self._action = MessageAction.nacked
+        try:
+            async with self._redis.pipeline(transaction=True) as pipe:
+                if self._dlq_stream is not None:
+                    fields = _build_message_fields(
+                        self._payload,
+                        self._headers,
+                        self._content_type,
+                        self._reply_to,
+                    )
+                    fields[b"original_stream"] = self._stream_name
+                    fields[b"original_id"] = self._message_id
+                    xadd_kwargs: dict[str, Any] = {}
+                    if self._dlq_maxlen is not None:
+                        xadd_kwargs["maxlen"] = self._dlq_maxlen
+                        xadd_kwargs["approximate"] = True
+                    pipe.xadd(self._dlq_stream, fields, **xadd_kwargs)  # type: ignore[arg-type]
 
-        async with self._redis.pipeline(transaction=True) as pipe:
-            if self._dlq_stream is not None:
-                fields = _build_message_fields(
-                    self._payload,
-                    self._headers,
-                    self._content_type,
-                    self._reply_to,
-                )
-                fields[b"original_stream"] = self._stream_name
-                fields[b"original_id"] = self._message_id
-                xadd_kwargs: dict[str, Any] = {}
-                if self._dlq_maxlen is not None:
-                    xadd_kwargs["maxlen"] = self._dlq_maxlen
-                    xadd_kwargs["approximate"] = True
-                pipe.xadd(self._dlq_stream, fields, **xadd_kwargs)  # type: ignore[arg-type]
-
-            pipe.xack(self._stream_name, self._consumer_group, self._message_id)
-            await pipe.execute()
+                pipe.xack(self._stream_name, self._consumer_group, self._message_id)
+                await pipe.execute()
+        except Exception:
+            self._action = None
+            raise
 
     async def reject(self) -> None:
         """Reject the message — re-add it to the stream for reprocessing.
@@ -287,17 +299,20 @@ class RedisReceivedMessage(ReceivedMessageT):
         if self._action is not None:
             return
         self._action = MessageAction.rejected
-
-        async with self._redis.pipeline(transaction=True) as pipe:
-            fields = _build_message_fields(
-                self._payload,
-                self._headers,
-                self._content_type,
-                self._reply_to,
-            )
-            pipe.xadd(self._stream_name, fields)  # type: ignore[arg-type]
-            pipe.xack(self._stream_name, self._consumer_group, self._message_id)
-            await pipe.execute()
+        try:
+            async with self._redis.pipeline(transaction=True) as pipe:
+                fields = _build_message_fields(
+                    self._payload,
+                    self._headers,
+                    self._content_type,
+                    self._reply_to,
+                )
+                pipe.xadd(self._stream_name, fields)  # type: ignore[arg-type]
+                pipe.xack(self._stream_name, self._consumer_group, self._message_id)
+                await pipe.execute()
+        except Exception:
+            self._action = None
+            raise
 
     async def reply(
         self,

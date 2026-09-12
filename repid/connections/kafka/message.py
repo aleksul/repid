@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
@@ -9,8 +8,6 @@ from repid.connections.abc import MessageAction, ReceivedMessageT
 if TYPE_CHECKING:
     from repid.connections.kafka.message_broker import KafkaServer
     from repid.connections.kafka.protocols import ConsumerRecordProtocol
-
-logger = logging.getLogger("repid.connections.kafka")
 
 
 class KafkaReceivedMessage(ReceivedMessageT):

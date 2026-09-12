@@ -8,6 +8,7 @@ from repid.connections.pubsub.protocol.control_batcher import (
     PubsubControlBatcher,
     _AckBatch,
     _ModifyBatch,
+    _Operation,
 )
 
 
@@ -156,6 +157,67 @@ async def test_cancelling_caller_of_full_ack_batch_does_not_abandon_other_awaite
     await batcher.stop()
 
 
+async def test_stop_waits_for_blocked_immediate_batch(client: _FakeProtocolClient) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def acknowledge(_subscription: str, _ack_ids: list[str]) -> None:
+        started.set()
+        await release.wait()
+
+    client.acknowledge.side_effect = acknowledge
+    batcher = PubsubControlBatcher(client, flush_interval=10, max_batch_ids=1)
+    await batcher.start()
+
+    add_task = asyncio.create_task(batcher.add_ack("sub1", "ack1"))
+    await started.wait()
+    stop_task = asyncio.create_task(batcher.stop())
+    await asyncio.sleep(0)
+    assert not stop_task.done()
+
+    release.set()
+    await stop_task
+    await add_task
+
+
+@pytest.mark.parametrize("error", [RuntimeError("RPC failed"), asyncio.CancelledError()])
+async def test_abandoned_immediate_future_consumes_rpc_failure(
+    client: _FakeProtocolClient,
+    error: BaseException,
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    unhandled: list[dict[str, object]] = []
+    previous_handler = loop.get_exception_handler()
+
+    def record_unhandled(_loop: asyncio.AbstractEventLoop, context: dict[str, object]) -> None:
+        unhandled.append(context)
+
+    async def acknowledge(_subscription: str, _ack_ids: list[str]) -> None:
+        started.set()
+        await release.wait()
+        raise error
+
+    client.acknowledge.side_effect = acknowledge
+    batcher = PubsubControlBatcher(client, flush_interval=10, max_batch_ids=1)
+    await batcher.start()
+    loop.set_exception_handler(record_unhandled)
+    try:
+        task = asyncio.create_task(batcher.add_ack("sub1", "ack1"))
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        release.set()
+        await batcher.stop()
+        await asyncio.sleep(0)
+        assert not unhandled
+    finally:
+        loop.set_exception_handler(previous_handler)
+
+
 async def test_cancelling_caller_of_full_modify_batch_does_not_abandon_other_awaiters(
     client: _FakeProtocolClient,
 ) -> None:
@@ -247,9 +309,8 @@ async def test_ack_execute_cancelled_error_resolves_all_futures(
     client.acknowledge.side_effect = asyncio.CancelledError()
     batcher = PubsubControlBatcher(client)
     batch = _AckBatch()
-    batch.ids.append("ack1")
     future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-    batch.futures.append(future)
+    batch.operations.append(_Operation("ack1", future))
 
     with pytest.raises(asyncio.CancelledError):
         await batcher._execute_ack_batch("sub1", batch)
@@ -264,9 +325,8 @@ async def test_modify_execute_cancelled_error_resolves_all_futures(
     client.modify_ack_deadline.side_effect = asyncio.CancelledError()
     batcher = PubsubControlBatcher(client)
     batch = _ModifyBatch(60)
-    batch.ids.append("ack1")
     future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-    batch.futures.append(future)
+    batch.operations.append(_Operation("ack1", future))
 
     with pytest.raises(asyncio.CancelledError):
         await batcher._execute_modify_batch("sub1", batch)
@@ -282,3 +342,71 @@ async def test_add_after_stop_hangs_indefinitely(client: _FakeProtocolClient) ->
 
     with pytest.raises(asyncio.TimeoutError):
         await asyncio.wait_for(batcher.add_ack("sub1", "ack1"), timeout=0.1)
+
+
+async def test_relay_cancels_outer_when_operation_future_already_cancelled(
+    client: _FakeProtocolClient,
+) -> None:
+    batcher = PubsubControlBatcher(client)
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[None] = loop.create_future()
+    future.cancel()
+    operation = _Operation("ack1", future)
+
+    task = asyncio.create_task(batcher._await_operation(operation))
+
+    # On Python 3.10 the task's CancelledError-subclass outcome is reported as
+    # a plain CancelledError to the awaiting side.
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_cancelling_caller_withdraws_pending_modify_operation(
+    client: _FakeProtocolClient,
+) -> None:
+    batcher = PubsubControlBatcher(client, flush_interval=100, max_batch_ids=100)
+    await batcher.start()
+
+    task = asyncio.create_task(batcher.add_modify_deadline("sub1", "ack1", 60))
+    await asyncio.sleep(0)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    client.modify_ack_deadline.assert_not_awaited()
+    await batcher.stop()
+
+
+async def test_cancel_colliding_with_batch_failure_consumes_batch_error(
+    client: _FakeProtocolClient,
+) -> None:
+    batcher = PubsubControlBatcher(client)
+    loop = asyncio.get_running_loop()
+    unhandled: list[dict[str, object]] = []
+    previous_handler = loop.get_exception_handler()
+
+    def record_unhandled(_loop: asyncio.AbstractEventLoop, context: dict[str, object]) -> None:
+        unhandled.append(context)
+
+    future: asyncio.Future[None] = loop.create_future()
+    operation = _Operation("ack1", future)
+
+    task = asyncio.create_task(batcher._await_operation(operation))
+    await asyncio.sleep(0)
+
+    # The batch fails, and the caller is cancelled before it gets to process
+    # the failure: the failure must be consumed, not reported as unhandled.
+    future.set_exception(RuntimeError("rpc failed"))
+    await asyncio.sleep(0)
+    task.cancel()
+
+    loop.set_exception_handler(record_unhandled)
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await batcher.stop()
+        await asyncio.sleep(0)
+        assert not unhandled
+    finally:
+        loop.set_exception_handler(previous_handler)

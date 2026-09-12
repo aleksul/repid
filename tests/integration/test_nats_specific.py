@@ -8,6 +8,7 @@ import nats
 import pytest
 from pytest_docker_tools import wrappers
 
+from repid.connections.abc import MessageAction
 from repid.connections.nats import NatsServer
 from repid.connections.nats.message_broker import NatsReceivedMessage, NatsSubscriber
 
@@ -287,7 +288,7 @@ async def test_nats_received_message_nack_fallback_to_core_nats_dlq() -> None:
     server._nc = mock_nc
 
     # Test nack when _js is None and DLQ is present
-    wrapped._is_acted_on = False
+    wrapped._action = None
     await wrapped.nack()
     mock_nc.publish.assert_called_with(
         "test_dlq",
@@ -303,7 +304,7 @@ async def test_nats_received_message_reply_connection_error_calls_nak() -> None:
 
     server._js = None
     server._nc = None
-    wrapped._is_acted_on = False
+    wrapped._action = None
     with pytest.raises(ConnectionError, match="NATS connection is not initialized"):
         await wrapped.reply(payload=b"resp")
     mock_msg.nak.assert_awaited_once()
@@ -316,7 +317,7 @@ async def test_nats_received_message_reply_requires_channel_or_reply_to() -> Non
 
     server._js = None
     server._nc = Mock(publish=AsyncMock())
-    wrapped._is_acted_on = False
+    wrapped._action = None
 
     with pytest.raises(ValueError, match="Reply channel is not set"):
         await wrapped.reply(payload=b"resp")
@@ -374,7 +375,7 @@ async def test_nats_received_message_nack_connection_error_calls_nak() -> None:
     server._js = None
     server._nc = None
 
-    wrapped._is_acted_on = False
+    wrapped._action = None
     with suppress(ConnectionError):
         await wrapped.nack()
     mock_msg.nak.assert_called_once()
@@ -388,7 +389,7 @@ async def test_nats_received_message_nack_no_dlq_calls_term() -> None:
     server._js = None
     server._nc = None
 
-    wrapped._is_acted_on = False
+    wrapped._action = None
     await wrapped.nack()
     mock_msg.term.assert_called_once()
 
@@ -482,13 +483,13 @@ async def test_nats_received_message_keep_alive() -> None:
     msg = NatsReceivedMessage(mock_msg, mock_server, "test_channel")
 
     # Test keep_alive when not acted on
-    msg._is_acted_on = False
+    msg._action = None
     await msg.keep_alive()
     mock_msg.in_progress.assert_awaited_once()
 
     # Test keep_alive when acted on
     mock_msg.in_progress.reset_mock()
-    msg._is_acted_on = True
+    msg._action = MessageAction.acked
     await msg.keep_alive()
     mock_msg.in_progress.assert_not_called()
 

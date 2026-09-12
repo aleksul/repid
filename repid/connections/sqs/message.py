@@ -101,114 +101,136 @@ class SqsReceivedMessage(ReceivedMessageT):
     def keep_alive_interval(self) -> int:
         return self._keep_alive_interval
 
+    @staticmethod
+    def _is_stale_receipt_error(exc: botocore.exceptions.ClientError) -> bool:
+        error_dict = exc.response.get("Error")
+        return (
+            isinstance(error_dict, dict)
+            and bool(error_dict)
+            and error_dict.get("Code") == "ReceiptHandleIsInvalid"
+        )
+
     async def keep_alive(self) -> None:
+        # Settlements reserve _action before their first await, so a plain
+        # check here is enough to keep a renewal from racing a settlement.
         if self._action is not None:
             return
         if self._server._client is None:
             raise ConnectionError("SQS client is not connected.")
         if not self._receipt_handle:
             return
+        await self._change_visibility(self._visibility_timeout)
+
+    async def _change_visibility(self, visibility_timeout: int) -> None:
+        # Callers validate client and receipt handle first; re-check here so
+        # mypy narrowing survives the method boundary.
+        client = self._server._client
+        receipt_handle = self._receipt_handle
+        if client is None or not receipt_handle:  # pragma: no cover
+            raise ConnectionError("SQS client is not connected.")
         try:
-            await self._server._client.change_message_visibility(
+            await client.change_message_visibility(
                 QueueUrl=self._queue_url,
-                ReceiptHandle=self._receipt_handle,
-                VisibilityTimeout=self._visibility_timeout,
+                ReceiptHandle=receipt_handle,
+                VisibilityTimeout=visibility_timeout,
             )
         except botocore.exceptions.ClientError as exc:
-            if (
-                not (error_dict := exc.response.get("Error"))
-                or not isinstance(error_dict, dict)
-                or error_dict.get("Code") != "ReceiptHandleIsInvalid"
-            ):
+            if not self._is_stale_receipt_error(exc):
+                raise
+
+    async def _delete_message(self) -> None:
+        client = self._server._client
+        receipt_handle = self._receipt_handle
+        if client is None or not receipt_handle:  # pragma: no cover
+            raise ConnectionError("SQS client is not connected.")
+        try:
+            await client.delete_message(
+                QueueUrl=self._queue_url,
+                ReceiptHandle=receipt_handle,
+            )
+        except botocore.exceptions.ClientError as exc:
+            if not self._is_stale_receipt_error(exc):
                 raise
 
     async def ack(self) -> None:
-        if self._action is not None:
-            return
         if self._server._client is None:
             raise ConnectionError("SQS client is not connected.")
         if not self._receipt_handle:
             return
-        try:
-            await self._server._client.delete_message(
-                QueueUrl=self._queue_url,
-                ReceiptHandle=self._receipt_handle,
-            )
-        except botocore.exceptions.ClientError as exc:
-            if (
-                not (error_dict := exc.response.get("Error"))
-                or not isinstance(error_dict, dict)
-                or error_dict.get("Code") != "ReceiptHandleIsInvalid"
-            ):
-                raise
-
+        # Reserve the action before the RPC: in a single event loop the
+        # check-and-set is atomic, so concurrent settlements are deduplicated,
+        # and a settlement cancelled mid-RPC is never followed by a second one.
+        if self._action is not None:
+            return
         self._action = MessageAction.acked
+        try:
+            await self._delete_message()
+        except Exception:
+            # Cancellation is not caught, so a cancelled settlement stays
+            # reserved even if the RPC may have reached the server.
+            self._action = None
+            raise
 
     async def nack(self) -> None:
-        if self._action is not None:
-            return
         if self._server._client is None:
             raise ConnectionError("SQS client is not connected.")
         if not self._receipt_handle:
             return
-
-        dlq_strategy = self._server._dlq_queue_strategy
-        if dlq_strategy:
-            dlq_channel = dlq_strategy(self._channel)
-            dlq_queue_url = await self._server._get_queue_url(dlq_channel)
-
-            message_attributes: dict[str, Any] = {}
-            for k, v in self._headers.items():
-                message_attributes[k] = {"DataType": "String", "StringValue": v}
-            if self._content_type:
-                message_attributes["content-type"] = {
-                    "DataType": "String",
-                    "StringValue": self._content_type,
-                }
-
-            await self._server._client.send_message(
-                QueueUrl=dlq_queue_url,
-                MessageBody=self._msg.get("Body", ""),
-                MessageAttributes=message_attributes,
-            )
-
-        try:
-            await self._server._client.delete_message(
-                QueueUrl=self._queue_url,
-                ReceiptHandle=self._receipt_handle,
-            )
-        except botocore.exceptions.ClientError as exc:
-            if (
-                not (error_dict := exc.response.get("Error"))
-                or not isinstance(error_dict, dict)
-                or error_dict.get("Code") != "ReceiptHandleIsInvalid"
-            ):
-                raise
-
+        if self._action is not None:
+            return
         self._action = MessageAction.nacked
+        try:
+            dlq_strategy = self._server._dlq_queue_strategy
+            if dlq_strategy:
+                await self._publish_to_dlq(dlq_strategy(self._channel))
+            await self._delete_message()
+        except Exception:
+            self._action = None
+            raise
+
+    async def _publish_to_dlq(self, dlq_channel: str) -> None:
+        # Callers validate the client first; re-check here so mypy narrowing
+        # survives the method boundary.
+        client = self._server._client
+        if client is None:  # pragma: no cover
+            raise ConnectionError("SQS client is not connected.")
+        dlq_queue_url = await self._server._get_queue_url(dlq_channel)
+
+        message_attributes: dict[str, Any] = {}
+        for k, v in self._headers.items():
+            message_attributes[k] = {"DataType": "String", "StringValue": v}
+        if self._content_type:
+            message_attributes["content-type"] = {
+                "DataType": "String",
+                "StringValue": self._content_type,
+            }
+        if self._is_empty_payload:
+            message_attributes[EMPTY_PAYLOAD_ATTRIBUTE] = {
+                "DataType": "String",
+                "StringValue": EMPTY_PAYLOAD_ATTRIBUTE_VALUE,
+            }
+
+        await client.send_message(
+            QueueUrl=dlq_queue_url,
+            MessageBody=self._msg.get("Body", ""),
+            MessageAttributes=message_attributes,
+        )
 
     async def reject(self) -> None:
-        if self._action is not None:
-            return
         if self._server._client is None:
             raise ConnectionError("SQS client is not connected.")
         if not self._receipt_handle:
             return
-        try:
-            await self._server._client.change_message_visibility(
-                QueueUrl=self._queue_url,
-                ReceiptHandle=self._receipt_handle,
-                VisibilityTimeout=0,
-            )
-        except botocore.exceptions.ClientError as exc:
-            if (
-                not (error_dict := exc.response.get("Error"))
-                or not isinstance(error_dict, dict)
-                or error_dict.get("Code") != "ReceiptHandleIsInvalid"
-            ):
-                raise
-
+        if self._action is not None:
+            return
         self._action = MessageAction.rejected
+        try:
+            await self._change_visibility(0)
+        except Exception:
+            # Cancellation is not caught, so a cancelled settlement stays
+            # reserved even if the RPC may have reached the server.
+            self._action = None
+            raise
 
     async def reply(
         self,

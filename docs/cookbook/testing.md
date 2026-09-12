@@ -24,11 +24,13 @@ from repid import Repid, Router
 app = Repid(title="My App")
 router = Router()
 
+
 @router.actor(channel="user_messages")
 async def actor_with_args(user_id: int, user_name: str, user_messages: list[str]) -> list[str]:
     user_message = f"Hi {user_name}! Your id is: {user_id}."
     user_messages.append(user_message)
     return user_messages
+
 
 app.include_router(router)
 ```
@@ -44,6 +46,7 @@ import pytest
 from repid import TestClient
 from myapp.app import app
 
+
 async def test_actor_processing() -> None:
     # 1. Initialize the TestClient using your app as the parameter
     async with TestClient(app) as client:
@@ -51,7 +54,7 @@ async def test_actor_processing() -> None:
         await client.send_message_json(
             channel="user_messages",
             payload=dict(user_id=123, user_name="Alex", user_messages=[]),
-            headers={"topic": "actor_with_args"}
+            headers={"topic": "actor_with_args"},
         )
 
         # 3. By default (auto_process=True), the client instantly processes messages.
@@ -73,12 +76,13 @@ import pytest
 from repid import TestClient
 from myapp.app import app
 
+
 async def test_manual_processing() -> None:
     async with TestClient(app, auto_process=False) as client:
         await client.send_message_json(
             channel="user_messages",
             payload=dict(user_id=123, user_name="Alex", user_messages=[]),
-            headers={"topic": "actor_with_args"}
+            headers={"topic": "actor_with_args"},
         )
 
         # The message is in the queue, but hasn't been processed yet
@@ -100,11 +104,11 @@ can assert against various properties to make sure your actors behave correctly:
 ```python
 msg = await client.process_next()
 
-assert msg.acked is True        # Was it acknowledged?
-assert msg.nacked is False      # Was it NACKed?
-assert msg.rejected is False    # Was it rejected?
-assert msg.exception is None    # Did it raise an exception?
-assert msg.result == ["..."]    # The return value of the actor
+assert msg.acked is True  # Was it acknowledged?
+assert msg.nacked is False  # Was it NACKed?
+assert msg.rejected is False  # Was it rejected?
+assert msg.exception is None  # Did it raise an exception?
+assert msg.result == ["..."]  # The return value of the actor
 ```
 
 You can retrieve all sent or processed messages using:
@@ -122,6 +126,7 @@ isolated unit tests by importing your function and calling it directly:
 
 ```python title="tests/test_app.py"
 from myapp.app import actor_with_args
+
 
 async def test_actor_with_args() -> None:
     expected = ["Hi Alex! Your id is: 123."]

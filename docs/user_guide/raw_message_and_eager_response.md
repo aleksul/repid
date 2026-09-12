@@ -18,13 +18,14 @@ from repid import Message
 
 router = Router()
 
+
 @router.actor
 async def my_actor(message: Message) -> None:
     print(message.payload)  # Raw bytes payload
     print(message.headers)  # Dictionary of headers
     print(message.reply_to)  # Reply destination (if present)
     print(message.channel)  # The channel this message was received from
-    print(message.message_id) # The unique ID of the message (if supported by broker)
+    print(message.message_id)  # The unique ID of the message (if supported by broker)
 ```
 
 ## Eager responses
@@ -39,6 +40,7 @@ you can manually trigger these actions inside your actor.
 from repid import Router, Message
 
 router = Router()
+
 
 @router.actor
 async def my_actor(user_id: int, message: Message) -> None:
@@ -88,13 +90,13 @@ from repid import Router, Message
 
 router = Router()
 
+
 @router.actor
 async def process_order(order_id: int, message: Message) -> None:
     # Process the order here...
 
     # Send an event to another channel
     await message.send_message_json(
-        channel="notifications",
-        payload={"event": "order_processed", "order_id": order_id}
+        channel="notifications", payload={"event": "order_processed", "order_id": order_id}
     )
 ```

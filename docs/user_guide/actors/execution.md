@@ -14,6 +14,7 @@ timeout is reached, Repid will cancel the task and reject the message (returning
 ```python
 import asyncio
 
+
 @router.actor(channel="api_tasks", timeout=10.0)
 async def fetch_slow_api():
     # If this takes more than 10 seconds, it will be cancelled
@@ -35,6 +36,7 @@ You can configure or disable this behavior per-actor:
 async def my_actor():
     pass
 
+
 # Override the keep-alive interval to ping the broker every 15 seconds
 @router.actor(keep_alive=15.0)
 async def my_long_running_actor():
@@ -52,6 +54,7 @@ Repid to run the actor in a completely separate process using `run_in_process=Tr
 
 ```python
 import math
+
 
 @router.actor(channel="heavy_math", run_in_process=True)
 def calculate_prime(number: int) -> bool:
@@ -82,6 +85,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 # Create a dedicated thread pool for database tasks, limiting concurrent connections
 db_pool = ThreadPoolExecutor(max_workers=5)
+
 
 @router.actor(channel="db_tasks", pool_executor=db_pool)
 def run_heavy_query():

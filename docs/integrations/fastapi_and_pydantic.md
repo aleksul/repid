@@ -29,9 +29,11 @@ from pydantic import BaseModel
 
 app = Repid()
 
+
 class MyPydanticModel(BaseModel):
     user_id: int
     actions: list[str]
+
 
 # Inside an async function:
 await app.send_message_json(
@@ -70,6 +72,7 @@ from repid import Repid, AmqpServer
 app = Repid()
 app.servers.register_server("default", AmqpServer("amqp://localhost"), is_default=True)
 
+
 @asynccontextmanager
 async def lifespan(fastapi_app: FastAPI):
     # Open the Repid connection on startup
@@ -77,15 +80,14 @@ async def lifespan(fastapi_app: FastAPI):
         yield
     # The connection automatically closes when the app shuts down
 
+
 fastapi_app = FastAPI(lifespan=lifespan)
+
 
 @fastapi_app.post("/create-job")
 async def create_repid_job(data: dict) -> dict:
     # We can safely send messages here because
     # the connection is kept alive by the lifespan
-    await app.send_message_json(
-        channel="my_background_task",
-        payload=data
-    )
+    await app.send_message_json(channel="my_background_task", payload=data)
     return {"status": "ok"}
 ```

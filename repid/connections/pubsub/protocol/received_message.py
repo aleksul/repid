@@ -91,30 +91,48 @@ class PubsubReceivedMessage:
         return batcher
 
     async def keep_alive(self) -> None:
-        if self._action is not None:
-            return
         await self.extend_deadline(self._stream_ack_deadline_seconds)
 
     async def ack(self) -> None:
         """Acknowledge the message via batched unary Acknowledge RPC."""
         if self._action is not None:
             return
-        await self._batcher.add_ack(self._subscription_path, self._ack_id)
         self._action = MessageAction.acked
+        try:
+            await self._batcher.add_ack(self._subscription_path, self._ack_id)
+        except Exception:
+            self._action = None
+            raise
 
     async def nack(self) -> None:
         """Negative acknowledge the message (set deadline to 0 for redelivery)."""
         if self._action is not None:
             return
-        await self._batcher.add_modify_deadline(self._subscription_path, self._ack_id, 0)
         self._action = MessageAction.nacked
+        try:
+            await self._batcher.add_modify_deadline(
+                self._subscription_path,
+                self._ack_id,
+                0,
+            )
+        except Exception:
+            self._action = None
+            raise
 
     async def reject(self) -> None:
         """Reject the message (set deadline to 1 second)."""
         if self._action is not None:
             return
-        await self._batcher.add_modify_deadline(self._subscription_path, self._ack_id, 1)
         self._action = MessageAction.rejected
+        try:
+            await self._batcher.add_modify_deadline(
+                self._subscription_path,
+                self._ack_id,
+                1,
+            )
+        except Exception:
+            self._action = None
+            raise
 
     async def extend_deadline(self, seconds: int) -> None:
         """Extend the ack deadline for this message.
@@ -122,6 +140,8 @@ class PubsubReceivedMessage:
         Args:
             seconds: New deadline in seconds (10-600).
         """
+        # Settlements reserve _action before their first await, so a plain
+        # check here is enough to keep a renewal from racing a settlement.
         if self._action is not None:
             return
 

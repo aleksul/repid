@@ -150,10 +150,21 @@ class KafkaServer(ServerT):
         return self._producer is not None
 
     async def connect(self) -> None:
-        if self._producer is None:
-            self._producer = AIOKafkaProducer(bootstrap_servers=self.dsn, **self._conn_kwargs)
-            await self._producer.start()
-            logger.info("server.connect", extra={"host": self.dsn})
+        if self._producer is not None:
+            return
+
+        producer = AIOKafkaProducer(bootstrap_servers=self.dsn, **self._conn_kwargs)
+        try:
+            await producer.start()
+        except BaseException:
+            try:
+                await producer.stop()
+            except BaseException as cleanup_error:
+                logger.exception("server.connect.cleanup_error", exc_info=cleanup_error)
+            raise
+
+        self._producer = producer
+        logger.info("server.connect", extra={"host": self.dsn})
 
     async def disconnect(self) -> None:
         # theoretically, all subscribers should have been closed before disconnect is called

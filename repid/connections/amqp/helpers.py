@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable, Coroutine
 from typing import Any
 
@@ -41,7 +40,6 @@ class AmqpReceivedMessage:
         self._publish_fn = publish_fn
         self._properties = properties
         self._action: MessageAction | None = None
-        self._settlement_lock = asyncio.Lock()
 
     @property
     def payload(self) -> bytes:
@@ -110,25 +108,39 @@ class AmqpReceivedMessage:
         await self._link.settle_delivery(self._delivery_id, state)
 
     async def ack(self) -> None:
-        async with self._settlement_lock:
-            if self._action is not None:
-                return
+        # Reserve the action before the RPC: in a single event loop the
+        # check-and-set is atomic, so concurrent settlements are deduplicated,
+        # and a settlement cancelled mid-RPC is never followed by a second one.
+        if self._action is not None:
+            return
+        self._action = MessageAction.acked
+        try:
             await self._settle_delivery(ACCEPTED_STATE)
-            self._action = MessageAction.acked
+        except Exception:
+            # Cancellation is not caught, so a cancelled settlement stays
+            # reserved even if the disposition may have reached the broker.
+            self._action = None
+            raise
 
     async def nack(self) -> None:
-        async with self._settlement_lock:
-            if self._action is not None:
-                return
+        if self._action is not None:
+            return
+        self._action = MessageAction.nacked
+        try:
             await self._settle_delivery(REJECTED_STATE)
-            self._action = MessageAction.nacked
+        except Exception:
+            self._action = None
+            raise
 
     async def reject(self) -> None:
-        async with self._settlement_lock:
-            if self._action is not None:
-                return
+        if self._action is not None:
+            return
+        self._action = MessageAction.rejected
+        try:
             await self._settle_delivery(RELEASED_STATE)
-            self._action = MessageAction.rejected
+        except Exception:
+            self._action = None
+            raise
 
     async def reply(
         self,
@@ -139,17 +151,20 @@ class AmqpReceivedMessage:
         channel: str | None = None,
         server_specific_parameters: dict[str, Any] | None = None,
     ) -> None:
-        async with self._settlement_lock:
-            if self._action is not None:
-                return
-            reply_channel = channel or self.reply_to
-            if reply_channel is None:
-                raise ValueError(
-                    "Reply channel is not set. Provide `channel` or publish with `reply_to`.",
-                )
+        if self._action is not None:
+            return
+        reply_channel = channel or self.reply_to
+        if reply_channel is None:
+            raise ValueError(
+                "Reply channel is not set. Provide `channel` or publish with `reply_to`.",
+            )
 
-            params = dict(server_specific_parameters or {})
+        params = dict(server_specific_parameters or {})
 
+        self._action = MessageAction.replied
+        try:
+            # Reply then settle as one reserved unit: another settlement cannot
+            # interleave, since _action is already reserved.
             await self._publish_fn(
                 channel=reply_channel,
                 message=MessageData(
@@ -160,4 +175,6 @@ class AmqpReceivedMessage:
                 server_specific_parameters=params,
             )
             await self._settle_delivery(ACCEPTED_STATE)
-            self._action = MessageAction.replied
+        except Exception:
+            self._action = None
+            raise

@@ -91,10 +91,6 @@ class MockClientFailingReceive:
         pass
 
 
-def _consume_mock(*_args: Any) -> None:
-    return
-
-
 def make_mock_server(
     *,
     client: Any | None = None,
@@ -796,13 +792,11 @@ async def test_sqs_message_skips_actions_if_already_acted() -> None:
     server._client.change_message_visibility.assert_not_called()
 
 
-@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", return_value=None)
+@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
 @patch("repid.connections.sqs.subscriber.SqsReceivedMessage")
 async def test_subscriber_process_message_reject_exception(
     mock_received_message: MagicMock,
-    start_consuming_mock: MagicMock,
 ) -> None:
-    _consume_mock(start_consuming_mock)
     server = make_mock_server(client=AsyncMock(), queue_url="url")
 
     subscriber = SqsSubscriber(server, {})
@@ -825,13 +819,11 @@ async def test_subscriber_process_message_reject_exception(
         await subscriber._process_message("channel", "url", {}, failing_callback)
 
 
-@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", return_value=None)
+@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
 @patch("repid.connections.sqs.subscriber.SqsReceivedMessage")
 async def test_subscriber_process_message_nack_exception_sync(
     mock_received_message: MagicMock,
-    start_consuming_mock: MagicMock,
 ) -> None:
-    _consume_mock(start_consuming_mock)
     server = make_mock_server(client=AsyncMock(), queue_url="url")
 
     subscriber = SqsSubscriber(server, {})
@@ -852,16 +844,12 @@ async def test_subscriber_process_message_nack_exception_sync(
     await subscriber._process_message("channel", "url", {}, failing_callback)
 
 
-@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", return_value=None)
+@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
 @patch(
     "repid.connections.sqs.subscriber.SqsReceivedMessage",
-    side_effect=Exception("creation error"),
+    new=MagicMock(side_effect=Exception("creation error")),
 )
-async def test_subscriber_process_message_creation_exception(
-    received_message_mock: MagicMock,
-    start_consuming_mock: MagicMock,
-) -> None:
-    _consume_mock(received_message_mock, start_consuming_mock)
+async def test_subscriber_process_message_creation_exception() -> None:
     server = make_mock_server()
 
     subscriber = SqsSubscriber(server, {})
@@ -873,13 +861,11 @@ async def test_subscriber_process_message_creation_exception(
     await subscriber._process_message("channel", "url", {}, failing_callback)
 
 
-@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", return_value=None)
+@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
 @patch("repid.connections.sqs.subscriber.SqsReceivedMessage")
 async def test_subscriber_consume_channel_cancelled_unprocessed_exception(
     mock_received_message: MagicMock,
-    start_consuming_mock: MagicMock,
 ) -> None:
-    _consume_mock(start_consuming_mock)
     client = AsyncMock(receive_message=AsyncMock(return_value={"Messages": [{"Body": "hi"}]}))
     server = make_mock_server(client=client, queue_url="url", receive_wait_time_seconds=0)
 
@@ -901,16 +887,12 @@ async def test_subscriber_consume_channel_cancelled_unprocessed_exception(
         await subscriber._consume_channel("test")
 
 
-@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", return_value=None)
+@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
 @patch(
     "repid.connections.sqs.subscriber.SqsReceivedMessage",
-    side_effect=Exception("Creation failed"),
+    new=MagicMock(side_effect=Exception("Creation failed")),
 )
-async def test_subscriber_consume_channel_cancelled_unprocessed_creation_exception(
-    received_message_mock: MagicMock,
-    start_consuming_mock: MagicMock,
-) -> None:
-    _consume_mock(received_message_mock, start_consuming_mock)
+async def test_subscriber_consume_channel_cancelled_unprocessed_creation_exception() -> None:
     client = AsyncMock(receive_message=AsyncMock(return_value={"Messages": [{"Body": "hi"}]}))
     server = make_mock_server(client=client, queue_url="url", receive_wait_time_seconds=0)
 
@@ -923,13 +905,11 @@ async def test_subscriber_consume_channel_cancelled_unprocessed_creation_excepti
         await subscriber._consume_channel("test")
 
 
-@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", return_value=None)
+@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
 @patch("repid.connections.sqs.subscriber.SqsReceivedMessage")
 async def test_subscriber_process_message_nack_cancelled_sync(
     mock_received_message: MagicMock,
-    start_consuming_mock: MagicMock,
 ) -> None:
-    _consume_mock(start_consuming_mock)
     server = make_mock_server(client=AsyncMock(), queue_url="url")
 
     subscriber = SqsSubscriber(server, {})
@@ -950,13 +930,11 @@ async def test_subscriber_process_message_nack_cancelled_sync(
     await subscriber._process_message("channel", "url", {}, failing_callback)
 
 
-@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", return_value=None)
+@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
 @patch("repid.connections.sqs.subscriber.SqsReceivedMessage")
 async def test_subscriber_process_message_nack_error_sync(
     mock_received_message: MagicMock,
-    start_consuming_mock: MagicMock,
 ) -> None:
-    _consume_mock(start_consuming_mock)
     server = make_mock_server(client=AsyncMock(), queue_url="url")
 
     subscriber = SqsSubscriber(server, {})
@@ -987,11 +965,8 @@ async def test_subscriber_pause_sets_pause_signals() -> None:
     assert subscriber._pause_requested_event.is_set() is True
 
 
-@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", return_value=None)
-async def test_subscriber_consume_channel_breaks_if_shutdown_after_pause_wait(
-    start_consuming_mock: MagicMock,
-) -> None:
-    _consume_mock(start_consuming_mock)
+@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
+async def test_subscriber_consume_channel_breaks_if_shutdown_after_pause_wait() -> None:
     server = make_mock_server(client=AsyncMock(), queue_url="url", receive_wait_time_seconds=0)
 
     subscriber = SqsSubscriber(server, {"test": AsyncMock()})
@@ -1009,11 +984,8 @@ async def test_subscriber_consume_channel_breaks_if_shutdown_after_pause_wait(
     await releaser
 
 
-@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", return_value=None)
-async def test_subscriber_consume_channel_receive_preempted_by_pause(
-    start_consuming_mock: MagicMock,
-) -> None:
-    _consume_mock(start_consuming_mock)
+@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
+async def test_subscriber_consume_channel_receive_preempted_by_pause() -> None:
     server_client = AsyncMock()
     server = make_mock_server(client=server_client, queue_url="url", receive_wait_time_seconds=0)
 
@@ -1038,11 +1010,8 @@ async def test_subscriber_consume_channel_receive_preempted_by_pause(
     await pauser
 
 
-@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", return_value=None)
-async def test_subscriber_consume_channel_semaphore_preempted_by_pause(
-    start_consuming_mock: MagicMock,
-) -> None:
-    _consume_mock(start_consuming_mock)
+@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
+async def test_subscriber_consume_channel_semaphore_preempted_by_pause() -> None:
     client = AsyncMock(receive_message=AsyncMock(return_value={"Messages": [{"Body": "hi"}]}))
     server = make_mock_server(client=client, queue_url="url", receive_wait_time_seconds=0)
 
@@ -1063,11 +1032,8 @@ async def test_subscriber_consume_channel_semaphore_preempted_by_pause(
     await pauser
 
 
-@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", return_value=None)
-async def test_subscriber_consume_channel_breaks_on_semaphore_wait_when_paused(
-    start_consuming_mock: MagicMock,
-) -> None:
-    _consume_mock(start_consuming_mock)
+@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
+async def test_subscriber_consume_channel_breaks_on_semaphore_wait_when_paused() -> None:
     server_client = AsyncMock()
     server = make_mock_server(client=server_client, queue_url="url", receive_wait_time_seconds=0)
 
@@ -1090,11 +1056,8 @@ async def test_subscriber_consume_channel_breaks_on_semaphore_wait_when_paused(
     await subscriber._consume_channel("test")
 
 
-@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", return_value=None)
-async def test_subscriber_resume_returns_if_shutdown(
-    start_consuming_mock: MagicMock,
-) -> None:
-    _consume_mock(start_consuming_mock)
+@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
+async def test_subscriber_resume_returns_if_shutdown() -> None:
     server = make_mock_server()
 
     subscriber = SqsSubscriber(server, {})
@@ -1105,11 +1068,8 @@ async def test_subscriber_resume_returns_if_shutdown(
     assert subscriber._paused_event.is_set() is False
 
 
-@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", return_value=None)
-async def test_subscriber_resume_clears_done_pause_wait_task(
-    start_consuming_mock: MagicMock,
-) -> None:
-    _consume_mock(start_consuming_mock)
+@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
+async def test_subscriber_resume_clears_done_pause_wait_task() -> None:
     server = make_mock_server()
 
     subscriber = SqsSubscriber(server, {})
@@ -1124,11 +1084,8 @@ async def test_subscriber_resume_clears_done_pause_wait_task(
     assert subscriber._pause_wait_task is None
 
 
-@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", return_value=None)
-async def test_subscriber_resume_sets_active_and_restarts(
-    start_consuming_mock: MagicMock,
-) -> None:
-    _consume_mock(start_consuming_mock)
+@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
+async def test_subscriber_resume_sets_active_and_restarts() -> None:
     server = make_mock_server()
 
     subscriber = SqsSubscriber(server, {})
@@ -1150,11 +1107,8 @@ async def test_subscriber_resume_sets_active_and_restarts(
     assert called["started"] is True
 
 
-@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", return_value=None)
-async def test_subscriber_consume_channel_breaks_message_loop_on_shutdown(
-    start_consuming_mock: MagicMock,
-) -> None:
-    _consume_mock(start_consuming_mock)
+@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
+async def test_subscriber_consume_channel_breaks_message_loop_on_shutdown() -> None:
     server_client = AsyncMock()
     server = make_mock_server(client=server_client, queue_url="url", receive_wait_time_seconds=0)
 
@@ -1180,11 +1134,8 @@ async def test_sqs_server_batch_size_validation() -> None:
         SqsServer(batch_size=11)
 
 
-@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", return_value=None)
-async def test_subscriber_consume_channel_uses_server_batch_size(
-    start_consuming_mock: MagicMock,
-) -> None:
-    _consume_mock(start_consuming_mock)
+@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
+async def test_subscriber_consume_channel_uses_server_batch_size() -> None:
     client = AsyncMock()
     server = make_mock_server(
         client=client,
@@ -1207,11 +1158,8 @@ async def test_subscriber_consume_channel_uses_server_batch_size(
     assert client.receive_message.await_args.kwargs["MaxNumberOfMessages"] == 3
 
 
-@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", return_value=None)
-async def test_subscriber_close_skips_removal_if_not_active_subscriber(
-    start_consuming_mock: MagicMock,
-) -> None:
-    _consume_mock(start_consuming_mock)
+@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
+async def test_subscriber_close_skips_removal_if_not_active_subscriber() -> None:
     server = make_mock_server()
     server._active_subscribers = set()
 
@@ -1220,11 +1168,8 @@ async def test_subscriber_close_skips_removal_if_not_active_subscriber(
     await subscriber.close()
 
 
-@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", return_value=None)
-async def test_subscriber_close_removes_active_subscriber(
-    start_consuming_mock: MagicMock,
-) -> None:
-    _consume_mock(start_consuming_mock)
+@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
+async def test_subscriber_close_removes_active_subscriber() -> None:
     server = make_mock_server()
     server._active_subscribers = set()
 

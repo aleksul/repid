@@ -6,9 +6,12 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import ResponseError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from repid.connections.abc import MessageAction, ReceivedMessageT
+from repid.connections.redis import message_broker
 from repid.connections.redis.message_broker import (
     ChannelConfig,
     RedisReceivedMessage,
@@ -635,6 +638,70 @@ async def test_redis_received_message_already_acted_guard(
     redis_client.pipeline.assert_not_called()
 
 
+async def test_redis_concurrent_settlement_issues_only_one_operation(
+    make_received_message: Any,
+    pipeline_mock: tuple[MagicMock, MagicMock],
+) -> None:
+    redis_client, pipe = pipeline_mock
+    msg = make_received_message(message_id="1-0", stream_name="s", consumer_group="g")
+
+    xack_started = asyncio.Event()
+    release_xack = asyncio.Event()
+
+    async def block_xack(*_: object) -> None:
+        xack_started.set()
+        await release_xack.wait()
+
+    redis_client.xack.side_effect = block_xack
+
+    ack_task = asyncio.create_task(msg.ack())
+    await xack_started.wait()
+    other_tasks = [
+        asyncio.create_task(msg.nack()),
+        asyncio.create_task(msg.reject()),
+        asyncio.create_task(msg.keep_alive()),
+    ]
+    release_xack.set()
+
+    await asyncio.gather(ack_task, *other_tasks)
+
+    assert msg.action is MessageAction.acked
+    redis_client.xack.assert_awaited_once_with("s", "g", "1-0")
+    pipe.xack.assert_not_called()
+    pipe.xadd.assert_not_called()
+    redis_client.xclaim.assert_not_called()
+
+
+async def test_redis_cancelled_settlement_stays_reserved_and_blocks_retry(
+    make_received_message: Any,
+    pipeline_mock: tuple[MagicMock, MagicMock],
+) -> None:
+    redis_client, _ = pipeline_mock
+    msg = make_received_message()
+
+    xack_started = asyncio.Event()
+    release_xack = asyncio.Event()
+
+    async def block_xack(*_: object) -> None:
+        xack_started.set()
+        await release_xack.wait()
+
+    redis_client.xack.side_effect = block_xack
+    task = asyncio.create_task(msg.ack())
+    await xack_started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # Cancellation may have left the RPC in flight, so the settlement
+    # stays reserved and a retry must not issue a second operation.
+    assert msg.action is MessageAction.acked
+    redis_client.xack.side_effect = None
+    await msg.ack()
+    redis_client.xack.assert_awaited_once_with("s", "g", "1-0")
+    assert msg.action is MessageAction.acked
+
+
 async def test_redis_consume_batch_when_closed() -> None:
     server = RedisServer("redis://localhost")
     client = AsyncMock()
@@ -921,9 +988,9 @@ async def test_redis_subscriber_in_flight_count() -> None:
         server=RedisServer("redis://localhost"),
     )
     assert sub.in_flight_count == 0
-    sub._in_flight_messages.add("1-0")
+    sub._in_flight_messages.add(("jobs", "1-0"))
     assert sub.in_flight_count == 1
-    sub._in_flight_messages.discard("1-0")
+    sub._in_flight_messages.discard(("jobs", "1-0"))
     assert sub.in_flight_count == 0
 
 
@@ -1376,3 +1443,180 @@ async def test_redis_publish_maxlen_default_approximate(mock_redis_cls: MagicMoc
     _, kwargs = mock_client.xadd.call_args
     assert kwargs["maxlen"] == 50
     assert kwargs["approximate"] is True
+
+
+@pytest.mark.parametrize(
+    "error_type",
+    [
+        pytest.param(ConnectionError, id="builtin_connection_error"),
+        pytest.param(TimeoutError, id="builtin_timeout_error"),
+        pytest.param(RedisConnectionError, id="redis_connection_error"),
+        pytest.param(RedisTimeoutError, id="redis_timeout_error"),
+    ],
+)
+async def test_redis_consume_group_loop_retries_redis_transient_errors(
+    error_type: type[Exception],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    subscriber = RedisSubscriber(
+        redis_client=AsyncMock(),
+        channels={},
+        callbacks={},
+        consumer_name="consumer",
+        concurrency_limit=None,
+        server=MagicMock(),
+    )
+    calls = 0
+
+    async def consume_batch(*_: Any, **__: Any) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise error_type("temporary")
+        subscriber._closed = True
+
+    with (
+        patch.object(subscriber, "_consume_batch", side_effect=consume_batch),
+        patch.object(asyncio, "sleep", new_callable=AsyncMock) as sleep,
+    ):
+        await subscriber._consume_group_loop("group", {})
+
+    assert calls == 2
+    sleep.assert_awaited_once_with(1.0)
+    assert any(record.getMessage() == "consumer.error.redis" for record in caplog.records)
+
+
+@pytest.mark.parametrize(
+    "error_type",
+    [
+        pytest.param(RedisConnectionError, id="redis_connection_error"),
+        pytest.param(RedisTimeoutError, id="redis_timeout_error"),
+    ],
+)
+async def test_redis_claim_loop_retries_redis_transient_errors(
+    error_type: type[Exception],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    config = ChannelConfig(stream="jobs", group="group", dlq=None)
+    subscriber = RedisSubscriber(
+        redis_client=AsyncMock(),
+        channels={"jobs": config},
+        callbacks={"jobs": AsyncMock()},
+        consumer_name="consumer",
+        concurrency_limit=None,
+        server=MagicMock(),
+        claim_interval=1.0,
+    )
+    calls = 0
+
+    async def reclaim(*_: Any, **__: Any) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise error_type("temporary")
+        subscriber._closed = True
+
+    with (
+        patch.object(subscriber, "_reclaim_pending", side_effect=reclaim),
+        patch.object(asyncio, "sleep", new_callable=AsyncMock),
+    ):
+        await subscriber._claim_loop()
+
+    assert calls == 2
+    assert any(record.getMessage() == "consumer.reclaim.error" for record in caplog.records)
+
+
+@pytest.mark.parametrize(
+    ("error_type", "retry_attempts", "expected_attempts"),
+    [
+        pytest.param(RedisConnectionError, 3, 2, id="connection_error_retries"),
+        pytest.param(RedisTimeoutError, 3, 2, id="timeout_error_retries"),
+        pytest.param(RedisConnectionError, 0, 1, id="zero_retries"),
+    ],
+)
+@patch.object(message_broker, "Redis")
+async def test_redis_server_connect_uses_async_retry(
+    mock_redis_cls: MagicMock,
+    error_type: type[Exception],
+    retry_attempts: int,
+    expected_attempts: int,
+) -> None:
+    client = MagicMock(ping=AsyncMock())
+    mock_redis_cls.from_url.return_value = client
+    server = RedisServer("redis://localhost", retry_attempts=retry_attempts)
+
+    await server.connect()
+
+    retry = mock_redis_cls.from_url.call_args.kwargs["retry"]
+    operation = AsyncMock(side_effect=[error_type("transient"), 42])
+    on_failure = AsyncMock()
+    if retry_attempts == 0:
+        with pytest.raises(error_type, match="transient"):
+            await retry.call_with_retry(operation, on_failure)
+    else:
+        assert await retry.call_with_retry(operation, on_failure) == 42
+
+    assert operation.await_count == expected_attempts
+    on_failure.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        pytest.param("ack", id="ack"),
+        pytest.param("nack", id="nack"),
+        pytest.param("reject", id="reject"),
+    ],
+)
+async def test_redis_failed_confirmation_can_be_retried(
+    action: str,
+    pipeline_mock: tuple[MagicMock, MagicMock],
+    make_received_message: Any,
+) -> None:
+    client, pipe = pipeline_mock
+    client.xack.side_effect = [ConnectionError("offline"), None]
+    pipe.execute.side_effect = [ConnectionError("offline"), None]
+    message = make_received_message()
+
+    with pytest.raises(ConnectionError, match="offline"):
+        await getattr(message, action)()
+    assert not message.is_acted_on
+    await getattr(message, action)()
+    assert message.is_acted_on
+
+
+async def test_redis_reclaim_deduplicates_only_within_the_same_channel() -> None:
+    subscriber = RedisSubscriber(
+        redis_client=AsyncMock(),
+        channels={
+            channel: ChannelConfig(stream=channel, group="group", dlq=None)
+            for channel in ("first", "second")
+        },
+        callbacks={},
+        consumer_name="consumer",
+        concurrency_limit=None,
+        server=MagicMock(),
+    )
+    started: list[str] = []
+    release = asyncio.Event()
+
+    async def callback(message: ReceivedMessageT) -> None:
+        started.append(message.channel)
+        await message.ack()
+        await release.wait()
+
+    try:
+        for channel in ("first", "second", "first"):
+            await subscriber._process_stream_messages(
+                [(b"1-0", {b"payload": b"x"})],
+                channel,
+                channel,
+                callback,
+            )
+        await asyncio.sleep(0)
+        assert started == ["first", "second"]
+        assert subscriber.in_flight_count == 2
+    finally:
+        release.set()
+        await subscriber.close()
+    assert subscriber.in_flight_count == 0

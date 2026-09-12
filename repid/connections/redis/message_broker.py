@@ -13,9 +13,11 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from redis.asyncio import Redis
+from redis.asyncio.retry import Retry
 from redis.backoff import ExponentialBackoff
+from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import ResponseError
-from redis.retry import Retry
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from repid.connections.abc import (
     CapabilitiesT,
@@ -247,35 +249,47 @@ class RedisReceivedMessage(ReceivedMessageT):
 
     async def ack(self) -> None:
         """Acknowledge the message - removes it from the pending entries list."""
+        # Reserve the action before the RPC: in a single event loop the
+        # check-and-set is atomic, so concurrent settlements are deduplicated,
+        # and a settlement cancelled mid-RPC is never followed by a second one.
         if self._action is not None:
             return
         self._action = MessageAction.acked
-        await self._redis.xack(self._stream_name, self._consumer_group, self._message_id)
+        try:
+            await self._redis.xack(self._stream_name, self._consumer_group, self._message_id)
+        except Exception:
+            # Cancellation is not caught, so a cancelled settlement stays
+            # reserved even if the RPC may have reached the server.
+            self._action = None
+            raise
 
     async def nack(self) -> None:
         """Negative acknowledge - move to DLQ if configured, otherwise just ack and discard."""
         if self._action is not None:
             return
         self._action = MessageAction.nacked
+        try:
+            async with self._redis.pipeline(transaction=True) as pipe:
+                if self._dlq_stream is not None:
+                    fields = _build_message_fields(
+                        self._payload,
+                        self._headers,
+                        self._content_type,
+                        self._reply_to,
+                    )
+                    fields[b"original_stream"] = self._stream_name
+                    fields[b"original_id"] = self._message_id
+                    xadd_kwargs: dict[str, Any] = {}
+                    if self._dlq_maxlen is not None:
+                        xadd_kwargs["maxlen"] = self._dlq_maxlen
+                        xadd_kwargs["approximate"] = True
+                    pipe.xadd(self._dlq_stream, fields, **xadd_kwargs)  # type: ignore[arg-type]
 
-        async with self._redis.pipeline(transaction=True) as pipe:
-            if self._dlq_stream is not None:
-                fields = _build_message_fields(
-                    self._payload,
-                    self._headers,
-                    self._content_type,
-                    self._reply_to,
-                )
-                fields[b"original_stream"] = self._stream_name
-                fields[b"original_id"] = self._message_id
-                xadd_kwargs: dict[str, Any] = {}
-                if self._dlq_maxlen is not None:
-                    xadd_kwargs["maxlen"] = self._dlq_maxlen
-                    xadd_kwargs["approximate"] = True
-                pipe.xadd(self._dlq_stream, fields, **xadd_kwargs)  # type: ignore[arg-type]
-
-            pipe.xack(self._stream_name, self._consumer_group, self._message_id)
-            await pipe.execute()
+                pipe.xack(self._stream_name, self._consumer_group, self._message_id)
+                await pipe.execute()
+        except Exception:
+            self._action = None
+            raise
 
     async def reject(self) -> None:
         """Reject the message — re-add it to the stream for reprocessing.
@@ -287,17 +301,20 @@ class RedisReceivedMessage(ReceivedMessageT):
         if self._action is not None:
             return
         self._action = MessageAction.rejected
-
-        async with self._redis.pipeline(transaction=True) as pipe:
-            fields = _build_message_fields(
-                self._payload,
-                self._headers,
-                self._content_type,
-                self._reply_to,
-            )
-            pipe.xadd(self._stream_name, fields)  # type: ignore[arg-type]
-            pipe.xack(self._stream_name, self._consumer_group, self._message_id)
-            await pipe.execute()
+        try:
+            async with self._redis.pipeline(transaction=True) as pipe:
+                fields = _build_message_fields(
+                    self._payload,
+                    self._headers,
+                    self._content_type,
+                    self._reply_to,
+                )
+                pipe.xadd(self._stream_name, fields)  # type: ignore[arg-type]
+                pipe.xack(self._stream_name, self._consumer_group, self._message_id)
+                await pipe.execute()
+        except Exception:
+            self._action = None
+            raise
 
     async def reply(
         self,
@@ -353,7 +370,7 @@ class RedisSubscriber(SubscriberT):
             else None
         )
         self._callback_tasks: set[asyncio.Task[None]] = set()
-        self._in_flight_messages: set[str] = set()
+        self._in_flight_messages: set[tuple[str, str]] = set()
 
         self._task: asyncio.Task[None] | None = None
         self._claim_task: asyncio.Task[None] | None = None
@@ -432,7 +449,13 @@ class RedisSubscriber(SubscriberT):
                 await self._consume_batch(group_name, group_channels)
             except asyncio.CancelledError:
                 break
-            except (ConnectionError, TimeoutError, ResponseError) as exc:
+            except (
+                ConnectionError,
+                TimeoutError,
+                RedisConnectionError,
+                RedisTimeoutError,
+                ResponseError,
+            ) as exc:
                 if self._closed:  # pragma: no cover
                     break
                 logger.exception("consumer.error.redis", exc_info=exc)
@@ -498,7 +521,10 @@ class RedisSubscriber(SubscriberT):
         cfg = self._channels[channel]
         for msg_id_raw, fields in messages:
             msg_id = msg_id_raw.decode() if isinstance(msg_id_raw, bytes) else msg_id_raw
-            self._in_flight_messages.add(msg_id)
+            key = (channel, msg_id)
+            if key in self._in_flight_messages:
+                continue
+            self._in_flight_messages.add(key)
 
             payload, headers, content_type, reply_to = _parse_message_fields(fields)
 
@@ -546,7 +572,7 @@ class RedisSubscriber(SubscriberT):
             if not message.is_acted_on:
                 await message.nack()
         finally:
-            self._in_flight_messages.discard(message_id)
+            self._in_flight_messages.discard((message.channel, message_id))
             if self._semaphore is not None:
                 self._semaphore.release()
 
@@ -562,7 +588,13 @@ class RedisSubscriber(SubscriberT):
                     continue
                 try:
                     await self._reclaim_pending(cfg, channel, callback)
-                except (ConnectionError, TimeoutError, ResponseError) as exc:
+                except (
+                    ConnectionError,
+                    TimeoutError,
+                    RedisConnectionError,
+                    RedisTimeoutError,
+                    ResponseError,
+                ) as exc:
                     logger.exception(
                         "consumer.reclaim.error",
                         exc_info=exc,
@@ -763,26 +795,35 @@ class RedisServer(ServerT):
 
         retry = Retry(ExponentialBackoff(), self._retry_attempts)
 
-        self._redis = Redis.from_url(
+        redis = Redis.from_url(
             self._dsn,
             retry=retry,
             retry_on_error=[ConnectionError, TimeoutError],
             decode_responses=False,  # We handle decoding ourselves
         )
+        try:
+            await redis.ping()  # type: ignore[misc]
+        except BaseException:
+            try:
+                await redis.aclose()
+            except BaseException as cleanup_error:
+                logger.exception("server.connect.cleanup_error", exc_info=cleanup_error)
+            raise
 
-        await self._redis.ping()  # type: ignore[misc]
+        self._redis = redis
 
     async def disconnect(self) -> None:
         """Disconnect from Redis server."""
         logger.info("server.disconnect")
 
-        for subscriber in self._active_subscribers:
+        subscribers = tuple(self._active_subscribers)
+        self._active_subscribers.clear()
+
+        for subscriber in subscribers:
             try:
                 await subscriber.close()
             except Exception as exc:
                 logger.exception("subscriber.close.error", exc_info=exc)
-
-        self._active_subscribers.clear()
 
         if self._redis is not None:
             await self._redis.aclose()

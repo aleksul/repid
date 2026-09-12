@@ -43,7 +43,6 @@ class NatsReceivedMessage(ReceivedMessageT):
         self._server = server
         self._channel = channel
         self._action: MessageAction | None = None
-        self._is_acted_on = False
         self._keep_alive_interval: int | None = (
             int(ack_wait) // 3 if ack_wait is not None and ack_wait > 0 else None
         )
@@ -81,7 +80,7 @@ class NatsReceivedMessage(ReceivedMessageT):
 
     @property
     def is_acted_on(self) -> bool:
-        return self._is_acted_on
+        return self._action is not None
 
     @property
     def message_id(self) -> str | None:
@@ -94,53 +93,69 @@ class NatsReceivedMessage(ReceivedMessageT):
         return self._keep_alive_interval
 
     async def keep_alive(self) -> None:
-        if self._is_acted_on:
+        # Settlements reserve _action before their first await, so a plain
+        # check here is enough to keep a renewal from racing a settlement.
+        if self._action is not None:
             return
         await self._msg.in_progress()
 
     async def ack(self) -> None:
-        if self._is_acted_on:
+        # Reserve the action before the RPC: in a single event loop the
+        # check-and-set is atomic, so concurrent settlements are deduplicated,
+        # and a settlement cancelled mid-RPC is never followed by a second one.
+        if self._action is not None:
             return
-        await self._msg.ack()
-        self._is_acted_on = True
         self._action = MessageAction.acked
+        try:
+            await self._msg.ack()
+        except Exception:
+            # Cancellation is not caught, so a cancelled settlement stays
+            # reserved even if the RPC may have reached the server.
+            self._action = None
+            raise
         logger.debug("message.ack", extra={"channel": self._channel})
 
     async def nack(self) -> None:
-        if self._is_acted_on:
+        if self._action is not None:
             return
-
-        dlq = (
-            self._server._dlq_topic_strategy(self._channel)
-            if self._server._dlq_topic_strategy
-            else None
-        )
-
-        if dlq is None:
-            await self._msg.term()
-        else:
-            headers = self.headers or {}
-            headers["x-repid-original-channel"] = self._channel
-            if self._server._js is not None:
-                await self._server._js.publish(dlq, self.payload, headers=headers)
-                await self._msg.ack()
-            elif self._server._nc is not None:
-                await self._server._nc.publish(dlq, self.payload, headers=headers)
-                await self._msg.ack()
-            else:
-                await self._msg.nak()
-                raise ConnectionError("NATS connection is not initialized. Cannot publish to DLQ.")
-
-        self._is_acted_on = True
         self._action = MessageAction.nacked
+        try:
+            dlq = (
+                self._server._dlq_topic_strategy(self._channel)
+                if self._server._dlq_topic_strategy
+                else None
+            )
+
+            if dlq is None:
+                await self._msg.term()
+            else:
+                headers = self.headers or {}
+                headers["x-repid-original-channel"] = self._channel
+                if self._server._js is not None:
+                    await self._server._js.publish(dlq, self.payload, headers=headers)
+                    await self._msg.ack()
+                elif self._server._nc is not None:
+                    await self._server._nc.publish(dlq, self.payload, headers=headers)
+                    await self._msg.ack()
+                else:
+                    await self._msg.nak()
+                    raise ConnectionError(
+                        "NATS connection is not initialized. Cannot publish to DLQ.",
+                    )
+        except Exception:
+            self._action = None
+            raise
         logger.debug("message.nack", extra={"channel": self._channel})
 
     async def reject(self) -> None:
-        if self._is_acted_on:
+        if self._action is not None:
             return
-        await self._msg.nak()
-        self._is_acted_on = True
         self._action = MessageAction.rejected
+        try:
+            await self._msg.nak()
+        except Exception:
+            self._action = None
+            raise
         logger.debug("message.reject", extra={"channel": self._channel})
 
     async def reply(
@@ -152,7 +167,7 @@ class NatsReceivedMessage(ReceivedMessageT):
         channel: str | None = None,
         server_specific_parameters: dict[str, Any] | None = None,  # noqa: ARG002
     ) -> None:
-        if self._is_acted_on:
+        if self._action is not None:
             return
 
         reply_channel = channel or self.reply_to
@@ -165,19 +180,22 @@ class NatsReceivedMessage(ReceivedMessageT):
         if content_type:
             reply_headers["content-type"] = content_type
 
-        # Atomic reply: publish and then ack
-        if self._server._js is not None:
-            await self._server._js.publish(reply_channel, payload, headers=reply_headers)
-            await self._msg.ack()
-        elif self._server._nc is not None:
-            await self._server._nc.publish(reply_channel, payload, headers=reply_headers)
-            await self._msg.ack()
-        else:
-            await self._msg.nak()
-            raise ConnectionError("NATS connection is not initialized. Cannot send reply.")
-
-        self._is_acted_on = True
         self._action = MessageAction.replied
+        try:
+            # Reply then ack as one reserved unit: another settlement cannot
+            # interleave, since _action is already reserved.
+            if self._server._js is not None:
+                await self._server._js.publish(reply_channel, payload, headers=reply_headers)
+                await self._msg.ack()
+            elif self._server._nc is not None:
+                await self._server._nc.publish(reply_channel, payload, headers=reply_headers)
+                await self._msg.ack()
+            else:
+                await self._msg.nak()
+                raise ConnectionError("NATS connection is not initialized. Cannot send reply.")
+        except Exception:
+            self._action = None
+            raise
         logger.debug("message.reply", extra={"channel": self._channel})
 
 
@@ -390,6 +408,13 @@ class NatsServer(ServerT):
     async def connect(self) -> None:
         if self.is_connected:
             return
+
+        # Drop a stale, no-longer-connected client before reconnecting
+        if self._nc is not None:
+            with suppress(Exception):
+                await self._nc.close()
+            self._nc = None
+            self._js = None
 
         self._nc = await nats.connect(self.dsn)
         self._js = self._nc.jetstream()

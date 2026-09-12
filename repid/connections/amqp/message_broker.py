@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlparse
 from uuid import uuid4
@@ -162,6 +162,12 @@ class AmqpServer:
 
     async def connect(self) -> None:
         if self._connection is None or not self._connection.is_connected:
+            # Drop a stale, no-longer-connected connection before reconnecting
+            if self._connection is not None:
+                with suppress(Exception):
+                    await self._connection.close()
+                self._connection = None
+                self._managed_session = None
             if self._session_window is None:
                 config = ConnectionConfig(
                     host=self._conn_host,
@@ -178,7 +184,15 @@ class AmqpServer:
                     session_window=self._session_window,
                 )
             self._connection = AmqpConnection(config)
-            await self._connection.connect()
+            try:
+                await self._connection.connect()
+            except BaseException:
+                try:
+                    await self._connection.close()
+                except BaseException as cleanup_error:
+                    logger.exception("server.connect.cleanup_error", exc_info=cleanup_error)
+                self._connection = None
+                raise
             # Create managed session that handles reconnection automatically
             self._managed_session = ManagedSession(self._connection)
             logger.info("server.connect", extra={"host": self._conn_host, "port": self._conn_port})

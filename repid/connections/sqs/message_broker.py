@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 from collections.abc import AsyncIterator, Callable, Coroutine, Mapping, Sequence
@@ -8,6 +9,9 @@ from typing import TYPE_CHECKING, Any
 
 from aiobotocore.session import get_session
 
+from repid.connections._subscriber import (
+    SubscriberDispatcher,
+)
 from repid.connections.abc import CapabilitiesT, SentMessageT, ServerT, SubscriberT
 from repid.connections.sqs.constants import (
     EMPTY_PAYLOAD_ATTRIBUTE,
@@ -70,6 +74,7 @@ class SqsServer(ServerT):
         self._queue_url_cache: dict[str, str] = {}
 
         self._active_subscribers: set[SqsSubscriber] = set()
+        self._subscriber_cleanup_tasks: set[asyncio.Task[None]] = set()
 
         # AsyncAPI metadata
         self._title = title
@@ -133,8 +138,13 @@ class SqsServer(ServerT):
     def capabilities(self) -> CapabilitiesT:
         return {
             "supports_native_reply": False,
-            "supports_lightweight_pause": False,
             "supports_keep_alive": True,
+            "supports_pause": True,
+            "supports_pause_per_channel": True,
+            "supports_native_message_flow_control": False,
+            "supports_native_message_flow_control_per_channel": False,
+            "supports_native_payload_flow_control": False,
+            "supports_native_payload_flow_control_per_channel": False,
         }
 
     @property
@@ -159,7 +169,8 @@ class SqsServer(ServerT):
             try:
                 for subscriber in list(self._active_subscribers):
                     try:
-                        await subscriber.close()
+                        await subscriber.stop()
+                        await subscriber.finish()
                     except Exception:
                         logger.exception("subscriber.closing_error")
             finally:
@@ -237,7 +248,7 @@ class SqsServer(ServerT):
         self,
         *,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        dispatcher: SubscriberDispatcher,
     ) -> SubscriberT:
         logger.debug("channel.subscribe", extra={"channels": list(channels_to_callbacks.keys())})
 
@@ -247,8 +258,22 @@ class SqsServer(ServerT):
         sub = SqsSubscriber(
             server=self,
             channels_to_callbacks=channels_to_callbacks,
-            concurrency_limit=concurrency_limit,
+            dispatcher=dispatcher,
         )
         self._active_subscribers.add(sub)
-        sub.task.add_done_callback(lambda _: self._active_subscribers.discard(sub))
+
+        def finish_cleanup(_: asyncio.Task[Any]) -> None:
+            # A stopped subscriber may finish the consume loop before callback
+            # rejection and lease cleanup. Keep the server/client owner alive and
+            # complete that cleanup in the background — without cancelling, so a
+            # runner still in its graceful phase is never interfered with.
+
+            async def settle() -> None:
+                await sub.settle()
+
+            cleanup_task = asyncio.create_task(settle())
+            self._subscriber_cleanup_tasks.add(cleanup_task)
+            cleanup_task.add_done_callback(self._subscriber_cleanup_tasks.discard)
+
+        sub.task.add_done_callback(finish_cleanup)
         return sub

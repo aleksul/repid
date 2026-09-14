@@ -29,8 +29,13 @@ class _MockServer:
     def capabilities(self) -> CapabilitiesT:
         return {
             "supports_native_reply": True,
-            "supports_lightweight_pause": False,
+            "supports_pause": False,
+            "supports_pause_per_channel": False,
             "supports_keep_alive": False,
+            "supports_native_message_flow_control": False,
+            "supports_native_message_flow_control_per_channel": False,
+            "supports_native_payload_flow_control": False,
+            "supports_native_payload_flow_control_per_channel": False,
         }
 
     async def publish(

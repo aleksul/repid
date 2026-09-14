@@ -7,17 +7,20 @@ By default, Repid provides `DefaultConverter` (which in turn selects either `Bas
 `PydanticConverter`). However, if you are using a different validation library or
 want to define a custom argument injection logic, you can implement your own converter.
 
+!!! warning "Compatibility"
+    We try our best to preserve custom converter compatibility, but converter protocols may
+    change between minor releases. Check the release notes when upgrading and keep custom converter
+    implementations covered by integration tests.
+
 ## The `ConverterT` Protocol
 
 Your custom converter must implement the `ConverterT` protocol defined in `repid.converter`.
 
 ```python
-import asyncio
 import json
 from typing import Callable, Coroutine, Any
-from repid.connections.abc import ReceivedMessageT, ServerT
-from repid.data import ActorData, CorrelationId, ConverterInputSchema
-from repid.serializer import SerializerT
+from repid.connections.abc import ReceivedMessageT
+from repid.data import ActorData, ActorExecutionContext, CorrelationId, ConverterInputSchema
 
 
 class MyCustomConverter:
@@ -37,8 +40,7 @@ class MyCustomConverter:
         *,
         message: ReceivedMessageT,
         actor: ActorData,
-        server: ServerT,
-        default_serializer: SerializerT,
+        actor_context: ActorExecutionContext,
     ) -> tuple[list, dict]:
         # 1. Parse the message.payload and message.headers
         # 2. Match the parsed data to the arguments expected by `self.fn`

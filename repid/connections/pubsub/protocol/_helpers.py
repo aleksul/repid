@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from repid.connections.abc import ReceivedMessageT
+    from repid.limits import ReservationLeaseT
 
 
 @dataclass(slots=True, kw_only=True)
@@ -25,3 +26,4 @@ class QueuedDelivery:
 
     callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]]
     message: ReceivedMessageT
+    lease: ReservationLeaseT

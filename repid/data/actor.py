@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from repid.converter import ConverterT
     from repid.data import ExternalDocs, Tag
     from repid.data.message_schema import ActorMessageMetadata
+    from repid.limits import ActorLimits, LimitPolicyT
     from repid.serializer import SerializerT
 
 FnReturnT = TypeVar("FnReturnT")
@@ -47,6 +48,8 @@ class ActorData:
     ]
     channel_address: str
     converter: ConverterT
+    limits: tuple[ActorLimits, ...] = ()
+    limit_policies: tuple[LimitPolicyT, ...] = ()
     on_error: OnErrorT = "nack"
     timeout: float = 300.0
     keep_alive: bool | float | None = True

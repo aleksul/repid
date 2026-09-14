@@ -755,3 +755,15 @@ async def test_test_client_include_router_after_creation() -> None:
 
         with pytest.raises(ValueError, match="No actor found for channel 'default'"):
             await client.process_next()
+
+
+def test_test_message_keep_alive_interval_is_none() -> None:
+    message = TestMessage(
+        operation_id=None,
+        payload=b"{}",
+        headers=None,
+        content_type=None,
+        channel="default",
+    )
+
+    assert message.keep_alive_interval is None

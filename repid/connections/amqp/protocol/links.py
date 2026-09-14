@@ -537,7 +537,6 @@ class ReceiverLink(Link):
 
         # Multi-frame transfer handling
         self._incoming_transfers: list[TransferFrame] = []
-        self._delivery_settled_by_callback = False
         self._credit_lock = asyncio.Lock()
         self._credit_pending_delivery_ids: set[int] = set()
         self._deferred_credit_delivery_ids: set[int] = set()
@@ -658,7 +657,6 @@ class ReceiverLink(Link):
             )
 
             # Call the callback
-            self._delivery_settled_by_callback = False
             result = self._callback(body, headers, delivery_id, delivery_tag, self, msg.properties)
             if inspect.iscoroutine(result):
                 await result
@@ -668,7 +666,6 @@ class ReceiverLink(Link):
         finally:
             if delivery_id is not None and delivery_id not in self._deferred_credit_delivery_ids:
                 await self.release_delivery_credit(delivery_id)
-            self._delivery_settled_by_callback = False
             self._incoming_transfers.clear()
 
     async def _send_disposition(self, delivery_id: int, state: ReceiverSettlementState) -> None:
@@ -680,12 +677,12 @@ class ReceiverLink(Link):
             state=state,
         )
         await self._session.connection.send_performative(self._session.channel, disp)
-        self._delivery_settled_by_callback = True
 
     async def settle_delivery(self, delivery_id: int, state: ReceiverSettlementState) -> None:
         if not self.is_delivery_settled(delivery_id):
             await self._send_disposition(delivery_id, state)
-        await self.release_delivery_credit(delivery_id)
+        if delivery_id not in self._deferred_credit_delivery_ids:
+            await self.release_delivery_credit(delivery_id)
 
     @staticmethod
     def _body_to_bytes(body: Any) -> bytes:

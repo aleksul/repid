@@ -11,6 +11,7 @@ from repid.data.message import MessageData
 if TYPE_CHECKING:
     from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
+    from repid.connections._subscriber import SubscriberDispatcher
     from repid.data import ExternalDocs, Tag
 
 
@@ -81,13 +82,22 @@ class ReceivedMessageT(BaseMessageT, Protocol):
         channel: str | None = None,
         server_specific_parameters: dict[str, Any] | None = None,
     ) -> None:
-        """Atomically (if supporter by the server) ack and reply to the message."""
+        """Atomically (if supported by the server) ack and reply to the message."""
 
 
 class CapabilitiesT(TypedDict):
     supports_native_reply: bool
-    supports_lightweight_pause: bool
     supports_keep_alive: bool
+    # Whether broker supports stopping intake
+    # in such a way that it causes less burden than reconnection
+    supports_pause: bool
+    supports_pause_per_channel: bool
+    # Whether broker supports limiting intake of messages count/payload size
+    # globally and per channel
+    supports_native_message_flow_control: bool
+    supports_native_payload_flow_control: bool
+    supports_native_message_flow_control_per_channel: bool
+    supports_native_payload_flow_control_per_channel: bool
 
 
 class SubscriberT(Protocol):
@@ -101,7 +111,13 @@ class SubscriberT(Protocol):
 
     async def resume(self) -> None: ...
 
-    async def close(self) -> None: ...
+    async def pause_channel(self, channel: str) -> None: ...
+
+    async def resume_channel(self, channel: str) -> None: ...
+
+    async def stop(self) -> None: ...
+
+    async def finish(self) -> None: ...
 
 
 class ServerT(Protocol):
@@ -173,5 +189,5 @@ class ServerT(Protocol):
         self,
         *,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        dispatcher: SubscriberDispatcher,
     ) -> SubscriberT: ...

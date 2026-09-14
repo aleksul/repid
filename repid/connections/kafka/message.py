@@ -76,6 +76,8 @@ class KafkaReceivedMessage(ReceivedMessageT):
         pass
 
     async def ack(self) -> None:
+        # Reserve the action before the RPC: in a single event loop the
+        # check-and-set is atomic, so concurrent settlements are deduplicated.
         if self._action is not None:
             return
 

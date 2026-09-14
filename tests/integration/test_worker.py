@@ -8,7 +8,8 @@ from typing import Any
 
 import pytest
 
-from repid import Repid, Router
+from repid import MessageLimits, Repid, Router
+from repid.connections import SubscriberDispatcher
 from repid.connections.abc import ServerT, SubscriberT
 
 
@@ -40,7 +41,8 @@ async def managed_subscriber(subscriber: SubscriberT) -> AsyncGenerator:
     try:
         yield subscriber
     finally:
-        await subscriber.close()
+        await subscriber.stop()
+        await subscriber.finish()
 
 
 @pytest.mark.parametrize("seed_conn", [30], indirect=True)
@@ -60,7 +62,10 @@ async def test_more_concurrent_tasks_than_limit(autoconn: Repid) -> None:
     # tests capability of the worker to properly handle concurrency limits -
     # timeout is set to 10 seconds, there are 30 tasks that each take 1 second to complete,
     # but concurrency limit is set to 10, so the whole run should take approximately 3 seconds
-    await asyncio.wait_for(autoconn.run_worker(messages_limit=30, tasks_limit=10), timeout=10.0)
+    await asyncio.wait_for(
+        autoconn.run_worker(messages_limit=30, limits=MessageLimits(max_messages=10)),
+        timeout=10.0,
+    )
 
     assert hit == 30
 
@@ -121,7 +126,11 @@ async def test_another_channel_is_not_consumed(seed_conn: ServerT) -> None:
     async def wrong_callback(msg: Any) -> None:
         await queue.put(msg)
 
-    consumer = await seed_conn.subscribe(channels_to_callbacks={"another": wrong_callback})
+    consumer = await seed_conn.subscribe(
+        channels_to_callbacks={"another": wrong_callback},
+        dispatcher=SubscriberDispatcher(),
+    )
+
     async with managed_subscriber(consumer):
         with pytest.raises(asyncio.TimeoutError):
             # there should be nothing to consume,
@@ -133,7 +142,11 @@ async def test_another_channel_is_not_consumed(seed_conn: ServerT) -> None:
     async def right_callback(msg: Any) -> None:
         await queue2.put(msg)
 
-    consumer = await seed_conn.subscribe(channels_to_callbacks={"default": right_callback})
+    consumer = await seed_conn.subscribe(
+        channels_to_callbacks={"default": right_callback},
+        dispatcher=SubscriberDispatcher(),
+    )
+
     async with managed_subscriber(consumer):
         rmsg = await asyncio.wait_for(queue2.get(), 10.0)
         assert rmsg.channel == "default"

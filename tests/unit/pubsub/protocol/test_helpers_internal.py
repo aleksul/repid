@@ -1,4 +1,5 @@
 from typing import Any
+from unittest.mock import AsyncMock
 
 from repid.connections.pubsub.protocol import _helpers
 
@@ -26,6 +27,7 @@ def test_queued_delivery() -> None:
     delivery = _helpers.QueuedDelivery(
         callback=cb,
         message=msg,
+        lease=AsyncMock(),
     )
     assert delivery.callback == cb
     assert delivery.message == msg

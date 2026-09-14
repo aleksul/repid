@@ -1,13 +1,11 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 from repid.connections.abc import MessageAction
-from repid.connections.redis.message_broker import RedisReceivedMessage, RedisServer
+from repid.connections.redis.message_broker import RedisReceivedMessage
 
 
 async def test_redis_received_message_keep_alive_action_not_none() -> None:
     mock_redis = AsyncMock()
-    mock_server = MagicMock(spec=RedisServer)
-    mock_server._redis = mock_redis
 
     msg = RedisReceivedMessage(
         payload=b"test",
@@ -19,7 +17,6 @@ async def test_redis_received_message_keep_alive_action_not_none() -> None:
         stream_name="test_stream",
         consumer_group="test_group",
         consumer_name="test_consumer",
-        server=mock_server,
         redis_client=mock_redis,
         dlq_stream="test_dlq",
     )
@@ -31,8 +28,6 @@ async def test_redis_received_message_keep_alive_action_not_none() -> None:
 
 async def test_redis_received_message_keep_alive_success() -> None:
     mock_redis = AsyncMock()
-    mock_server = MagicMock(spec=RedisServer)
-    mock_server._redis = mock_redis
 
     msg = RedisReceivedMessage(
         payload=b"test",
@@ -44,7 +39,6 @@ async def test_redis_received_message_keep_alive_success() -> None:
         stream_name="test_stream",
         consumer_group="test_group",
         consumer_name="test_consumer",
-        server=mock_server,
         redis_client=mock_redis,
         dlq_stream="test_dlq",
     )
@@ -61,8 +55,6 @@ async def test_redis_received_message_keep_alive_success() -> None:
 
 async def test_redis_keep_alive_interval() -> None:
     mock_redis = AsyncMock()
-    mock_server = MagicMock(spec=RedisServer)
-    mock_server._redis = mock_redis
 
     msg = RedisReceivedMessage(
         payload=b"test",
@@ -74,7 +66,6 @@ async def test_redis_keep_alive_interval() -> None:
         stream_name="test_stream",
         consumer_group="test_group",
         consumer_name="test_consumer",
-        server=mock_server,
         redis_client=mock_redis,
         dlq_stream="test_dlq",
     )

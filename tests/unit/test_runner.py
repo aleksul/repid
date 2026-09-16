@@ -747,10 +747,10 @@ async def test_runner_on_error_callable_routes_by_exception_type(
         assert msg.nacked == (not expected_rejected)
 
 
-def _make_unrouted_message(message_id: str | None) -> Mock:
+def _make_unrouted_message(message_id: str | None, channel: str = "default") -> Mock:
     msg = Mock()
     msg.message_id = message_id
-    msg.channel = "default"
+    msg.channel = channel
     msg.nack = AsyncMock()
     msg.reject = AsyncMock()
     return msg
@@ -797,6 +797,25 @@ async def test_runner_unrouted_message_counter_cleared_after_nack() -> None:
         await runner._message_handler([], _make_unrouted_message("msg-poison"))
 
     assert "msg-poison" not in runner._unrouted_seen_counts
+
+
+async def test_runner_unrouted_message_counts_are_channel_scoped() -> None:
+    server = InMemoryServer()
+    runner = _Runner(actor_context=_make_actor_context(server), max_unrouted_retries=2)
+
+    # The same message id is seen on two channels; each channel counts separately.
+    for _ in range(2):
+        msg = _make_unrouted_message("msg-poison", channel="first")
+        await runner._message_handler([], msg)
+    # Second sighting on "first" hits the threshold and clears the entry.
+    assert runner._unrouted_seen_counts == {}
+
+    # The same id on another channel starts a fresh count.
+    msg = _make_unrouted_message("msg-poison", channel="second")
+    await runner._message_handler([], msg)
+    msg.reject.assert_called_once()
+    msg.nack.assert_not_called()
+    assert runner._unrouted_seen_counts == {("second", "msg-poison"): 1}
 
 
 async def test_runner_unrouted_message_no_id_always_reject() -> None:

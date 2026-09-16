@@ -238,7 +238,7 @@ class _Runner:
 
         self._processed = 0
         self.max_unrouted_retries = max_unrouted_retries
-        self._unrouted_seen_counts: dict[str, int] = {}
+        self._unrouted_seen_counts: dict[tuple[str, str], int] = {}
 
         self._tasks: set[asyncio.Task] = set()
 
@@ -303,16 +303,17 @@ class _Runner:
             logger.warning("actor.route.not_found", extra={"channel": message.channel})
             msg_id = message.message_id
             if msg_id is not None:
-                count = self._unrouted_seen_counts.get(msg_id, 0) + 1
+                key = (message.channel, msg_id)
+                count = self._unrouted_seen_counts.get(key, 0) + 1
                 if count >= self.max_unrouted_retries:
-                    del self._unrouted_seen_counts[msg_id]
+                    del self._unrouted_seen_counts[key]
                     logger.error(
                         "actor.route.poison_message",
                         extra={"channel": message.channel, "message_id": msg_id},
                     )
                     await message.nack()
                 else:
-                    self._unrouted_seen_counts[msg_id] = count
+                    self._unrouted_seen_counts[key] = count
                     await message.reject()
             else:
                 await message.reject()

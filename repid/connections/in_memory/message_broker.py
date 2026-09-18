@@ -251,6 +251,16 @@ class InMemorySubscriber(SubscriberT):
         while True:
             await self._paused_event.wait()
             msg = await queue.queue.get()
+            try:
+                # Yield while holding the fetched delivery: rejecting a message
+                # requeues it synchronously, so an immediately re-fetched
+                # delivery would otherwise redeliver in a tight loop that
+                # starves the event loop. The fetch stays atomic across the
+                # yield: cancellation requeues the held delivery.
+                await asyncio.sleep(0)
+            except asyncio.CancelledError:
+                queue.queue.put_nowait(msg)
+                raise
             received_msg = InMemoryReceivedMessage(msg, queue, channel, self._queues)
             queue.processing.add(msg)
 

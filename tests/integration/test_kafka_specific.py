@@ -102,10 +102,14 @@ async def test_kafka_reject(kafka_repid: Repid, kafka_connection: ServerT) -> No
         )
 
         await asyncio.wait_for(requeued_event.wait(), timeout=10.0)
-        await requeued_subscriber.close()
-
         assert requeued_msg is not None
         assert requeued_msg.payload == b"reject_payload"
+
+        # Settle the redelivered copy: it is the only commit path, and without
+        # it the shared consumer group's position stays behind, so later tests
+        # on this channel receive this stale message first.
+        await requeued_msg.ack()
+        await requeued_subscriber.close()
 
 
 async def test_kafka_nack_to_dlq(kafka_repid: Repid, kafka_connection: ServerT) -> None:
@@ -203,6 +207,10 @@ async def test_kafka_reply(kafka_repid: Repid, kafka_connection: ServerT) -> Non
                 channel=reply_channel_name,
             )
 
+        # Settle the delivery: it is the only commit path, and without it the
+        # shared consumer group's position stays behind, so later tests on
+        # this channel would receive this stale message first.
+        await received_msg.ack()
         await subscriber.close()
 
 

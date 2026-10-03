@@ -10,7 +10,7 @@ from uuid import uuid4
 from typing_extensions import Self
 
 from repid._runner import _actor_run
-from repid.connections.abc import CapabilitiesT, MessageAction, ServerT
+from repid.connections.abc import CapabilitiesT, MessageAction, ServerT, broker_capabilities
 from repid.data import ActorExecutionContext, MessageData
 from repid.message_registry import MessageRegistry
 
@@ -27,11 +27,7 @@ class _MockServer:
 
     @property
     def capabilities(self) -> CapabilitiesT:
-        return {
-            "supports_native_reply": True,
-            "supports_lightweight_pause": False,
-            "supports_keep_alive": False,
-        }
+        return broker_capabilities(native_reply=True, keep_alive=False, worker_pause=False)
 
     async def publish(
         self,

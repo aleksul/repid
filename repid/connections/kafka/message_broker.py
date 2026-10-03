@@ -8,8 +8,16 @@ from typing import TYPE_CHECKING, Any
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 
-from repid.connections.abc import CapabilitiesT, SentMessageT, ServerT, SubscriberT
+from repid.connections.abc import (
+    CapabilitiesT,
+    SentMessageT,
+    ServerT,
+    SubscriberT,
+    broker_capabilities,
+    validate_native_flow,
+)
 from repid.connections.kafka.subscriber import KafkaSubscriber
+from repid.limits import UNLIMITED_NATIVE_FLOW, NativeFlow
 
 if TYPE_CHECKING:
     from repid.asyncapi.models.common import ServerBindingsObject
@@ -139,11 +147,7 @@ class KafkaServer(ServerT):
 
     @property
     def capabilities(self) -> CapabilitiesT:
-        return {
-            "supports_native_reply": False,
-            "supports_lightweight_pause": False,
-            "supports_keep_alive": False,
-        }
+        return broker_capabilities(native_reply=False, keep_alive=False, worker_pause=True)
 
     @property
     def is_connected(self) -> bool:
@@ -171,7 +175,7 @@ class KafkaServer(ServerT):
         # but we'll attempt to close any that are still active just in case
         for subscriber in list(self._active_subscribers):  # pragma: no cover
             try:
-                await subscriber.close()
+                await subscriber.finish()
             except Exception as exc:
                 logger.exception("server.disconnect.subscriber_close_error", exc_info=exc)
         self._active_subscribers.clear()
@@ -218,8 +222,9 @@ class KafkaServer(ServerT):
         self,
         *,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        native_flow: NativeFlow = UNLIMITED_NATIVE_FLOW,
     ) -> SubscriberT:
+        validate_native_flow(native_flow, self.capabilities)
         if not self.is_connected:  # pragma: no cover
             raise ConnectionError("Kafka producer is not connected.")
 
@@ -240,7 +245,7 @@ class KafkaServer(ServerT):
             server=self,
             consumer=consumer,  # pyright: ignore[reportArgumentType]
             channels_to_callbacks=channels_to_callbacks,
-            concurrency_limit=concurrency_limit,
+            native_flow=native_flow,
         )
         self._active_subscribers.append(subscriber)
 

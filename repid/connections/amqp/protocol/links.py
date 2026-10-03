@@ -525,6 +525,8 @@ class ReceiverLink(Link):
             Any,
         ],
         prefetch: int = 100,
+        *,
+        intake_paused: bool = False,
     ) -> None:
         super().__init__(session, name, address, handle, role=True)
 
@@ -532,8 +534,9 @@ class ReceiverLink(Link):
 
         # Receiver-specific state
         self._delivery_count = 0
-        self._link_credit = prefetch
+        self._link_credit = 0 if intake_paused else prefetch
         self._prefetch = prefetch
+        self._intake_paused = intake_paused
 
         # Multi-frame transfer handling
         self._incoming_transfers: list[TransferFrame] = []
@@ -708,11 +711,12 @@ class ReceiverLink(Link):
 
     async def _accept_delivery(self, transfer: TransferFrame, delivery_id: int) -> None:
         async with self._credit_lock:
-            if self._link_credit > 0:
+            if self._link_credit > 0 or self._intake_paused:
                 self._credit_pending_delivery_ids.add(delivery_id)
                 if transfer.settled:
                     self._settled_delivery_ids.add(delivery_id)
-                self._link_credit -= 1
+                if self._link_credit > 0:
+                    self._link_credit -= 1
             else:
                 logger.warning(
                     "receiver_link.credit.overdrawn",
@@ -736,10 +740,22 @@ class ReceiverLink(Link):
             self._deferred_credit_delivery_ids.discard(delivery_id)
             self._settled_delivery_ids.discard(delivery_id)
 
-            if self._link_credit < self._prefetch:
+            if not self._intake_paused and self._link_credit < self._prefetch:
                 self._link_credit += 1
                 if self.is_usable:
                     await self._send_flow()
+
+    async def pause_intake(self) -> None:
+        async with self._credit_lock:
+            self._intake_paused = True
+            self._link_credit = 0
+            await self._send_flow()
+
+    async def resume_intake(self) -> None:
+        async with self._credit_lock:
+            self._intake_paused = False
+            self._link_credit = max(0, self._prefetch - len(self._credit_pending_delivery_ids))
+            await self._send_flow()
 
     async def set_credit(self, credit: int) -> None:
         """

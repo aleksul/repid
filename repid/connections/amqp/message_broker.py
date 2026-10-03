@@ -7,7 +7,13 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlparse
 from uuid import uuid4
 
-from repid.connections.abc import CapabilitiesT, SentMessageT, SubscriberT
+from repid.connections.abc import (
+    CapabilitiesT,
+    SentMessageT,
+    SubscriberT,
+    broker_capabilities,
+    validate_native_flow,
+)
 from repid.connections.amqp._uamqp.message import Properties
 from repid.connections.amqp.protocol import (
     AmqpConnection,
@@ -15,6 +21,7 @@ from repid.connections.amqp.protocol import (
     ManagedSession,
 )
 from repid.connections.amqp.subscriber import AmqpSubscriber
+from repid.limits import UNLIMITED_NATIVE_FLOW, NativeFlow
 
 logger = logging.getLogger("repid.connections.amqp")
 
@@ -144,11 +151,9 @@ class AmqpServer:
 
     @property
     def capabilities(self) -> CapabilitiesT:
-        return {
-            "supports_native_reply": True,
-            "supports_lightweight_pause": False,
-            "supports_keep_alive": False,
-        }
+        result = broker_capabilities(native_reply=True, worker_pause=True)
+        result["supports_channel_native_messages"] = True
+        return result
 
     @property
     def managed_session(self) -> ManagedSession | None:
@@ -202,7 +207,7 @@ class AmqpServer:
         # Close all active subscribers
         for subscriber in self._active_subscribers:
             try:
-                await subscriber.close()
+                await subscriber.finish()
             except Exception as exc:
                 logger.exception("subscriber.close.error", exc_info=exc)
 
@@ -323,8 +328,9 @@ class AmqpServer:
         self,
         *,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        native_flow: NativeFlow = UNLIMITED_NATIVE_FLOW,
     ) -> SubscriberT:
+        validate_native_flow(native_flow, self.capabilities)
         logger.debug("channel.subscribe", extra={"channels": list(channels_to_callbacks.keys())})
 
         if not self.is_connected or self._managed_session is None:
@@ -333,7 +339,7 @@ class AmqpServer:
         # Create and store subscriber
         subscriber = await AmqpSubscriber.create(
             queues_to_callbacks=channels_to_callbacks,
-            concurrency_limit=concurrency_limit,
+            native_flow=native_flow,
             managed_session=self._managed_session,
             naming_strategy=self._subscribe_naming_strategy,
             publish_fn=self.publish,

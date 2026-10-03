@@ -19,6 +19,7 @@ from repid.data import (
     OnErrorT,
 )
 from repid.dependencies._utils import validate_dependency
+from repid.limits import ActorLimits, LimitPolicyT
 from repid.middlewares import ActorMiddlewareT, _compile_actor_middleware_pipeline
 
 if TYPE_CHECKING:
@@ -81,6 +82,8 @@ class _ActorDefinition:
     correlation_id: CorrelationId | None
     fn_locals: dict[str, Any] | None
     message_schema: ActorMessageMetadata | None
+    limits: ActorLimits | None
+    limit_policies: tuple[LimitPolicyT, ...]
 
 
 @dataclass(slots=True, kw_only=True, frozen=True)
@@ -115,6 +118,7 @@ class _RouterDefaults:
 class _MaterializedRouter:
     actors: list[ActorData]
     channels: list[Channel]
+    channel_declarations: list[Channel]
     _actors_per_channel_address: dict[str, list[ActorData]]
 
 
@@ -124,6 +128,8 @@ class Router:
         "channel",
         "converter",
         "keep_alive",
+        "limit_policies",
+        "limits",
         "middlewares",
         "pool_executor",
         "run_in_process",
@@ -140,6 +146,8 @@ class Router:
         run_in_process: bool = NotSet,
         pool_executor: Executor | None = NotSet,
         converter: type[ConverterT] = NotSet,
+        limits: ActorLimits | None = None,
+        limit_policies: Sequence[LimitPolicyT] = (),
     ) -> None:
         self._entries: list[_ActorDefinition | _IncludedRouter] = []
         self.channel = channel
@@ -149,6 +157,8 @@ class Router:
         self.run_in_process = run_in_process
         self.pool_executor = pool_executor
         self.converter = converter
+        self.limits = limits
+        self.limit_policies = tuple(limit_policies)
 
     def include_router(self, router: Router) -> None:
         if router is self or router._contains_router(self):
@@ -178,10 +188,12 @@ class Router:
     def _materialize(self) -> _MaterializedRouter:
         actors: list[ActorData] = []
         channels: dict[str, Channel] = {}
+        declarations: list[Channel] = []
         self._materialize_into(
             actors=actors,
             channels=channels,
             defaults=_RouterDefaults.empty(),
+            declarations=declarations,
         )
 
         actors_per_channel_address: dict[str, list[ActorData]] = {}
@@ -193,6 +205,7 @@ class Router:
         return _MaterializedRouter(
             actors=actors,
             channels=list(channels.values()),
+            channel_declarations=declarations,
             _actors_per_channel_address=actors_per_channel_address,
         )
 
@@ -202,18 +215,32 @@ class Router:
         actors: list[ActorData],
         channels: dict[str, Channel],
         defaults: _RouterDefaults,
+        declarations: list[Channel],
+        ancestry: tuple[ActorLimits, ...] = (),
+        policies: tuple[LimitPolicyT, ...] = (),
     ) -> None:
         current_defaults = self._merge_defaults(defaults)
+        ancestry = (*ancestry, *((self.limits,) if self.limits is not None else ()))
+        policies = (*policies, *self.limit_policies)
         for entry in self._entries:
             if isinstance(entry, _IncludedRouter):
                 entry.router._materialize_into(
                     actors=actors,
                     channels=channels,
                     defaults=current_defaults,
+                    declarations=declarations,
+                    ancestry=ancestry,
+                    policies=policies,
                 )
             else:
-                actor_data, channel = self._materialize_actor(entry, current_defaults)
+                actor_data, channel = self._materialize_actor(
+                    entry,
+                    current_defaults,
+                    ancestry,
+                    policies,
+                )
                 actors.append(actor_data)
+                declarations.append(channel)
                 self._add_channel(channels, channel)
 
     def _merge_defaults(self, defaults: _RouterDefaults) -> _RouterDefaults:
@@ -273,6 +300,8 @@ class Router:
         self,
         definition: _ActorDefinition,
         defaults: _RouterDefaults,
+        ancestry: tuple[ActorLimits, ...],
+        policies: tuple[LimitPolicyT, ...],
     ) -> tuple[ActorData, Channel]:
         converter_cls = (
             definition.converter
@@ -361,6 +390,16 @@ class Router:
             deprecated=definition.deprecated,
             on_error=definition.on_error,
             message_schema=definition.message_schema,
+            execution_limits=(
+                *ancestry,
+                *((definition.limits,) if definition.limits is not None else ()),
+            ),
+            execution_limit_scopes=(
+                *("router" for _ in ancestry),
+                *(("actor",) if definition.limits is not None else ()),
+            ),
+            limit_policies=(*policies, *definition.limit_policies),
+            channel=channel_obj,
         )
         return actor_data, channel_obj
 
@@ -419,6 +458,8 @@ class Router:
         on_error: OnErrorAutoT = "nack",
         correlation_id: CorrelationId | None = None,
         message_schema: ActorMessageMetadata | None = None,
+        limits: ActorLimits | None = None,
+        limit_policies: Sequence[LimitPolicyT] = (),
     ) -> Callable[[YourFunc], YourFunc]: ...
 
     @overload
@@ -448,6 +489,8 @@ class Router:
         on_error: OnErrorAutoT = "nack",
         correlation_id: CorrelationId | None = None,
         message_schema: ActorMessageMetadata | None = None,
+        limits: ActorLimits | None = None,
+        limit_policies: Sequence[LimitPolicyT] = (),
     ) -> YourFunc: ...
 
     @overload
@@ -476,6 +519,8 @@ class Router:
         deprecated: bool = False,
         correlation_id: CorrelationId | None = None,
         message_schema: ActorMessageMetadata | None = None,
+        limits: ActorLimits | None = None,
+        limit_policies: Sequence[LimitPolicyT] = (),
     ) -> Callable[[YourFunc], YourFunc]: ...
 
     @overload
@@ -504,6 +549,8 @@ class Router:
         deprecated: bool = False,
         correlation_id: CorrelationId | None = None,
         message_schema: ActorMessageMetadata | None = None,
+        limits: ActorLimits | None = None,
+        limit_policies: Sequence[LimitPolicyT] = (),
     ) -> YourFunc: ...
 
     @overload
@@ -533,6 +580,8 @@ class Router:
         on_error: OnErrorManualT = "no_action",
         correlation_id: CorrelationId | None = None,
         message_schema: ActorMessageMetadata | None = None,
+        limits: ActorLimits | None = None,
+        limit_policies: Sequence[LimitPolicyT] = (),
     ) -> Callable[[YourFunc], YourFunc]: ...
 
     @overload
@@ -562,6 +611,8 @@ class Router:
         on_error: OnErrorManualT = "no_action",
         correlation_id: CorrelationId | None = None,
         message_schema: ActorMessageMetadata | None = None,
+        limits: ActorLimits | None = None,
+        limit_policies: Sequence[LimitPolicyT] = (),
     ) -> YourFunc: ...
 
     @overload
@@ -591,6 +642,8 @@ class Router:
         on_error: OnErrorManualT = "no_action",
         correlation_id: CorrelationId | None = None,
         message_schema: ActorMessageMetadata | None = None,
+        limits: ActorLimits | None = None,
+        limit_policies: Sequence[LimitPolicyT] = (),
     ) -> Callable[[ExplicitFunc], ExplicitFunc]: ...
 
     @overload
@@ -620,6 +673,8 @@ class Router:
         on_error: OnErrorManualT = "no_action",
         correlation_id: CorrelationId | None = None,
         message_schema: ActorMessageMetadata | None = None,
+        limits: ActorLimits | None = None,
+        limit_policies: Sequence[LimitPolicyT] = (),
     ) -> ExplicitFunc: ...
 
     def actor(
@@ -654,6 +709,8 @@ class Router:
         on_error: OnErrorAutoT | OnErrorManualT | None = None,
         correlation_id: CorrelationId | None = None,
         message_schema: ActorMessageMetadata | None = None,
+        limits: ActorLimits | None = None,
+        limit_policies: Sequence[LimitPolicyT] = (),
     ) -> (
         YourFunc
         | ExplicitFunc
@@ -767,6 +824,8 @@ class Router:
                 on_error=on_error,
                 correlation_id=correlation_id,
                 message_schema=message_schema,
+                limits=limits,
+                limit_policies=tuple(limit_policies),
             )
 
         if run_in_process is True and pool_executor is not None:
@@ -824,6 +883,8 @@ class Router:
                 correlation_id=correlation_id,
                 fn_locals=fn_locals,
                 message_schema=message_schema,
+                limits=limits,
+                limit_policies=tuple(limit_policies),
             ),
         )
         return fn

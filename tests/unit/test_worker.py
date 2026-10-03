@@ -3,17 +3,18 @@ from __future__ import annotations
 import asyncio
 import signal
 from typing import Any
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 
-from repid import Router
+from repid import MessageLimits, Router
 from repid._worker import _Worker
 from repid.asyncapi import AsyncAPI3Schema
 from repid.asyncapi_server import AsyncAPIServerSettings
 from repid.connections.in_memory import InMemoryServer
 from repid.data import ActorExecutionContext, MessageData
-from repid.health_check_server import HealthCheckServerSettings
+from repid.health_check_server import HealthCheckServerSettings, HealthCheckStatus
 from repid.serializer import default_serializer
 
 
@@ -250,3 +251,35 @@ async def test_worker_run_cancel() -> None:
 
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, timeout=3.0)
+
+
+async def test_worker_alias_defaults_and_conflict() -> None:
+    server = InMemoryServer()
+    router = Router()._materialize()
+    with pytest.warns(DeprecationWarning, match="tasks_limit is deprecated"):
+        worker = _Worker(actor_context=_make_actor_context(server), router=router, tasks_limit=2)
+    assert worker.limits.max_messages == 2
+    with pytest.raises(ValueError, match="either tasks_limit or limits"):
+        _Worker(
+            actor_context=_make_actor_context(server),
+            router=router,
+            tasks_limit=2,
+            limits=MessageLimits(),
+        )
+
+
+async def test_startup_failure_marks_health_unhealthy_and_cleans_services() -> None:
+    server = InMemoryServer()
+    worker = _Worker(
+        actor_context=_make_actor_context(server),
+        router=Router()._materialize(),
+        health_check_server=HealthCheckServerSettings(),
+        register_signals=[],
+    )
+    assert worker.health_check_server is not None
+    worker.health_check_server.start = AsyncMock(side_effect=RuntimeError("startup"))  # type: ignore[method-assign]
+    worker.health_check_server.stop = AsyncMock()  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="startup"):
+        await worker.run()
+    assert worker.health_check_server.health_status == HealthCheckStatus.UNHEALTHY
+    worker.health_check_server.stop.assert_awaited_once()

@@ -303,6 +303,7 @@ class ReceiverPool:
         ] = {}
         self._link_names: dict[str, str] = {}  # address -> link name
         self._prefetches: dict[str, int] = {}  # address -> prefetch count
+        self._paused_addresses: set[str] = set()
         self._link_counter = 0
         self._lock = asyncio.Lock()
         self._stop_event = asyncio.Event()
@@ -359,9 +360,33 @@ class ReceiverPool:
     ) -> ReceiverLink:
         """Create a new receiver link."""
         session = await self._managed_session.get_session()
-        link = await session.create_receiver(address, callback, name, prefetch=prefetch)
+        link = await session.create_receiver(
+            address,
+            callback,
+            name,
+            prefetch=prefetch,
+            intake_paused=address in self._paused_addresses,
+        )
         self._links[address] = link
         return link
+
+    async def pause_intake(self, addresses: list[str]) -> None:
+        """Pause current links and retain that state across their replacement."""
+        async with self._lock:
+            self._paused_addresses.update(addresses)
+            for address in addresses:
+                link = self._links.get(address)
+                if link is not None:
+                    await link.pause_intake()
+
+    async def resume_intake(self, addresses: list[str]) -> None:
+        """Resume the current links, serialized with reconnection."""
+        async with self._lock:
+            self._paused_addresses.difference_update(addresses)
+            for address in addresses:
+                link = self._links.get(address)
+                if link is not None:
+                    await link.resume_intake()
 
     async def _on_reconnected(self, _data: Any = None) -> None:
         """Handle reconnection by re-subscribing all receivers."""
@@ -402,10 +427,10 @@ class ReceiverPool:
                 del self._link_names[address]
             if address in self._prefetches:
                 del self._prefetches[address]
+            self._paused_addresses.discard(address)
             if address in self._links:
                 link = self._links.pop(address)
-                with contextlib.suppress(Exception):
-                    await link.detach()
+                await link.detach()
 
     async def close(self) -> None:
         """Close all subscriptions."""
@@ -422,3 +447,4 @@ class ReceiverPool:
 
             self._links.clear()
             self._callbacks.clear()
+            self._paused_addresses.clear()

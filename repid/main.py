@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import signal
+import warnings
 from collections.abc import Iterable, Sequence
-from typing import TYPE_CHECKING, Any, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
+from repid._utils import NotSet
+from repid._utils.not_set import _NotSet
 from repid._worker import _Worker
 from repid.asyncapi import AsyncAPI3Schema, AsyncAPIGenerator
 from repid.asyncapi_server import AsyncAPIServer, get_asyncapi_html
 from repid.data import ActorExecutionContext, MessageData, RunnerInfo
+from repid.limits import IntakeControl, LimitPolicyT, MessageLimits
 from repid.message_registry import MessageRegistry
 from repid.middlewares import (
     ActorMiddlewareT,
@@ -78,12 +82,26 @@ class Repid:
         *,
         graceful_shutdown_time: float = 25.0,
         messages_limit: int = float("inf"),  # type: ignore[assignment]
-        tasks_limit: int = 1000,
+        tasks_limit: int | _NotSet = NotSet,
+        limits: MessageLimits | None = None,
+        limit_policies: Iterable[LimitPolicyT] = (),
+        intake_control: IntakeControl | None = None,
+        actor_limits_propagation: Literal["auto", "off"] = "auto",
         register_signals: Iterable[signal.Signals] | None = None,
         health_check_server: HealthCheckServerSettings | None = None,
         asyncapi_server: AsyncAPIServerSettings | None = None,
         server_name: str | None = None,
     ) -> RunnerInfo:
+        if not isinstance(tasks_limit, _NotSet):
+            if limits is not None:
+                raise ValueError("Supply either tasks_limit or limits, not both")
+            warnings.warn(
+                "tasks_limit is deprecated; use limits=MessageLimits(max_messages=...)",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            limits = MessageLimits(max_messages=tasks_limit)
+        limits = limits if limits is not None else MessageLimits(max_messages=1000)
         server = self._servers.get_server(server_name)
         if server is None:
             raise ValueError(
@@ -101,7 +119,10 @@ class Repid:
             router=self._centralized_router._materialize(),
             graceful_shutdown_time=graceful_shutdown_time,
             messages_limit=messages_limit,
-            tasks_limit=tasks_limit,
+            limits=limits,
+            limit_policies=tuple(limit_policies),
+            intake_control=intake_control,
+            actor_limits_propagation=actor_limits_propagation,
             register_signals=register_signals,
             health_check_server=health_check_server,
             asyncapi_server=asyncapi_server,

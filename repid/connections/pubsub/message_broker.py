@@ -9,7 +9,15 @@ from typing import TYPE_CHECKING, Any
 
 import grpc.aio
 
-from repid.connections.abc import CapabilitiesT, ReceivedMessageT, SentMessageT, SubscriberT
+from repid.connections.abc import (
+    CapabilitiesT,
+    ReceivedMessageT,
+    SentMessageT,
+    SubscriberT,
+    broker_capabilities,
+    validate_native_flow,
+)
+from repid.limits import UNLIMITED_NATIVE_FLOW, NativeFlow
 
 from .helpers import ChannelOverride
 from .protocol import (
@@ -226,11 +234,7 @@ class PubsubServer:
 
     @property
     def capabilities(self) -> CapabilitiesT:
-        return {
-            "supports_native_reply": False,
-            "supports_lightweight_pause": False,
-            "supports_keep_alive": True,
-        }
+        return broker_capabilities(native_reply=False, keep_alive=True, worker_pause=True)
 
     @property
     def resilience_config(self) -> ResilienceConfig:
@@ -295,7 +299,7 @@ class PubsubServer:
         while self._active_subscribers:
             subscriber = self._active_subscribers.pop()
             with suppress(Exception):
-                await subscriber.close()
+                await subscriber.finish()
 
         # Stop control batcher (flush any pending operations)
         if self._control_batcher is not None:
@@ -375,8 +379,9 @@ class PubsubServer:
         self,
         *,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        native_flow: NativeFlow = UNLIMITED_NATIVE_FLOW,
     ) -> SubscriberT:
+        validate_native_flow(native_flow, self.capabilities)
         """Subscribe to Pub/Sub channels.
 
         Args:
@@ -415,7 +420,7 @@ class PubsubServer:
             resilience_state=self._resilience_state,
             stream_ack_deadline_seconds=self._stream_ack_deadline_seconds,
             client_id=self._client_id,
-            concurrency_limit=concurrency_limit,
+            native_flow=native_flow,
             server=self,
         )
         self._active_subscribers.append(subscriber)

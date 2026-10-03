@@ -21,6 +21,7 @@ from repid.connections.amqp.protocol.connection import (
 from repid.connections.amqp.protocol.managed import ReceiverPool, SenderPool
 from repid.connections.amqp.subscriber import AmqpSubscriber
 from repid.data import MessageData
+from repid.limits import NativeFlow
 
 from .utils import (
     FakeConnection,
@@ -34,6 +35,12 @@ ReceiverSettlementState = Accepted | Rejected | Released
 
 
 class FakeReceiverLinkCreditMixin:
+    async def pause_intake(self) -> None:
+        pass
+
+    async def resume_intake(self) -> None:
+        pass
+
     session: FakeSession
     released_delivery_id: int
 
@@ -164,6 +171,12 @@ async def test_amqp_subscriber_create_pause_resume_and_close() -> None:
             self.subscriptions.append((address, callback, name))
             return receiver_links[0]
 
+        async def pause_intake(self, _addresses: list[str]) -> None:
+            await receiver_links[0].pause_intake()
+
+        async def resume_intake(self, _addresses: list[str]) -> None:
+            await receiver_links[0].resume_intake()
+
         async def unsubscribe(self, address: str) -> None:
             self.unsubscribed.append(address)
 
@@ -199,10 +212,11 @@ async def test_amqp_subscriber_create_pause_resume_and_close() -> None:
     await subscriber.resume()
     await task
 
+    await asyncio.sleep(0)
     assert received == [b"data"]
     assert address == "/queues/queue"
 
-    await subscriber.close()
+    await subscriber.finish()
     assert managed.receiver_pool.unsubscribed == ["/queues/queue"]
 
 
@@ -647,7 +661,7 @@ async def test_message_broker_properties() -> None:
 
     caps = broker.capabilities
     assert caps["supports_native_reply"] is True
-    assert caps["supports_lightweight_pause"] is False
+    assert caps["supports_worker_pause"] is True
 
     assert broker.managed_session is None
 
@@ -670,9 +684,8 @@ async def test_subscriber_pause_resume() -> None:
 
     subscriber = AmqpSubscriber(
         managed_session=managed,
-        links=[cast(Any, receiver_link)],
         queues_to_callbacks={"test": lambda _x: asyncio.sleep(0)},
-        concurrency_limit=None,
+        native_flow=NativeFlow(),
         paused_event=paused_event,
         naming_strategy=lambda x: x,
     )
@@ -687,7 +700,7 @@ async def test_subscriber_pause_resume() -> None:
     assert subscriber.is_active is True
     assert paused_event.is_set()
 
-    await subscriber.close()
+    await subscriber.finish()
 
 
 async def test_amqp_received_message_no_headers() -> None:
@@ -798,9 +811,8 @@ async def test_subscriber_task_property() -> None:
 
     subscriber = AmqpSubscriber(
         managed_session=managed,
-        links=[],
         queues_to_callbacks={},
-        concurrency_limit=None,
+        native_flow=NativeFlow(),
         paused_event=paused_event,
         naming_strategy=lambda x: x,
     )

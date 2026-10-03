@@ -4,11 +4,13 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
+from repid.limits import ActorLimits, LimitPolicyT
+
 if TYPE_CHECKING:
     from repid.asyncapi.models.operations import OperationBindingsObject
     from repid.connections.abc import BaseMessageT, MessagePublisherT, ReceivedMessageT, ServerT
     from repid.converter import ConverterT
-    from repid.data import ExternalDocs, Tag
+    from repid.data import Channel, ExternalDocs, Tag
     from repid.data.message_schema import ActorMessageMetadata
     from repid.serializer import SerializerT
 
@@ -33,6 +35,10 @@ class ActorExecutionContext:
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ActorData:
+    execution_limits: tuple[ActorLimits, ...] = ()
+    execution_limit_scopes: tuple[str, ...] = ()
+    limit_policies: tuple[LimitPolicyT, ...] = ()
+    channel: Channel | None = None
     fn: Callable[..., Coroutine[Any, Any, FnReturnT]]
     name: str
     confirmation_mode: Literal["auto", "always_ack", "ack_first", "manual", "manual_explicit"]

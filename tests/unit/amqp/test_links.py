@@ -908,3 +908,31 @@ async def test_receiver_set_credit(receiver: ReceiverLink) -> None:
 async def test_receiver_set_credit_rejects_negative_credit(receiver: ReceiverLink) -> None:
     with pytest.raises(ValueError, match="credit must be non-negative"):
         await receiver.set_credit(-1)
+
+
+async def test_receiver_starts_paused_without_losing_nominal_prefetch(session: Any) -> None:
+    receiver = ReceiverLink(
+        session,
+        "paused-receiver",
+        "jobs",
+        0,
+        lambda *_: None,
+        prefetch=7,
+        intake_paused=True,
+    )
+    assert receiver.link_credit == 0
+    await receiver.attach()
+    await receiver._handle_attach(
+        AttachFrame(
+            name="paused-receiver",
+            handle=1,
+            role=False,
+        ),
+    )
+    initial = session.connection.sent[-1][1]
+    assert isinstance(initial, FlowFrame)
+    assert initial.link_credit == 0
+    await receiver.resume_intake()
+    flow = session.connection.sent[-1][1]
+    assert isinstance(flow, FlowFrame)
+    assert flow.link_credit == 7

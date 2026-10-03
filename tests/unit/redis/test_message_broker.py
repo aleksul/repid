@@ -24,6 +24,7 @@ from repid.connections.redis.message_broker import (
     _default_stream_name_strategy,
     _parse_message_fields,
 )
+from repid.limits import NativeFlow, NativeWindow
 
 
 @pytest.fixture
@@ -150,7 +151,7 @@ def test_redis_server_init() -> None:
 
     caps = server.capabilities
     assert not caps["supports_native_reply"]
-    assert caps["supports_lightweight_pause"]
+    assert caps["supports_worker_pause"]
 
 
 @patch("repid.connections.redis.message_broker.Redis")
@@ -173,7 +174,7 @@ async def test_redis_server_connect_disconnect(mock_redis_cls: MagicMock) -> Non
 
     await server.disconnect()
     assert not server.is_connected
-    sub_mock.close.assert_awaited_once()
+    sub_mock.finish.assert_awaited_once()
     mock_client.aclose.assert_awaited_once()
 
 
@@ -186,11 +187,11 @@ async def test_redis_server_disconnect_subscriber_error(mock_redis_cls: MagicMoc
     await server.connect()
 
     sub_mock = AsyncMock()
-    sub_mock.close.side_effect = ResponseError("Some redis error")
+    sub_mock.finish.side_effect = ResponseError("Some redis error")
     server._active_subscribers.append(sub_mock)
 
     await server.disconnect()
-    sub_mock.close.assert_awaited_once()
+    sub_mock.finish.assert_awaited_once()
     mock_client.aclose.assert_awaited_once()
 
 
@@ -295,8 +296,8 @@ async def test_redis_subscribe_ensure_group(mock_redis_cls: MagicMock) -> None:
     with pytest.raises(ResponseError, match="OTHER"):
         await server.subscribe(channels_to_callbacks={"chan3": typed_callback})
 
-    await sub.close()
-    await sub2.close()
+    await sub.finish()
+    await sub2.finish()
 
 
 @patch("repid.connections.redis.message_broker.Redis")
@@ -333,30 +334,20 @@ async def test_redis_subscriber_consume_loop(mock_redis_cls: MagicMock) -> None:
 
 
 @patch("repid.connections.redis.message_broker.Redis")
-async def test_redis_subscriber_concurrency_limit(mock_redis_cls: MagicMock) -> None:
+async def test_redis_rejects_an_explicit_native_outstanding_window(
+    mock_redis_cls: MagicMock,
+) -> None:
     mock_client = AsyncMock()
     mock_redis_cls.from_url.return_value = mock_client
-    mock_client.xreadgroup.side_effect = lambda *_, **__: asyncio.Future()
-
     server = RedisServer("redis://localhost")
     await server.connect()
-
-    callback = cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], AsyncMock())
-    sub = cast(
-        RedisSubscriber,
-        await server.subscribe(channels_to_callbacks={"c": callback}, concurrency_limit=1),
-    )
-    assert sub._semaphore is not None
-    assert sub._semaphore._value == 1
-    await sub.close()
-
-    callback2 = cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], AsyncMock())
-    sub2 = cast(
-        RedisSubscriber,
-        await server.subscribe(channels_to_callbacks={"c": callback2}, concurrency_limit=0),
-    )
-    assert sub2._semaphore is None
-    await sub2.close()
+    with pytest.raises(ValueError, match="Unsupported native"):
+        await server.subscribe(
+            channels_to_callbacks={"c": AsyncMock()},
+            native_flow=NativeFlow(worker=NativeWindow(max_messages=1)),
+        )
+    assert not server.capabilities["supports_worker_native_messages"]
+    await server.disconnect()
 
 
 @patch("repid.connections.redis.message_broker.Redis")
@@ -379,17 +370,10 @@ async def test_redis_subscriber_close(mock_redis_cls: MagicMock) -> None:
 
     assert sub.is_active
 
-    async def dummy() -> None:
-        pass
-
-    task = asyncio.create_task(dummy())
-    sub._callback_tasks.add(task)
-
-    await sub.close()
+    await sub.finish()
 
     assert not sub.is_active
     assert sub._closed
-    assert task.done()
 
 
 @patch("repid.connections.redis.message_broker.Redis")
@@ -413,7 +397,7 @@ async def test_redis_subscriber_pause_resume(mock_redis_cls: MagicMock) -> None:
     await sub.resume()
     assert sub._paused_event.is_set()
 
-    await sub.close()
+    await sub.finish()
 
 
 @patch("repid.connections.redis.message_broker.Redis")
@@ -440,7 +424,7 @@ async def test_redis_subscriber_consume_loop_exceptions(mock_redis_cls: MagicMoc
 
         mock_sleep.assert_awaited_with(1)
 
-    await sub.close()
+    await sub.finish()
 
 
 async def test_redis_received_message_ack(
@@ -587,17 +571,18 @@ async def test_redis_subscriber_process_stream_messages_callback_error(
 
     msg = MagicMock(spec=RedisReceivedMessage, is_acted_on=False, nack=AsyncMock())
 
-    await sub._run_callback(
-        cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], callback),
-        cast(RedisReceivedMessage, msg),
-        "1-0",
-    )
+    with pytest.raises(ResponseError, match="Callback error"):
+        await sub._run_callback(
+            cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], callback),
+            cast(RedisReceivedMessage, msg),
+            "1-0",
+        )
 
     callback.assert_awaited_once()
-    msg.nack.assert_awaited_once()
+    msg.nack.assert_not_awaited()
     assert not sub._in_flight_messages
 
-    await sub.close()
+    await sub.finish()
 
 
 async def test_redis_received_message_properties_and_ack_acted_on(
@@ -710,7 +695,7 @@ async def test_redis_consume_batch_when_closed() -> None:
         channels={},
         callbacks={},
         consumer_name="c",
-        concurrency_limit=None,
+        native_flow=NativeFlow(),
         server=server,
     )
     sub._closed = True
@@ -728,7 +713,7 @@ async def test_redis_consume_batch_empty_result() -> None:
         channels={"c": ChannelConfig(stream="s", group="g", dlq=None)},
         callbacks={},
         consumer_name="c",
-        concurrency_limit=None,
+        native_flow=NativeFlow(),
         server=server,
     )
 
@@ -747,7 +732,7 @@ async def test_redis_consume_batch_unknown_stream_and_missing_callback() -> None
         channels={"chan": chan_cfg},
         callbacks={"chan": AsyncMock()},
         consumer_name="c",
-        concurrency_limit=None,
+        native_flow=NativeFlow(),
         server=server,
     )
 
@@ -765,73 +750,52 @@ async def test_redis_consume_batch_unknown_stream_and_missing_callback() -> None
         mock_process.assert_not_awaited()
 
 
-async def test_redis_run_callback_exception() -> None:
+async def test_redis_callback_failure_does_not_settle_runner_owned_message() -> None:
     server = RedisServer("redis://localhost")
-
     sub = RedisSubscriber(
         redis_client=AsyncMock(),
         channels={},
         callbacks={},
         consumer_name="c",
-        concurrency_limit=None,
+        native_flow=NativeFlow(),
         server=server,
     )
-
     callback = AsyncMock(side_effect=ResponseError("Error"))
-    msg = MagicMock(spec=RedisReceivedMessage, is_acted_on=False, nack=AsyncMock())
-
-    await sub._run_callback(callback, msg, "1")
-
+    msg = MagicMock(
+        spec=RedisReceivedMessage,
+        is_acted_on=False,
+        keep_alive_interval=None,
+        nack=AsyncMock(),
+    )
+    with pytest.raises(ResponseError, match="Error"):
+        await sub._run_callback(callback, msg, "1")
     callback.assert_awaited_once()
-    msg.nack.assert_awaited_once()
-
-    callback.reset_mock()
-    msg.reset_mock()
-    msg.is_acted_on = True
-
-    await sub._run_callback(callback, msg, "1")
     msg.nack.assert_not_awaited()
 
 
-async def test_redis_semaphore_usage() -> None:
+async def test_redis_submission_returns_without_waiting_for_actor_settlement() -> None:
     server = RedisServer("redis://localhost")
     client = AsyncMock()
     client.xreadgroup.return_value = [[b"s", [(b"1", {b"payload": b"p"})]]]
+    cfg = ChannelConfig(stream="s", group="g", dlq=None)
+    received = []
 
-    chan_cfg = ChannelConfig(stream="s", group="g", dlq=None)
+    async def callback(message: ReceivedMessageT) -> None:
+        received.append(message)
+
     sub = RedisSubscriber(
         redis_client=client,
-        channels={"chan": chan_cfg},
-        callbacks={"chan": AsyncMock()},
+        channels={"chan": cfg},
+        callbacks={"chan": callback},
         consumer_name="c",
-        concurrency_limit=1,
+        native_flow=NativeFlow(),
         server=server,
     )
-
-    actual_semaphore = sub._semaphore
-    assert actual_semaphore is not None
-    sub._semaphore = MagicMock(
-        wraps=actual_semaphore,
-        acquire=AsyncMock(wraps=actual_semaphore.acquire),
-    )
-
-    callback_future: asyncio.Future[None] = asyncio.Future()
-
-    async def cb(_: RedisReceivedMessage) -> None:
-        callback_future.set_result(None)
-
-    sub._callbacks["chan"] = cast(
-        Callable[[ReceivedMessageT], Coroutine[None, None, None]],
-        cb,
-    )
-
-    await sub._consume_batch("g", {"chan": chan_cfg})
-
-    await callback_future
-    await asyncio.sleep(0)
-
-    sub._semaphore.acquire.assert_awaited()
-    sub._semaphore.release.assert_called()
+    await sub._consume_batch("g", {"chan": cfg})
+    assert len(received) == 1
+    assert not received[0].is_acted_on
+    await received[0].ack()
+    await sub.finish()
 
 
 @patch("repid.connections.redis.message_broker.Redis")
@@ -844,7 +808,7 @@ async def test_redis_subscribe_no_dlq_strategy(mock_redis_cls: MagicMock) -> Non
     await server.connect()
     sub = await server.subscribe(channels_to_callbacks={"c": AsyncMock()})
 
-    await sub.close()
+    await sub.finish()
 
 
 async def test_redis_ensure_consumer_group_no_redis() -> None:
@@ -867,8 +831,8 @@ async def test_redis_subscriber_task_done_removes_from_active(mock_redis_cls: Ma
 
     await asyncio.sleep(0)
     assert sub not in server._active_subscribers
-    await sub.close()
-    await sub.close()
+    await sub.finish()
+    await sub.finish()
 
 
 async def test_redis_ensure_consumer_group_busy() -> None:
@@ -941,7 +905,7 @@ async def test_redis_subscribe_multi_channel_groups(mock_redis_cls: MagicMock) -
     assert sub._channels["alpha"].stream == "repid:alpha"
     assert sub._channels["beta"].stream == "repid:beta"
 
-    await sub.close()
+    await sub.finish()
 
 
 async def test_redis_received_message_nack_with_dlq_maxlen(
@@ -984,7 +948,7 @@ async def test_redis_subscriber_in_flight_count() -> None:
         channels={},
         callbacks={},
         consumer_name="c",
-        concurrency_limit=None,
+        native_flow=NativeFlow(),
         server=RedisServer("redis://localhost"),
     )
     assert sub.in_flight_count == 0
@@ -1000,14 +964,14 @@ async def test_redis_subscriber_start_with_claim_interval() -> None:
         channels={},
         callbacks={},
         consumer_name="c",
-        concurrency_limit=None,
+        native_flow=NativeFlow(),
         server=RedisServer("redis://localhost"),
         claim_interval=60.0,
     )
     assert sub._claim_task is None
     sub.start()
     assert sub._claim_task is not None
-    await sub.close()
+    await sub.finish()
     assert sub._claim_task.done()
 
 
@@ -1017,7 +981,7 @@ async def test_redis_subscriber_close_with_active_claim_task() -> None:
         channels={},
         callbacks={},
         consumer_name="c",
-        concurrency_limit=None,
+        native_flow=NativeFlow(),
         server=RedisServer("redis://localhost"),
         claim_interval=60.0,  # long interval — claim task blocks at asyncio.sleep
     )
@@ -1029,7 +993,7 @@ async def test_redis_subscriber_close_with_active_claim_task() -> None:
     assert sub._claim_task is not None
     assert not sub._claim_task.done()  # still sleeping
 
-    await sub.close()
+    await sub.finish()
     assert sub._claim_task.done()
 
 
@@ -1039,7 +1003,7 @@ async def test_redis_consume_group_loop_unexpected_exception() -> None:
         channels={},
         callbacks={},
         consumer_name="c",
-        concurrency_limit=None,
+        native_flow=NativeFlow(),
         server=RedisServer("redis://localhost"),
     )
 
@@ -1072,7 +1036,7 @@ async def test_redis_claim_loop_single_iteration() -> None:
             "chan": cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], callback),
         },
         consumer_name="c",
-        concurrency_limit=None,
+        native_flow=NativeFlow(),
         server=RedisServer("redis://localhost"),
         claim_interval=0.01,
     )
@@ -1099,7 +1063,7 @@ async def test_redis_claim_loop_stops_on_closed_after_sleep() -> None:
         channels={},
         callbacks={},
         consumer_name="c",
-        concurrency_limit=None,
+        native_flow=NativeFlow(),
         server=RedisServer("redis://localhost"),
         claim_interval=0.01,
     )
@@ -1119,7 +1083,7 @@ async def test_redis_claim_loop_callback_none() -> None:
         channels={"chan": chan_cfg},
         callbacks={},  # no callback registered for "chan"
         consumer_name="c",
-        concurrency_limit=None,
+        native_flow=NativeFlow(),
         server=RedisServer("redis://localhost"),
         claim_interval=0.01,
     )
@@ -1152,7 +1116,7 @@ async def test_redis_claim_loop_redis_error() -> None:
             "chan": cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], callback),
         },
         consumer_name="c",
-        concurrency_limit=None,
+        native_flow=NativeFlow(),
         server=RedisServer("redis://localhost"),
         claim_interval=0.01,
     )
@@ -1180,7 +1144,7 @@ async def test_redis_reclaim_pending_single_batch() -> None:
             "chan": cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], callback),
         },
         consumer_name="consumer1",
-        concurrency_limit=None,
+        native_flow=NativeFlow(),
         server=RedisServer("redis://localhost"),
         min_idle_ms=5000,
     )
@@ -1214,7 +1178,7 @@ async def test_redis_reclaim_pending_multi_batch() -> None:
             "chan": cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], callback),
         },
         consumer_name="c",
-        concurrency_limit=None,
+        native_flow=NativeFlow(),
         server=RedisServer("redis://localhost"),
     )
 
@@ -1253,7 +1217,7 @@ async def test_redis_subscribe_consumer_group_start_id(mock_redis_cls: MagicMock
         id="$",
         mkstream=True,
     )
-    await sub.close()
+    await sub.finish()
 
 
 @patch("repid.connections.redis.message_broker.Redis")
@@ -1278,7 +1242,7 @@ async def test_redis_subscribe_dlq_maxlen(mock_redis_cls: MagicMock) -> None:
     assert sub._channels["chan"].dlq_maxlen == 1000
     assert sub._claim_interval == 30.0
     assert sub._min_idle_ms == 2000
-    await sub.close()
+    await sub.finish()
 
 
 @pytest.mark.parametrize(
@@ -1322,14 +1286,16 @@ async def test_redis_consume_batch_str_stream_name() -> None:
             "chan": cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], callback),
         },
         consumer_name="c",
-        concurrency_limit=None,
+        native_flow=NativeFlow(),
         server=server,
     )
 
-    with patch.object(sub, "_process_stream_messages", new_callable=AsyncMock) as mock_process:
-        await sub._consume_batch("g", {"chan": chan_cfg})
+    await sub._consume_batch("g", {"chan": chan_cfg})
 
-    mock_process.assert_awaited_once()
+    callback.assert_awaited_once()
+    assert callback.await_args is not None
+    assert callback.await_args.args[0].channel == "chan"
+    await sub.finish()
 
 
 async def test_redis_process_stream_messages_str_msg_id() -> None:
@@ -1346,7 +1312,7 @@ async def test_redis_process_stream_messages_str_msg_id() -> None:
             "chan": cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], callback),
         },
         consumer_name="c",
-        concurrency_limit=None,
+        native_flow=NativeFlow(),
         server=server,
     )
 
@@ -1378,7 +1344,7 @@ async def test_redis_reclaim_pending_closed_mid_iteration() -> None:
             "chan": cast(Callable[[ReceivedMessageT], Coroutine[None, None, None]], callback),
         },
         consumer_name="c",
-        concurrency_limit=None,
+        native_flow=NativeFlow(),
         server=RedisServer("redis://localhost"),
     )
 
@@ -1409,7 +1375,7 @@ async def test_redis_consume_loop_groups_channels_by_group() -> None:
         },
         callbacks={},
         consumer_name="c",
-        concurrency_limit=None,
+        native_flow=NativeFlow(),
         server=RedisServer("redis://localhost"),
     )
 
@@ -1463,7 +1429,7 @@ async def test_redis_consume_group_loop_retries_redis_transient_errors(
         channels={},
         callbacks={},
         consumer_name="consumer",
-        concurrency_limit=None,
+        native_flow=NativeFlow(),
         server=MagicMock(),
     )
     calls = 0
@@ -1503,7 +1469,7 @@ async def test_redis_claim_loop_retries_redis_transient_errors(
         channels={"jobs": config},
         callbacks={"jobs": AsyncMock()},
         consumer_name="consumer",
-        concurrency_limit=None,
+        native_flow=NativeFlow(),
         server=MagicMock(),
         claim_interval=1.0,
     )
@@ -1594,29 +1560,92 @@ async def test_redis_reclaim_deduplicates_only_within_the_same_channel() -> None
         },
         callbacks={},
         consumer_name="consumer",
-        concurrency_limit=None,
+        native_flow=NativeFlow(),
         server=MagicMock(),
     )
-    started: list[str] = []
-    release = asyncio.Event()
+    started = []
+    ready, release = asyncio.Event(), asyncio.Event()
 
     async def callback(message: ReceivedMessageT) -> None:
         started.append(message.channel)
-        await message.ack()
+        if len(started) == 2:
+            ready.set()
         await release.wait()
+        await message.ack()
 
-    try:
-        for channel in ("first", "second", "first"):
-            await subscriber._process_stream_messages(
+    tasks = [
+        asyncio.create_task(
+            subscriber._process_stream_messages(
                 [(b"1-0", {b"payload": b"x"})],
                 channel,
                 channel,
                 callback,
-            )
-        await asyncio.sleep(0)
-        assert started == ["first", "second"]
-        assert subscriber.in_flight_count == 2
-    finally:
-        release.set()
-        await subscriber.close()
+            ),
+        )
+        for channel in ("first", "second")
+    ]
+    await asyncio.wait_for(ready.wait(), 1)
+    await subscriber._process_stream_messages(
+        [(b"1-0", {b"payload": b"x"})],
+        "first",
+        "first",
+        callback,
+    )
+    assert started == ["first", "second"]
+    release.set()
+    await asyncio.gather(*tasks)
+    await subscriber.finish()
     assert subscriber.in_flight_count == 0
+
+
+@pytest.mark.parametrize("paused_after_fetch", [False, True])
+async def test_redis_multistream_fetch_renews_and_disposes_later_streams(
+    paused_after_fetch: bool,
+    pipeline_mock: tuple[MagicMock, MagicMock],
+) -> None:
+    client, pipe = pipeline_mock
+    first_started, second_renewed = asyncio.Event(), asyncio.Event()
+    channels = {
+        channel: ChannelConfig(stream=channel, group="shared", dlq=None)
+        for channel in ("first", "second")
+    }
+
+    async def callback(message: ReceivedMessageT) -> None:
+        assert message.channel == "first"
+        assert {owned.channel for owned, _ in subscriber._buffer.owned.values()} == {"second"}
+        first_started.set()
+        await asyncio.Event().wait()
+
+    async def fetch(**_kwargs: Any) -> list[Any]:
+        if paused_after_fetch:
+            await subscriber.pause()
+        return [[channel.encode(), [(b"1-0", {b"payload": b"body"})]] for channel in channels]
+
+    async def renew(stream: str, *_args: Any, **_kwargs: Any) -> None:
+        if stream == "second":
+            second_renewed.set()
+
+    client.xreadgroup = AsyncMock(side_effect=fetch)
+    client.xclaim = AsyncMock(side_effect=renew)
+    subscriber = RedisSubscriber(
+        redis_client=client,
+        channels=channels,
+        callbacks=dict.fromkeys(channels, callback),
+        consumer_name="consumer",
+        server=RedisServer("redis://localhost"),
+        min_idle_ms=3000,
+    )
+    subscriber.start()
+    try:
+        await asyncio.wait_for(second_renewed.wait(), 2)
+        assert first_started.is_set() is not paused_after_fetch
+        owned = list(subscriber._buffer.owned.values())
+        expected = {"first", "second"} if paused_after_fetch else {"second"}
+        assert {message.channel for message, _ in owned} == expected
+        await asyncio.wait_for(subscriber.stop(), 2)
+        assert not subscriber._buffer.owned
+        assert all(renewal is not None and renewal.done() for _, renewal in owned)
+        assert {call.args[0] for call in pipe.xack.call_args_list} == expected
+        assert pipe.xack.call_count == len(expected)
+    finally:
+        await subscriber.finish()

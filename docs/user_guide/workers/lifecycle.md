@@ -51,7 +51,7 @@ sequenceDiagram
 
     OS->>Worker: Sends SIGTERM / SIGINT
     Note over Worker: 1. Stop consuming
-    Worker->>Broker: Pause subscription (Stop receiving new messages)
+    Worker->>Broker: Stop intake (preserve settlement resources)
 
     Note over Worker,Actors: 2. Wait up to `graceful_shutdown_time`
 
@@ -68,19 +68,22 @@ sequenceDiagram
     end
 
     Note over Worker: 4. Final Cleanup
-    Worker->>Broker: Close connection
+    Worker->>Broker: Finish subscriber resources
     Worker-->>OS: Process Exits
 ```
 
-1. **Pause Subscription**: The worker immediately stops accepting *new* messages from the broker.
+1. **Stop Intake**: The worker immediately stops accepting *new* messages from the broker.
 2. **Grace Period**: It enters a waiting phase (determined by `graceful_shutdown_time`), allowing
-   currently executing actors to finish their processing naturally.
+   currently executing actors to finish their processing naturally. Messages that were already
+   delivered or admitted but never started processing are cancelled and
+   `Reject`ed back to the queue immediately, so a large pending backlog cannot turn into new
+   work during shutdown.
 3. **Cancellation (if necessary)**: If the timeout is reached and actors are still running, Repid
    triggers an `asyncio.CancelledError` inside those tasks. They are given a brief moment
    (`cancellation_timeout`, defaulting to 1s) to run any `finally` blocks, while the worker
    simultaneously `Reject`s their messages, returning them to the queue so another worker can
    pick them up.
-4. **Disconnect**: Finally, the worker safely closes its connection to the broker and shuts down the
+4. **Finish**: Finally, the worker releases subscriber resources and shuts down the
    process.
 
 ### Configuring the Shutdown Timeout
@@ -131,3 +134,6 @@ await app.run_worker(
     risking message loss or inconsistent state during termination.
     Only disable this when you have alternative mechanisms to
     ensure message safety.
+
+Intake resubscription is separate from shutdown: it preserves admitted work and waits for that work
+to drain before releasing and replacing the subscriber. Explicit shutdown interrupts that wait.

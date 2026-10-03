@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, cast  # Still needed for function annotations
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -22,6 +22,7 @@ from repid.connections.amqp.protocol.managed import (
     SenderPool,
 )
 from repid.connections.amqp.protocol.session import Session
+from repid.connections.amqp.subscriber import AmqpSubscriber
 
 from .utils import (
     FakeManagedConnection,
@@ -393,3 +394,39 @@ async def test_receiver_pool_invalidate() -> None:
     receiver_pool.invalidate()
 
     assert len(receiver_pool._links) == 0
+
+
+async def test_receiver_pool_pause_survives_reconnect_and_targets_current_links() -> None:
+    old, replacement, stopped_replacement = (
+        Mock(pause_intake=AsyncMock(), resume_intake=AsyncMock(), detach=AsyncMock())
+        for _ in range(3)
+    )
+    session = Mock(create_receiver=AsyncMock(side_effect=[old, replacement, stopped_replacement]))
+    managed = Mock(get_session=AsyncMock(return_value=session))
+    pool = ReceiverPool(managed)
+    subscriber = await AmqpSubscriber.create(
+        managed_session=Mock(receiver_pool=pool),
+        queues_to_callbacks={"jobs": AsyncMock()},
+        naming_strategy=lambda address: f"queues/{address}",
+        publish_fn=AsyncMock(),
+    )
+    try:
+        await subscriber.pause()
+        old.pause_intake.assert_awaited_once()
+        await pool._on_reconnected()
+        assert session.create_receiver.await_args.kwargs["intake_paused"] is True
+        assert session.create_receiver.await_args.kwargs["prefetch"] == 100
+        await subscriber.resume()
+        replacement.resume_intake.assert_awaited_once()
+        old.resume_intake.assert_not_awaited()
+        await subscriber.stop()
+        replacement.pause_intake.assert_awaited_once()
+        await pool._on_reconnected()
+        assert session.create_receiver.await_args.kwargs["intake_paused"] is True
+    finally:
+        await subscriber.finish()
+    stopped_replacement.detach.assert_awaited_once()
+    assert "queues/jobs" not in pool._paused_addresses
+    await pool.pause_intake(["unattached"])
+    await pool.resume_intake(["unattached"])
+    await pool.close()

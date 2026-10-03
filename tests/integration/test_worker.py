@@ -40,7 +40,7 @@ async def managed_subscriber(subscriber: SubscriberT) -> AsyncGenerator:
     try:
         yield subscriber
     finally:
-        await subscriber.close()
+        await subscriber.finish()
 
 
 @pytest.mark.parametrize("seed_conn", [30], indirect=True)

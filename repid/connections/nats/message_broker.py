@@ -4,11 +4,14 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable, Coroutine, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
 import nats
+from nats.js.api import AckPolicy, ConsumerConfig
 
+from repid.connections._buffer import SubmissionBuffer, stop_task
 from repid.connections.abc import (
     CapabilitiesT,
     MessageAction,
@@ -16,12 +19,14 @@ from repid.connections.abc import (
     SentMessageT,
     ServerT,
     SubscriberT,
+    broker_capabilities,
+    validate_native_flow,
 )
+from repid.limits import UNLIMITED_NATIVE_FLOW, NativeFlow
 
 if TYPE_CHECKING:
     from nats.aio.client import Client
     from nats.aio.msg import Msg
-    from nats.aio.subscription import Subscription
     from nats.js.client import JetStreamContext
 
     from repid.asyncapi.models.common import ServerBindingsObject
@@ -43,8 +48,8 @@ class NatsReceivedMessage(ReceivedMessageT):
         self._server = server
         self._channel = channel
         self._action: MessageAction | None = None
-        self._keep_alive_interval: int | None = (
-            int(ack_wait) // 3 if ack_wait is not None and ack_wait > 0 else None
+        self._keep_alive_interval: float | None = (
+            ack_wait / 3 if ack_wait is not None and ack_wait > 0 else None
         )
 
     @property
@@ -89,7 +94,7 @@ class NatsReceivedMessage(ReceivedMessageT):
         return None
 
     @property
-    def keep_alive_interval(self) -> int | None:
+    def keep_alive_interval(self) -> float | None:
         return self._keep_alive_interval
 
     async def keep_alive(self) -> None:
@@ -200,118 +205,267 @@ class NatsReceivedMessage(ReceivedMessageT):
 
 
 class NatsSubscriber(SubscriberT):
+    """Push intake with a shared server window and bounded, renewed local buffers."""
+
     def __init__(
         self,
         server: NatsServer,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        native_flow: NativeFlow = UNLIMITED_NATIVE_FLOW,
     ) -> None:
         self._server = server
+        self._native_flow = native_flow
+        self._requested_flow = native_flow
         self._channels_to_callbacks = channels_to_callbacks
-        self._concurrency_limit = concurrency_limit
-        self._subs: dict[str, Subscription] = {}
+        self._subs: dict[str, JetStreamContext.PushSubscription] = {}
+        self._buffers: dict[str, SubmissionBuffer] = {}
+        self._queues: dict[str, asyncio.Queue[NatsReceivedMessage]] = {}
+        self._configs: dict[str, tuple[str, ConsumerConfig]] = {}
         self._closed = False
-        self._active = False
-
-        self._semaphore = (
-            asyncio.Semaphore(concurrency_limit)
-            if concurrency_limit and concurrency_limit > 0
-            else None
-        )
-
+        self._finished = False
+        self._active = True
+        self._paused_event = asyncio.Event()
+        self._ready = asyncio.Event()
+        self._control_lock = asyncio.Lock()
+        self._failure: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self._callback_error: BaseException | None = None
+        self._channel_tasks: list[asyncio.Task] = []
         self._task = asyncio.create_task(self._start())
 
     @property
+    def native_flow(self) -> NativeFlow:
+        return self._native_flow
+
+    @property
     def is_active(self) -> bool:
-        return self._active
+        return self._active and not self._closed and not self._task.done()
 
     @property
     def task(self) -> asyncio.Task:
         return self._task
 
-    async def _start(self) -> None:
-        self._active = True
-        try:
-            for channel, callback in self._channels_to_callbacks.items():
-                await self._subscribe_channel(channel, callback)
-
-            while not self._closed:
-                await asyncio.sleep(1)
-        except asyncio.CancelledError:
-            pass
-        finally:
-            await self.close()
-
-    async def _subscribe_channel(
-        self,
-        channel: str,
-        callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
-    ) -> None:
-        ack_wait: float | None = None
-        if self._server._js is not None:
-            with suppress(Exception):
-                consumer_info = await self._server._js.consumer_info(channel, f"{channel}_group")
-                ack_wait = consumer_info.config.ack_wait
-
-        async def message_handler(msg: Msg) -> None:
-            wrapped = NatsReceivedMessage(msg, self._server, channel, ack_wait=ack_wait)
-            if self._semaphore:
-                async with self._semaphore:
-                    try:
-                        await callback(wrapped)
-                    except Exception:
-                        logger.exception("consumer.error.unexpected", extra={"channel": channel})
-                        if not wrapped.is_acted_on:
-                            await wrapped.nack()
+    def _check_window(self, channel: str, config: ConsumerConfig) -> None:
+        if not config.deliver_subject or config.deliver_group != f"{channel}_group":
+            raise ValueError(
+                "Existing NATS consumer must be a push consumer with the matching queue group",
+            )
+        window = self._requested_flow.channels.get(channel)
+        requested = window.max_messages if window is not None else None
+        actual = config.max_ack_pending
+        ack_required = config.ack_policy in (AckPolicy.EXPLICIT, AckPolicy.ALL)
+        if requested is not None and (actual != requested or not ack_required):
+            if window is not None and window.messages_automatic:
+                compatible = ack_required and actual is not None and 0 < actual <= requested
+                self._native_flow = replace(
+                    self._native_flow,
+                    channels={
+                        **self._native_flow.channels,
+                        channel: replace(window, max_messages=actual if compatible else None),
+                    },
+                )
+                if compatible:
+                    return
+                logger.info(
+                    "worker.intake.resolved",
+                    extra={
+                        "scope": "channel",
+                        "channel": channel,
+                        "native_cap": None,
+                        "consumer_max_ack_pending": actual,
+                        "consumer_ack_policy": config.ack_policy,
+                        "requested_native_cap": requested,
+                        "fallback_reason": "existing shared NATS consumer window; local control retained",
+                    },
+                )
             else:
-                try:
-                    await callback(wrapped)
-                except Exception:
-                    logger.exception("consumer.error.unexpected", extra={"channel": channel})
-                    if not wrapped.is_acted_on:
-                        await wrapped.nack()
+                raise ValueError(
+                    f"Explicit native messages window for {channel!r} conflicts with shared "
+                    f"NATS consumer MaxAckPending={actual}, ack_policy={config.ack_policy}; "
+                    "configure the consumer before subscribing",
+                )
 
-        if self._server._js is not None:
-            sub = await self._server._js.subscribe(
+    async def _start(self) -> None:
+        try:
+            js = self._server._js
+            if self._channels_to_callbacks and js is None:
+                raise ConnectionError("JetStream is not initialized")
+            # Resolve every existing consumer before opening any delivery subscription.
+            for channel in self._channels_to_callbacks:
+                js = cast("JetStreamContext", js)
+                stream = await js.find_stream_name_by_subject(channel)
+                window = self._native_flow.channels.get(channel)
+                requested = window.max_messages if window is not None else None
+                try:
+                    info = await js.consumer_info(stream, f"{channel}_group")
+                except nats.js.errors.NotFoundError:
+                    config = ConsumerConfig(max_ack_pending=requested or 1000, ack_wait=30)
+                else:
+                    config = info.config
+                    self._check_window(channel, config)
+                self._configs[channel] = (stream, config)
+                shared = config.max_ack_pending
+                capacity = min(
+                    requested or 1000,
+                    shared if shared is not None and shared > 0 else 1000,
+                )
+                self._queues[channel] = asyncio.Queue(maxsize=capacity)
+                self._buffers[channel] = SubmissionBuffer()
+            async with self._control_lock:
+                await self._attach()
+                self._paused_event.set()
+                self._ready.set()
+            for channel in self._channels_to_callbacks:
+                self._channel_tasks.append(asyncio.create_task(self._dispatch(channel)))
+            await asyncio.gather(*self._channel_tasks, self._failure)
+        finally:
+            self._ready.set()
+            self._active = False
+            for task in self._channel_tasks:
+                task.cancel()
+            await asyncio.gather(*self._channel_tasks, return_exceptions=True)
+            self._failure.cancel()
+            if not self._failure.cancelled():
+                self._failure.exception()
+
+    def _report_failure(self, error: BaseException) -> None:
+        if not self._failure.done():
+            self._failure.set_exception(error)
+
+    def _renewal_finished(self, task: asyncio.Task) -> None:
+        if not task.cancelled() and (error := task.exception()) is not None:
+            self._report_failure(error)
+
+    async def _receive(self, channel: str, raw: Msg) -> None:
+        _, config = self._configs[channel]
+        ack_wait = config.backoff[0] if config.backoff else config.ack_wait
+        message = NatsReceivedMessage(raw, self._server, channel, ack_wait=ack_wait)
+        try:
+            if self._closed:
+                await message.reject()
+                return
+            queue = self._queues[channel]
+            if queue.full():
+                # Automatic fallback or early acknowledgment may exceed the local buffer.
+                # Return credit without discarding work or blocking the SDK callback loop.
+                await message.reject()
+                return
+            buffer = self._buffers[channel]
+            buffer.track((message,))
+            renewal = buffer.owned[id(message)][1]
+            if renewal is not None:
+                renewal.add_done_callback(self._renewal_finished)
+            queue.put_nowait(message)
+        except Exception as exc:  # noqa: BLE001
+            # nats-py swallows callback errors; surface them through the subscriber task.
+            self._callback_error = exc
+            self._report_failure(exc)
+
+    async def _attach(self) -> None:
+        js = cast("JetStreamContext", self._server._js)
+        for channel, (stream, config) in self._configs.items():
+
+            async def receive(raw: Msg, address: str = channel) -> None:
+                await self._receive(address, raw)
+
+            subscription = await js.subscribe(
                 channel,
+                stream=stream,
                 queue=f"{channel}_group",
                 durable=f"{channel}_group",
-                cb=message_handler,
+                config=config,
+                cb=receive,
                 manual_ack=True,
+                # A read can contain the entire shared server window before the SDK
+                # schedules callbacks. Do not size its raw queue to a smaller local cap.
+                pending_msgs_limit=(
+                    config.max_ack_pending
+                    if config.max_ack_pending is not None and config.max_ack_pending > 0
+                    else 1000
+                ),
+                pending_bytes_limit=64 * 1024 * 1024,
             )
-            self._subs[channel] = sub
-        else:  # pragma: no cover
-            # Shouldn't happen, as we check for jetstream context before creating subscriber
-            raise ConnectionError("JetStream context is not initialized. Call connect() first.")
+            self._subs[channel] = subscription
+            # subscribe() can bind a durable created concurrently. Verify its actual settings
+            # before dispatcher admission; never overwrite shared consumer configuration.
+            info = await subscription.consumer_info()
+            self._check_window(channel, info.config)
+            self._configs[channel] = (stream, info.config)
 
-    async def pause(self) -> None:
-        if not self._active:
-            return
-        self._active = False
-        for _channel, sub in self._subs.items():
-            with suppress(Exception):
-                await sub.unsubscribe()
-        self._subs.clear()
-        logger.debug("subscriber.pause", extra={"channel": "all"})
+    async def _detach(self) -> None:
+        subscriptions = list(self._subs.items())
 
-    async def resume(self) -> None:
-        if self._closed or self._active:
-            return
-        self._active = True
-        for channel, callback in self._channels_to_callbacks.items():
-            await self._subscribe_channel(channel, callback)
-        logger.debug("subscriber.resume", extra={"channel": "all"})
+        async def detach(channel: str, subscription: JetStreamContext.PushSubscription) -> None:
+            # Drain nats-py's raw callback queue before releasing the subscription. Settlement
+            # and in-progress requests use the shared connection, which stays open until finish.
+            await subscription._sub.drain()
+            await subscription.unsubscribe()
+            self._subs.pop(channel)
 
-    async def close(self) -> None:
+        results = await asyncio.gather(
+            *(detach(channel, sub) for channel, sub in subscriptions),
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+        if self._callback_error is not None:
+            raise self._callback_error
+
+    async def _dispatch(self, channel: str) -> None:
+        while not self._closed:
+            await self._paused_event.wait()
+            message = await self._queues[channel].get()
+            await self._paused_event.wait()
+            await self._buffers[channel].submit(message, self._channels_to_callbacks[channel])
+
+    async def pause(self, channel: str | None = None) -> None:
+        if channel is not None:
+            raise ValueError("NATS supports worker pause only")
+        await self._ready.wait()
+        async with self._control_lock:
+            self._paused_event.clear()
+            await self._detach()
+
+    async def resume(self, channel: str | None = None) -> None:
+        if channel is not None:
+            raise ValueError("NATS supports worker pause only")
+        await self._ready.wait()
+        async with self._control_lock:
+            if not self._closed and not self._paused_event.is_set():
+                await self._attach()
+                self._paused_event.set()
+
+    async def stop(self) -> None:
         if self._closed:
             return
         self._closed = True
-        await self.pause()
-        if not self._task.done() and asyncio.current_task() != self._task:
-            self._task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._task
-        logger.debug("subscriber.close", extra={"channel": "all"})
+        self._active = False
+        try:
+            await stop_task(self._task)
+        finally:
+            async with self._control_lock:
+                try:
+                    await self._detach()
+                finally:
+                    results = await asyncio.gather(
+                        *(buffer.dispose() for buffer in self._buffers.values()),
+                        return_exceptions=True,
+                    )
+                    for result in results:
+                        if isinstance(result, BaseException):
+                            raise result
+
+    async def finish(self) -> None:
+        try:
+            await self.stop()
+        finally:
+            if not self._finished:
+                async with self._control_lock:
+                    await self._detach()
+                self._configs.clear()
+                self._buffers.clear()
+                self._queues.clear()
+                self._finished = True
 
 
 class NatsServer(ServerT):
@@ -395,11 +549,9 @@ class NatsServer(ServerT):
 
     @property
     def capabilities(self) -> CapabilitiesT:
-        return {
-            "supports_native_reply": True,
-            "supports_lightweight_pause": False,
-            "supports_keep_alive": True,
-        }
+        capabilities = broker_capabilities(native_reply=True, keep_alive=True, worker_pause=True)
+        capabilities["supports_channel_native_messages"] = True
+        return capabilities
 
     @property
     def is_connected(self) -> bool:
@@ -416,14 +568,20 @@ class NatsServer(ServerT):
             self._nc = None
             self._js = None
 
-        self._nc = await nats.connect(self.dsn)
+        self._nc = await nats.connect(self.dsn, error_cb=self._intake_error)
         self._js = self._nc.jetstream()
         logger.info("server.connect", extra={"host": self.host})
+
+    async def _intake_error(self, error: Exception) -> None:
+        if isinstance(error, nats.errors.SlowConsumerError):
+            for subscriber in self._active_subscribers:
+                subscriber._report_failure(error)
+        logger.error("server.intake.error", extra={"error_type": type(error).__name__})
 
     async def disconnect(self) -> None:
         for sub in list(self._active_subscribers):
             with suppress(Exception):  # pragma: no cover
-                await sub.close()
+                await sub.finish()
         self._active_subscribers.clear()
 
         if self._nc is not None:
@@ -482,15 +640,16 @@ class NatsServer(ServerT):
         self,
         *,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        native_flow: NativeFlow = UNLIMITED_NATIVE_FLOW,
     ) -> SubscriberT:
+        validate_native_flow(native_flow, self.capabilities)
         if not self.is_connected or self._js is None:
             raise ConnectionError("NATS connection is not initialized. Call connect() first.")
 
         subscriber = NatsSubscriber(
             server=self,
             channels_to_callbacks=channels_to_callbacks,
-            concurrency_limit=concurrency_limit,
+            native_flow=native_flow,
         )
         self._active_subscribers.add(subscriber)
         subscriber.task.add_done_callback(lambda _: self._active_subscribers.discard(subscriber))

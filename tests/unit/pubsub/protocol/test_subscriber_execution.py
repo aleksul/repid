@@ -14,6 +14,7 @@ from repid.connections.pubsub.protocol import (
 )
 from repid.connections.pubsub.protocol import subscriber as sub_module
 from repid.connections.pubsub.protocol._helpers import QueuedDelivery
+from repid.limits import NativeFlow
 
 
 def _make_subscriber(**overrides: Any) -> sub_module.PubsubSubscriber:
@@ -26,7 +27,7 @@ def _make_subscriber(**overrides: Any) -> sub_module.PubsubSubscriber:
         "server": MagicMock(),
         "stream_ack_deadline_seconds": 10,
         "client_id": "client",
-        "concurrency_limit": 10,
+        "native_flow": NativeFlow(),
     }
     defaults.update(overrides)
     return sub_module.PubsubSubscriber(**defaults)
@@ -181,7 +182,7 @@ async def test_lifecycle_control() -> None:
 
     subscriber._task = asyncio.create_task(asyncio.sleep(0.1))
 
-    await subscriber.close()
+    await subscriber.finish()
     assert not subscriber.is_active
     assert subscriber._is_closing
     assert subscriber._task.cancelled()
@@ -202,23 +203,19 @@ async def test_process_response_directly() -> None:
     await subscriber._process_response(response, config)
 
     assert subscriber._delivery_queue.qsize() == 1
-    assert len(subscriber._in_flight_messages) == 1
+    assert len(subscriber._buffer.owned) == 1
 
 
-async def test_cancel_callback_tasks() -> None:
+async def test_stop_rejects_adapter_owned_messages() -> None:
     subscriber = _make_subscriber()
-    t1, t2 = MagicMock(), MagicMock()
-    subscriber._callback_tasks.add(t1)
-    subscriber._callback_tasks.add(t2)
-
-    result = subscriber._cancel_callback_tasks()
-
-    assert len(result) == 2
-    t1.cancel.assert_called_once()
-    t2.cancel.assert_called_once()
-    assert len(subscriber._callback_tasks) == 0
+    message = MagicMock(is_acted_on=False, keep_alive_interval=None, reject=AsyncMock())
+    subscriber._buffer.track((message,))
+    await subscriber.stop()
+    message.reject.assert_awaited_once()
 
 
-async def test_cancel_callback_tasks_empty() -> None:
+async def test_finish_empty_subscription_is_idempotent() -> None:
     subscriber = _make_subscriber()
-    assert subscriber._cancel_callback_tasks() == []
+    await subscriber.finish()
+    await subscriber.finish()
+    assert not subscriber.is_active

@@ -8,13 +8,21 @@ from typing import TYPE_CHECKING, Any
 
 from aiobotocore.session import get_session
 
-from repid.connections.abc import CapabilitiesT, SentMessageT, ServerT, SubscriberT
+from repid.connections.abc import (
+    CapabilitiesT,
+    SentMessageT,
+    ServerT,
+    SubscriberT,
+    broker_capabilities,
+    validate_native_flow,
+)
 from repid.connections.sqs.constants import (
     EMPTY_PAYLOAD_ATTRIBUTE,
     EMPTY_PAYLOAD_ATTRIBUTE_VALUE,
     EMPTY_PAYLOAD_BODY_PLACEHOLDER,
 )
 from repid.connections.sqs.subscriber import SqsSubscriber
+from repid.limits import UNLIMITED_NATIVE_FLOW, NativeFlow
 
 if TYPE_CHECKING:
     from types_aiobotocore_sqs.client import SQSClient
@@ -131,11 +139,7 @@ class SqsServer(ServerT):
 
     @property
     def capabilities(self) -> CapabilitiesT:
-        return {
-            "supports_native_reply": False,
-            "supports_lightweight_pause": False,
-            "supports_keep_alive": True,
-        }
+        return broker_capabilities(native_reply=False, keep_alive=True, worker_pause=True)
 
     @property
     def is_connected(self) -> bool:
@@ -159,7 +163,7 @@ class SqsServer(ServerT):
             try:
                 for subscriber in list(self._active_subscribers):
                     try:
-                        await subscriber.close()
+                        await subscriber.finish()
                     except Exception:
                         logger.exception("subscriber.closing_error")
             finally:
@@ -237,8 +241,9 @@ class SqsServer(ServerT):
         self,
         *,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        native_flow: NativeFlow = UNLIMITED_NATIVE_FLOW,
     ) -> SubscriberT:
+        validate_native_flow(native_flow, self.capabilities)
         logger.debug("channel.subscribe", extra={"channels": list(channels_to_callbacks.keys())})
 
         if self._client is None:
@@ -247,7 +252,7 @@ class SqsServer(ServerT):
         sub = SqsSubscriber(
             server=self,
             channels_to_callbacks=channels_to_callbacks,
-            concurrency_limit=concurrency_limit,
+            native_flow=native_flow,
         )
         self._active_subscribers.add(sub)
         sub.task.add_done_callback(lambda _: self._active_subscribers.discard(sub))

@@ -2,17 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import suppress
-from typing import Literal
-from unittest.mock import AsyncMock, Mock
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, suppress
+from typing import Any, Literal
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
-from repid import Repid, Router, ServerT
+from repid import IntakeControl, MessageCountIntake, MessageLimits, Repid, Router, ServerT
 from repid._runner import _keep_alive_loop, _run_with_keepalive, _Runner
 from repid.connections.in_memory import InMemoryServer
-from repid.data import ActorExecutionContext, MessageData
+from repid.data import ActorExecutionContext, Channel, MessageData
 from repid.health_check_server import HealthCheckServer, HealthCheckStatus
+from repid.limits import UNLIMITED_NATIVE_FLOW, NativeFlow, NativeWindow
 from repid.serializer import default_serializer
 from repid.test_client import TestClient
 
@@ -193,13 +195,13 @@ async def test_runner_actor_always_ack_mode_with_timeout() -> None:
         assert isinstance(msg.exception, asyncio.TimeoutError)
 
 
-@pytest.mark.parametrize("supports_lightweight_pause", [True, False])
-async def test_runner_max_tasks_hit(supports_lightweight_pause: bool) -> None:
+@pytest.mark.parametrize("supports_worker_pause", [True, False])
+async def test_runner_max_tasks_hit(supports_worker_pause: bool) -> None:
     server = InMemoryServer()
     mocked_server = Mock(spec=server, wraps=server)
-    mocked_server.capabilities.side_effect = {
+    mocked_server.capabilities = {
         **server.capabilities,
-        "supports_lightweight_pause": supports_lightweight_pause,
+        "supports_worker_pause": supports_worker_pause,
     }
 
     router = Router()
@@ -236,15 +238,13 @@ async def test_runner_max_tasks_hit(supports_lightweight_pause: bool) -> None:
         assert runner.max_tasks_hit
 
 
-async def test_runner_unpause_threshold_validation() -> None:
+async def test_runner_resume_threshold_must_be_below_pause() -> None:
     server = InMemoryServer()
-
-    with pytest.raises(ValueError, match="Subscriber will never unpause"):
+    with pytest.raises(ValueError, match="less than pause_at"):
         _Runner(
             actor_context=_make_actor_context(server),
-            max_tasks=10,
-            tasks_concurrency_limit=1,
-            concurrency_unpause_percent=2.0,  # 200% - more than limit
+            limits=MessageLimits(max_messages=2),
+            intake_control=IntakeControl(messages=MessageCountIntake(pause_at=2, resume_at=2)),
         )
 
 
@@ -301,43 +301,12 @@ async def test_runner_cancel_event_during_actor_execution() -> None:
         assert cancelled
 
 
-async def test_runner_no_matching_actor_rejects_message(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    server = InMemoryServer()
-    router = Router()
-
-    @router.actor()
-    async def some_actor() -> None:
-        pass
-
-    async with server.connection():
-        runner = _Runner(
-            actor_context=_make_actor_context(server),
-        )
-
-        await server.publish(
-            channel="default",
-            message=MessageData(
-                payload=b"{}",
-                headers={"topic": "nonexistent_actor"},
-                content_type="application/json",
-            ),
-        )
-
-        runner.stop_consume_event.set()
-
-        await runner.run(
-            channels_to_actors=router._actors_per_channel_address,
-            graceful_termination_timeout=0.1,
-        )
-
-        warning_log = next(
-            (r for r in caplog.get_records(when="call") if r.levelno == logging.WARNING),
-            None,
-        )
-        assert warning_log is not None
-        assert warning_log.message == "actor.route.not_found"
+async def test_runner_no_matching_actor_rejects_message(caplog: pytest.LogCaptureFixture) -> None:
+    runner = _Runner(actor_context=_make_actor_context(InMemoryServer()))
+    message = _make_unrouted_message("unrouted")
+    await runner._message_handler([], message)
+    message.reject.assert_awaited_once()
+    assert any(record.message == "actor.route.not_found" for record in caplog.records)
 
 
 async def test_runner_pause_and_resume_with_concurrency_limit() -> None:
@@ -397,19 +366,24 @@ async def test_runner_subscriber_exception_sets_unhealthy() -> None:
     server = InMemoryServer()
 
     class FailingSubscriber:
+        native_flow = UNLIMITED_NATIVE_FLOW
+
         def __init__(self) -> None:
             self.task = asyncio.create_task(self._fail())
 
         async def _fail(self) -> None:
             raise RuntimeError("Subscriber failed")
 
-        async def pause(self) -> None:
+        async def pause(self, channel: str | None = None) -> None:
             pass
 
-        async def resume(self) -> None:
+        async def resume(self, channel: str | None = None) -> None:
             pass
 
-        async def close(self) -> None:
+        async def stop(self) -> None:
+            pass
+
+        async def finish(self) -> None:
             pass
 
     async def failing_subscribe(*args, **kwargs):  # type: ignore[no-untyped-def]  # noqa: ARG001
@@ -430,10 +404,11 @@ async def test_runner_subscriber_exception_sets_unhealthy() -> None:
             health_check_server=health_check_server,
         )
 
-        await runner.run(
-            channels_to_actors=router._actors_per_channel_address,
-            graceful_termination_timeout=0.1,
-        )
+        with pytest.raises(RuntimeError, match="Subscriber failed"):
+            await runner.run(
+                channels_to_actors=router._actors_per_channel_address,
+                graceful_termination_timeout=0.1,
+            )
 
         assert health_check_server.health_status == HealthCheckStatus.UNHEALTHY
 
@@ -487,116 +462,53 @@ async def test_runner_graceful_shutdown_with_timeout(
         assert error_log is not None
 
 
-async def test_runner_pause_exception_during_shutdown(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+async def test_runner_stop_failure_is_propagated_and_marks_unhealthy() -> None:
     server = InMemoryServer()
-
-    class FailingPauseSubscriber:
-        def __init__(self, original_subscriber) -> None:  # type: ignore[no-untyped-def]
-            self.original_subscriber = original_subscriber
-            self.task = original_subscriber.task
-
-        async def pause(self) -> None:
-            raise RuntimeError("Pause failed")
-
-        async def resume(self) -> None:
-            await self.original_subscriber.resume()
-
-        async def close(self) -> None:
-            await self.original_subscriber.close()
-
-    original_subscribe = server.subscribe
-
-    async def failing_pause_subscribe(*args, **kwargs):  # type: ignore[no-untyped-def]
-        original = await original_subscribe(*args, **kwargs)
-        return FailingPauseSubscriber(original)
-
-    server.subscribe = failing_pause_subscribe  # type: ignore[method-assign]
-
+    subscriber = MagicMock()
+    subscriber.task = asyncio.create_task(asyncio.sleep(10))
+    subscriber.stop = AsyncMock(side_effect=RuntimeError("Stop failed"))
+    subscriber.finish = AsyncMock()
+    server.subscribe = AsyncMock(return_value=subscriber)  # type: ignore[method-assign]
+    health = HealthCheckServer()
+    runner = _Runner(actor_context=_make_actor_context(server), health_check_server=health)
+    runner.stop_consume_event.set()
     router = Router()
 
-    @router.actor()
-    async def test_actor() -> None:
+    @router.actor
+    async def job() -> None:
         pass
 
     async with server.connection():
-        runner = _Runner(
-            actor_context=_make_actor_context(server),
-        )
-
-        runner.stop_consume_event.set()
-
-        await runner.run(
-            channels_to_actors=router._actors_per_channel_address,
-            graceful_termination_timeout=0.1,
-        )
-
-        exception_log = next(
-            (
-                r
-                for r in caplog.get_records(when="call")
-                if r.message == "runner.subscriber.pause.error"
-            ),
-            None,
-        )
-        assert exception_log is not None
+        with pytest.raises(RuntimeError, match="Stop failed"):
+            await runner.run(router._actors_per_channel_address, 0)
+    assert health.health_status == HealthCheckStatus.UNHEALTHY
+    subscriber.finish.assert_awaited_once()
+    subscriber.task.cancel()
+    await asyncio.gather(subscriber.task, return_exceptions=True)
 
 
-async def test_runner_close_exception_during_shutdown(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+async def test_runner_finish_failure_is_propagated_and_marks_unhealthy() -> None:
     server = InMemoryServer()
-
-    class FailingCloseSubscriber:
-        def __init__(self, original_subscriber) -> None:  # type: ignore[no-untyped-def]
-            self.original_subscriber = original_subscriber
-            self.task = original_subscriber.task
-
-        async def pause(self) -> None:
-            await self.original_subscriber.pause()
-
-        async def resume(self) -> None:
-            await self.original_subscriber.resume()
-
-        async def close(self) -> None:
-            raise RuntimeError("Close failed")
-
-    original_subscribe = server.subscribe
-
-    async def failing_close_subscribe(*args, **kwargs):  # type: ignore[no-untyped-def]
-        original = await original_subscribe(*args, **kwargs)
-        return FailingCloseSubscriber(original)
-
-    server.subscribe = failing_close_subscribe  # type: ignore[method-assign]
-
+    subscriber = MagicMock()
+    subscriber.task = asyncio.create_task(asyncio.sleep(10))
+    subscriber.stop = AsyncMock()
+    subscriber.finish = AsyncMock(side_effect=RuntimeError("Finish failed"))
+    server.subscribe = AsyncMock(return_value=subscriber)  # type: ignore[method-assign]
+    health = HealthCheckServer()
+    runner = _Runner(actor_context=_make_actor_context(server), health_check_server=health)
+    runner.stop_consume_event.set()
     router = Router()
 
-    @router.actor()
-    async def test_actor() -> None:
+    @router.actor
+    async def job() -> None:
         pass
 
     async with server.connection():
-        runner = _Runner(
-            actor_context=_make_actor_context(server),
-        )
-
-        runner.stop_consume_event.set()
-
-        await runner.run(
-            channels_to_actors=router._actors_per_channel_address,
-            graceful_termination_timeout=0.1,
-        )
-
-        exception_log = next(
-            (
-                r
-                for r in caplog.get_records(when="call")
-                if r.message == "runner.subscriber.close.error"
-            ),
-            None,
-        )
-        assert exception_log is not None
+        with pytest.raises(RuntimeError, match="Finish failed"):
+            await runner.run(router._actors_per_channel_address, 0)
+    assert health.health_status == HealthCheckStatus.UNHEALTHY
+    subscriber.task.cancel()
+    await asyncio.gather(subscriber.task, return_exceptions=True)
 
 
 async def test_runner_tasks_not_finishing_after_cancellation(
@@ -643,7 +555,8 @@ async def test_runner_tasks_not_finishing_after_cancellation(
         )
 
         await run_task
-        await runner_task
+        with pytest.raises(TimeoutError, match="Processing did not stop"):
+            await runner_task
 
         error_log = next(
             (
@@ -751,6 +664,9 @@ def _make_unrouted_message(message_id: str | None) -> Mock:
     msg = Mock()
     msg.message_id = message_id
     msg.channel = "default"
+    msg.payload = b"{}"
+    msg.keep_alive_interval = None
+    msg.is_acted_on = False
     msg.nack = AsyncMock()
     msg.reject = AsyncMock()
     return msg
@@ -950,3 +866,157 @@ async def test_run_with_keepalive_task_cancelled_on_actor_timeout() -> None:
     call_count_after_timeout = message.keep_alive.call_count
     await asyncio.sleep(0.05)
     assert message.keep_alive.call_count == call_count_after_timeout
+
+
+async def test_processing_start_rechecks_shutdown_after_policy_entry() -> None:
+
+    server = InMemoryServer()
+    runner = _Runner(actor_context=_make_actor_context(server))
+    exited = []
+
+    class Policy:
+        @asynccontextmanager
+        async def reserve(self, *args: Any) -> AsyncIterator[None]:
+            del args
+            runner.stop_consume_event.set()
+            try:
+                yield
+            finally:
+                exited.append(1)
+
+    router = Router(limit_policies=(Policy(),))
+
+    @router.actor
+    async def job() -> None:
+        pytest.fail("Shutdown must win at the processing boundary")
+
+    async with server.connection():
+        await server.publish(
+            channel="default",
+            message=MessageData(
+                payload=b"null",
+                content_type="application/json",
+                headers={"topic": "job"},
+            ),
+        )
+        await asyncio.wait_for(runner.run(router._actors_per_channel_address, 0), 2)
+    assert runner.processed == 0
+    assert exited == [1]
+    assert runner.delivered_messages == 0
+    assert runner.admitted_messages == 0
+
+
+async def test_zero_quota_does_not_subscribe() -> None:
+    server = InMemoryServer()
+    runner = _Runner(actor_context=_make_actor_context(server), max_tasks=0)
+    server.subscribe = AsyncMock()  # type: ignore[method-assign]
+    await runner.run({}, 0)
+    server.subscribe.assert_not_awaited()
+
+
+async def test_completed_subscriber_disposes_task_before_first_processing_turn() -> None:
+    server = InMemoryServer()
+    complete = asyncio.create_task(asyncio.sleep(0))
+    await complete
+    subscriber = Mock(
+        task=complete,
+        stop=AsyncMock(),
+        finish=AsyncMock(),
+        native_flow=UNLIMITED_NATIVE_FLOW,
+    )
+    message = Mock(
+        payload=b"null",
+        headers={"topic": "job"},
+        channel="default",
+        keep_alive_interval=None,
+        is_acted_on=False,
+        reject=AsyncMock(),
+    )
+
+    async def subscribe(**kwargs):  # type: ignore[no-untyped-def]
+        await kwargs["channels_to_callbacks"]["default"](message)
+        return subscriber
+
+    server.subscribe = subscribe  # type: ignore[method-assign]
+    router = Router()
+
+    @router.actor
+    async def job() -> None:
+        pytest.fail("Processing must not start after intake ends")
+
+    runner = _Runner(actor_context=_make_actor_context(server))
+    async with server.connection():
+        await runner.run(router._actors_per_channel_address, 0)
+    message.reject.assert_awaited_once()
+    assert runner.processed == 0
+    assert runner.delivered_messages == 0
+    assert runner.admitted_messages == 0
+
+
+async def test_stopped_resubscription_does_not_replace_subscriber() -> None:
+    server = InMemoryServer()
+    runner = _Runner(actor_context=_make_actor_context(server))
+    subscriber = Mock(stop=AsyncMock(), finish=AsyncMock())
+    runner.stop_consume_event.set()
+    await runner._replace(subscriber)
+    subscriber.stop.assert_awaited_once()
+    subscriber.finish.assert_not_awaited()
+
+
+async def test_shutdown_after_reservation_before_admission_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = InMemoryServer()
+    runner = _Runner(actor_context=_make_actor_context(server))
+    acquired, commit = asyncio.Event(), asyncio.Event()
+    acquire = runner._capacity.acquire
+
+    async def controlled_acquire(*args: Any, **kwargs: Any) -> None:
+        await acquire(*args, **kwargs)
+        acquired.set()
+        await commit.wait()
+
+    monkeypatch.setattr(runner._capacity, "acquire", controlled_acquire)
+    router = Router()
+
+    @router.actor
+    async def job() -> None:
+        pytest.fail("Shutdown must reject the uncommitted reservation")
+
+    async with server.connection():
+        await server.publish(
+            channel="default",
+            message=MessageData(
+                payload=b"null",
+                content_type="application/json",
+                headers={"topic": "job"},
+            ),
+        )
+        work = asyncio.create_task(runner.run(router._actors_per_channel_address, 0))
+        await asyncio.wait_for(acquired.wait(), 2)
+        commit.set()
+        runner.stop_consume_event.set()
+        await asyncio.wait_for(work, 2)
+    assert runner.processed == 0
+    assert runner.delivered_messages == 0
+    assert runner.admitted_messages == 0
+
+
+async def test_transport_automatic_fallback_retains_numeric_pause_threshold() -> None:
+    server = InMemoryServer()
+    runner = _Runner(actor_context=_make_actor_context(server))
+    channel = Channel(address="default", limits=MessageLimits(max_messages=1))
+    router = Router()
+
+    @router.actor(channel=channel)
+    async def job() -> None:
+        pass
+
+    runner._configure(router._actors_per_channel_address, [channel])
+    runner._deliveries.add(Mock(message=Mock(channel="default"), size=4))
+    runner._server_subscriber = Mock(native_flow=runner._flow)
+    runner._numeric()
+    assert ("default", "messages") not in runner._numeric_pressure
+    runner._server_subscriber = Mock(native_flow=NativeFlow(channels={"default": NativeWindow()}))
+    runner._numeric()
+    assert ("default", "messages") in runner._numeric_pressure

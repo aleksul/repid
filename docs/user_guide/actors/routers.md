@@ -67,3 +67,19 @@ app.include_router(parent_router)
     When dealing with middlewares during nesting, they are **concatenated**,
     not overwritten. The parent router's middlewares will run *before*
     the child router's middlewares!
+
+## Router Materialization
+
+Repid stores included routers and actor definitions lazily.
+Therefore, including the same router in the same parent multiple times makes no difference.
+
+For execution, the routers and actors are materialized when creating a worker or a `TestClient`.
+Thus, any changes made afterward have no effect -
+if necessary, create a new one to materialize changed routers and actors.
+
+## Concurrency limits
+
+`Router(limits=)` sets built-in numeric execution limits for its actors.
+`Router(limit_policies=)` adds application-defined `LimitPolicyT` instances.
+Both compose with enclosing routers and `@router.actor(limits=..., limit_policies=...)`.
+See [Concurrency limits](../workers/concurrency.md).

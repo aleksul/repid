@@ -75,7 +75,7 @@ def test_all_properties() -> None:
     assert server.external_docs is None
     assert server.bindings is None
     assert server.capabilities["supports_native_reply"] is False
-    assert server.capabilities["supports_lightweight_pause"] is False
+    assert server.capabilities["supports_worker_pause"] is True
     assert server.resilience_config is not None
     assert server.resilience_state is not None
 
@@ -105,7 +105,7 @@ async def test_disconnect_closes_subscribers_and_channel() -> None:
 
     await server.disconnect()
 
-    mock_sub.close.assert_called_once()
+    mock_sub.finish.assert_called_once()
     mock_channel.close.assert_called_once()
     assert server._channel is None
 

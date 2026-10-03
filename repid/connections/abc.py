@@ -7,6 +7,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, TypedDict
 
 from repid.data.message import MessageData
+from repid.limits import UNLIMITED_NATIVE_FLOW, NativeFlow
 
 if TYPE_CHECKING:
     from repid.asyncapi.models.common import ServerBindingsObject
@@ -66,7 +67,7 @@ class ReceivedMessageT(BaseMessageT, Protocol):
     async def reject(self) -> None: ...
 
     @property
-    def keep_alive_interval(self) -> int | None:
+    def keep_alive_interval(self) -> float | None:
         """Recommended seconds between keep_alive() calls, or None if not needed."""
 
     async def keep_alive(self) -> None:
@@ -86,22 +87,85 @@ class ReceivedMessageT(BaseMessageT, Protocol):
 
 class CapabilitiesT(TypedDict):
     supports_native_reply: bool
-    supports_lightweight_pause: bool
     supports_keep_alive: bool
+    supports_worker_native_messages: bool
+    supports_channel_native_messages: bool
+    supports_worker_native_bytes: bool
+    supports_channel_native_bytes: bool
+    supports_worker_pause: bool
+    supports_channel_pause: bool
+    supports_worker_oversized_delivery: bool
+    supports_channel_oversized_delivery: bool
+    supports_worker_oversized_blocking: bool
+    supports_channel_oversized_blocking: bool
+
+
+def broker_capabilities(
+    *,
+    native_reply: bool = False,
+    keep_alive: bool = False,
+    worker_pause: bool = False,
+    channel_pause: bool = False,
+    native: bool = False,
+) -> CapabilitiesT:
+    """Conservative defaults; ``native`` is for the fully controlled in-memory broker."""
+    return {
+        "supports_native_reply": native_reply,
+        "supports_keep_alive": keep_alive,
+        "supports_worker_native_messages": native,
+        "supports_channel_native_messages": native,
+        "supports_worker_native_bytes": native,
+        "supports_channel_native_bytes": native,
+        "supports_worker_pause": worker_pause,
+        "supports_channel_pause": channel_pause,
+        "supports_worker_oversized_delivery": native,
+        "supports_channel_oversized_delivery": native,
+        "supports_worker_oversized_blocking": native,
+        "supports_channel_oversized_blocking": native,
+    }
+
+
+def validate_native_flow(flow: NativeFlow, capabilities: CapabilitiesT) -> None:
+    """Adapters may not silently ignore a resolved outstanding-delivery requirement."""
+    for scope, window in [
+        ("worker", flow.worker),
+        *(("channel", value) for value in flow.channels.values()),
+    ]:
+        for dimension, cap in (
+            ("messages", window.max_messages),
+            ("bytes", window.max_payload_bytes),
+        ):
+            if cap is None:
+                continue
+            if not capabilities[f"supports_{scope}_native_{dimension}"]:  # type: ignore[literal-required]
+                raise ValueError(f"Unsupported native {dimension} window at {scope} scope")
+            if dimension == "bytes":
+                mode = "delivery" if window.oversized_delivery == "deliver" else "blocking"
+                if not capabilities[f"supports_{scope}_oversized_{mode}"]:  # type: ignore[literal-required]
+                    raise ValueError(
+                        f"Unsupported native-byte oversized {mode} mode at {scope} scope",
+                    )
 
 
 class SubscriberT(Protocol):
+    @property
+    def native_flow(self) -> NativeFlow:
+        """Actual transport windows, including automatic fallback discovered at startup."""
+        ...
+
     @property
     def is_active(self) -> bool: ...
 
     @property
     def task(self) -> asyncio.Task: ...
 
-    async def pause(self) -> None: ...
+    async def pause(self, channel: str | None = None) -> None: ...
 
-    async def resume(self) -> None: ...
+    async def resume(self, channel: str | None = None) -> None: ...
 
-    async def close(self) -> None: ...
+    async def stop(self) -> None: ...
+
+    async def finish(self) -> None: ...
 
 
 class ServerT(Protocol):
@@ -173,5 +237,5 @@ class ServerT(Protocol):
         self,
         *,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        native_flow: NativeFlow = UNLIMITED_NATIVE_FLOW,
     ) -> SubscriberT: ...

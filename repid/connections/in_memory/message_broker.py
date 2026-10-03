@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
 from contextlib import asynccontextmanager
+from functools import partial
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -15,8 +15,10 @@ from repid.connections.abc import (
     SentMessageT,
     ServerT,
     SubscriberT,
+    broker_capabilities,
 )
 from repid.connections.in_memory.utils import DummyQueue
+from repid.limits import UNLIMITED_NATIVE_FLOW, NativeFlow, NativeWindow
 
 logger = logging.getLogger("repid.connections.in_memory")
 
@@ -70,12 +72,14 @@ class InMemoryReceivedMessage(ReceivedMessageT):
         queue: DummyQueue,
         channel: str,
         queues: dict[str, DummyQueue] | None = None,
+        on_settlement: Callable[[], None] | None = None,
     ) -> None:
         self._message = message
         self._queue = queue
         self._channel = channel
         self._queues = queues if queues is not None else {channel: queue}
         self._action: MessageAction | None = None
+        self._on_settlement = on_settlement
 
     @property
     def payload(self) -> bytes:
@@ -121,18 +125,24 @@ class InMemoryReceivedMessage(ReceivedMessageT):
             return
         self._action = MessageAction.acked
         self._queue.processing.remove(self._message)
+        if self._on_settlement is not None:
+            self._on_settlement()
 
     async def nack(self) -> None:
         if self._action is not None:
             return
         self._action = MessageAction.nacked
         self._queue.processing.remove(self._message)
+        if self._on_settlement is not None:
+            self._on_settlement()
 
     async def reject(self) -> None:
         if self._action is not None:
             return
         self._action = MessageAction.rejected
         self._queue.processing.remove(self._message)
+        if self._on_settlement is not None:
+            self._on_settlement()
         self._queue.queue.put_nowait(self._message)
 
     async def reply(
@@ -165,110 +175,144 @@ class InMemoryReceivedMessage(ReceivedMessageT):
             ),
         )
         self._queue.processing.remove(self._message)
+        if self._on_settlement is not None:
+            self._on_settlement()
 
 
 class InMemorySubscriber(SubscriberT):
-    """Represents a subscription over one or more channels.
-
-    Provides pause/resume and close lifecycle controls. A single supervisor task
-    is exposed via the ``task`` property that awaits all per-channel consumer tasks.
-    """
+    """Exact outstanding-delivery windows over controlled in-memory queues."""
 
     def __init__(
         self,
         *,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
         queues: dict[str, DummyQueue],
-        concurrency_limit: int | None,
+        native_flow: NativeFlow = UNLIMITED_NATIVE_FLOW,
     ) -> None:
         self._channels_to_callbacks = channels_to_callbacks
         self._queues = queues
+        self._flow = native_flow
         self._closed = False
+        self._finished = False
         self._paused_event = asyncio.Event()
-        self._paused_event.set()  # start in resumed state
+        self._paused_event.set()
+        self._channel_events = {channel: asyncio.Event() for channel in channels_to_callbacks}
+        for event in self._channel_events.values():
+            event.set()
+        self._changed = asyncio.Event()
+        self._usage: dict[str | None, list[int]] = {
+            None: [0, 0],
+            **{channel: [0, 0] for channel in channels_to_callbacks},
+        }
         self._channel_tasks: dict[str, asyncio.Task] = {}
-        self._semaphore: asyncio.Semaphore | None = (
-            asyncio.Semaphore(concurrency_limit)
-            if concurrency_limit and concurrency_limit > 0
-            else None
-        )
-        self._callback_tasks: set[asyncio.Task] = set()
         self._supervisor_task = asyncio.create_task(self._supervisor())
 
-    # --- SubscriberT protocol ---
+    @property
+    def native_flow(self) -> NativeFlow:
+        return self._flow
+
     @property
     def is_active(self) -> bool:
-        return not self._closed and any(not t.done() for t in self._channel_tasks.values())
+        return not self._closed and not self._supervisor_task.done()
 
     @property
     def task(self) -> asyncio.Task:
         return self._supervisor_task
 
-    async def pause(self) -> None:
-        self._paused_event.clear()
+    async def pause(self, channel: str | None = None) -> None:
+        (self._paused_event if channel is None else self._channel_events[channel]).clear()
+        self._changed.set()
 
-    async def resume(self) -> None:
-        self._paused_event.set()
+    async def resume(self, channel: str | None = None) -> None:
+        (self._paused_event if channel is None else self._channel_events[channel]).set()
+        self._changed.set()
 
-    async def close(self) -> None:
+    async def stop(self) -> None:
         if self._closed:
             return
         self._closed = True
-        for t in self._channel_tasks.values():
-            if not t.done():
-                t.cancel()
-        if not self._supervisor_task.done():
-            self._supervisor_task.cancel()
-        # Best-effort gather
-        try:
-            await asyncio.gather(*self._channel_tasks.values(), return_exceptions=True)
-        finally:
-            with contextlib.suppress(Exception):
-                await asyncio.sleep(0)
+        self._changed.set()
+        self._supervisor_task.cancel()
+        await asyncio.gather(self._supervisor_task, return_exceptions=True)
 
-    # --- internal helpers ---
+    async def finish(self) -> None:
+        await self.stop()
+        self._finished = True
+
+    @staticmethod
+    def _fits(window: NativeWindow, usage: list[int], size: int) -> bool:
+        if window.max_messages is not None and usage[0] >= window.max_messages:
+            return False
+        cap = window.max_payload_bytes
+        if cap is None:
+            return True
+        if size > cap:
+            return window.oversized_delivery == "deliver" and usage[0] == 0
+        return usage[1] + size <= cap
+
+    async def _admit(self, channel: str, size: int) -> None:
+        while True:
+            self._changed.clear()
+            await self._paused_event.wait()
+            await self._channel_events[channel].wait()
+            window = self._flow.channels.get(channel, NativeWindow())
+            if self._fits(self._flow.worker, self._usage[None], size) and self._fits(
+                window,
+                self._usage[channel],
+                size,
+            ):
+                for scope in (None, channel):
+                    self._usage[scope][0] += 1
+                    self._usage[scope][1] += size
+                return
+            await self._changed.wait()
+
+    def _settled(self, channel: str, size: int) -> None:
+        for scope in (None, channel):
+            self._usage[scope][0] -= 1
+            self._usage[scope][1] -= size
+        self._changed.set()
+
     async def _supervisor(self) -> None:
-        # Start channel consumer tasks lazily here so that _semaphore is ready
-        for channel, callback in self._channels_to_callbacks.items():
-            queue = self._queues[channel]
-            self._channel_tasks[channel] = asyncio.create_task(
-                self._channel_consumer(channel=channel, queue=queue, callback=callback),
-            )
+        self._channel_tasks = {
+            channel: asyncio.create_task(self._channel_consumer(channel, callback))
+            for channel, callback in self._channels_to_callbacks.items()
+        }
         try:
             await asyncio.gather(*self._channel_tasks.values())
-        except asyncio.CancelledError:
-            for t in self._channel_tasks.values():
-                t.cancel()
-            raise
+        finally:
+            for task in self._channel_tasks.values():
+                task.cancel()
+            await asyncio.gather(*self._channel_tasks.values(), return_exceptions=True)
 
     async def _channel_consumer(
         self,
-        *,
         channel: str,
-        queue: DummyQueue,
         callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
     ) -> None:
-        while True:
+        queue = self._queues[channel]
+        while not self._closed:
             await self._paused_event.wait()
+            await self._channel_events[channel].wait()
             msg = await queue.queue.get()
-            received_msg = InMemoryReceivedMessage(msg, queue, channel, self._queues)
-            queue.processing.add(msg)
-
-            if self._semaphore is not None:
-                await self._semaphore.acquire()
-
-            async def _run_callback(rm: ReceivedMessageT = received_msg) -> None:
-                try:
-                    await callback(rm)
-                except Exception:
-                    logger.exception("message.callback.error", extra={"channel": channel})
-                finally:
-                    if self._semaphore is not None:
-                        self._semaphore.release()
-
-            task = asyncio.create_task(_run_callback())
-            self._callback_tasks.add(task)
-            task.add_done_callback(self._callback_tasks.discard)
+            handed_off = False
+            try:
+                await self._admit(channel, len(msg.payload))
+                queue.processing.add(msg)
+                received = InMemoryReceivedMessage(
+                    msg,
+                    queue,
+                    channel,
+                    self._queues,
+                    on_settlement=partial(self._settled, channel, len(msg.payload)),
+                )
+                handed_off = True
+                await callback(received)
+                # Cooperative scheduling even when admission requires no wait.
+                await asyncio.sleep(0)
+            finally:
+                if not handed_off:
+                    queue.queue.put_nowait(msg)
 
 
 class InMemoryServer(ServerT):
@@ -342,11 +386,12 @@ class InMemoryServer(ServerT):
 
     @property
     def capabilities(self) -> CapabilitiesT:
-        return {
-            "supports_native_reply": True,
-            "supports_lightweight_pause": True,
-            "supports_keep_alive": False,
-        }
+        return broker_capabilities(
+            native_reply=True,
+            worker_pause=True,
+            channel_pause=True,
+            native=True,
+        )
 
     @property
     def is_connected(self) -> bool:
@@ -406,7 +451,7 @@ class InMemoryServer(ServerT):
         self,
         *,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        native_flow: NativeFlow = UNLIMITED_NATIVE_FLOW,
     ) -> SubscriberT:
         if not self._connected:
             raise RuntimeError("Server is not connected")
@@ -419,7 +464,7 @@ class InMemoryServer(ServerT):
         subscriber = InMemorySubscriber(
             channels_to_callbacks=channels_to_callbacks,
             queues=self.queues,
-            concurrency_limit=concurrency_limit,
+            native_flow=native_flow,
         )
         self._subscribers.add(subscriber)
 

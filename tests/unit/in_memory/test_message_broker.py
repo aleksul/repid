@@ -13,6 +13,7 @@ from repid.connections.in_memory.message_broker import (
     InMemorySubscriber,
 )
 from repid.connections.in_memory.utils import DummyQueue
+from repid.limits import NativeFlow, NativeWindow
 
 
 def test_sent_message_properties() -> None:
@@ -53,7 +54,7 @@ async def test_in_memory_subscriber_acks_duplicate_ids_after_header_mutation() -
                 server_specific_parameters={"message_id": "same-id"},
             )
         await asyncio.wait_for(completed.wait(), timeout=1)
-        await subscriber.close()
+        await subscriber.finish()
 
     assert received == 2
     assert not server.queues["jobs"].processing
@@ -271,7 +272,7 @@ async def test_server_subscribe_and_consume() -> None:
     assert len(received_msgs) == 1
     assert received_msgs[0].payload == b"1"
 
-    await subscriber.close()
+    await subscriber.finish()
     assert not subscriber.is_active
 
 
@@ -295,7 +296,7 @@ async def test_server_subscribe_callback_exception_releases_semaphore() -> None:
                     failing_callback,
                 ),
             },
-            concurrency_limit=2,
+            native_flow=NativeFlow(worker=NativeWindow(max_messages=2)),
         ),
     )
 
@@ -303,11 +304,11 @@ async def test_server_subscribe_callback_exception_releases_semaphore() -> None:
     await asyncio.wait_for(error_event.wait(), timeout=1.0)
     await asyncio.sleep(0.05)  # Let the finally block complete
 
-    # Semaphore should have been released despite the exception
-    assert subscriber._semaphore is not None
-    assert subscriber._semaphore._value == 2  # Back to full capacity
+    assert server.queues["chan1"].processing == set()
+    assert subscriber.task.done()
+    assert isinstance(subscriber.task.exception(), RuntimeError)
 
-    await subscriber.close()
+    await subscriber.finish()
 
 
 async def test_server_subscribe_concurrency_limit() -> None:
@@ -329,7 +330,7 @@ async def test_server_subscribe_concurrency_limit() -> None:
                     callback,
                 ),
             },
-            concurrency_limit=2,
+            native_flow=NativeFlow(worker=NativeWindow(max_messages=2)),
         ),
     )
 
@@ -337,9 +338,9 @@ async def test_server_subscribe_concurrency_limit() -> None:
 
     await asyncio.wait_for(ack_event.wait(), timeout=1.0)
 
-    assert subscriber._semaphore is not None  # Implementation detail check
+    assert server.queues["chan1"].processing == set()
 
-    await subscriber.close()
+    await subscriber.finish()
 
 
 async def test_server_subscribe_no_concurrency_limit() -> None:
@@ -358,13 +359,13 @@ async def test_server_subscribe_no_concurrency_limit() -> None:
                     callback,
                 ),
             },
-            concurrency_limit=0,
+            native_flow=NativeFlow(),
         ),
     )
 
-    assert subscriber._semaphore is None
+    assert subscriber.is_active
 
-    await subscriber.close()
+    await subscriber.finish()
 
 
 async def test_subscriber_pause_resume() -> None:
@@ -401,7 +402,7 @@ async def test_subscriber_pause_resume() -> None:
         await asyncio.sleep(0.01)
     assert received_count == 1
 
-    await subscriber.close()
+    await subscriber.finish()
 
 
 async def test_subscriber_close_twice() -> None:
@@ -411,8 +412,8 @@ async def test_subscriber_close_twice() -> None:
         InMemorySubscriber,
         await server.subscribe(channels_to_callbacks={}),
     )
-    await subscriber.close()
-    await subscriber.close()  # Should be fine
+    await subscriber.finish()
+    await subscriber.finish()  # Should be fine
 
 
 async def test_supervisor_cancellation() -> None:
@@ -452,5 +453,5 @@ async def test_supervisor_cancellation() -> None:
         assert t.cancelled()
 
     # cleanup for clean teardown of subscribers registry in server
-    await subscriber.close()
+    await subscriber.finish()
     await asyncio.sleep(0)  # Let done callback run

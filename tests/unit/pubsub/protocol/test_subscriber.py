@@ -19,6 +19,7 @@ from repid.connections.pubsub.protocol.proto import (
 )
 from repid.connections.pubsub.protocol.resilience import ResilienceState
 from repid.connections.pubsub.protocol.subscriber import PubsubSubscriber
+from repid.limits import NativeFlow, NativeWindow
 
 
 def _make_subscriber(**overrides: Any) -> PubsubSubscriber:
@@ -31,7 +32,7 @@ def _make_subscriber(**overrides: Any) -> PubsubSubscriber:
         "server": MagicMock(spec=PubsubServer),
         "stream_ack_deadline_seconds": 10,
         "client_id": "test-client",
-        "concurrency_limit": 1,
+        "native_flow": NativeFlow(),
     }
     defaults.update(overrides)
     return PubsubSubscriber(**defaults)
@@ -58,7 +59,7 @@ async def test_create_starts_background_tasks() -> None:
         server=MagicMock(spec=PubsubServer),
         stream_ack_deadline_seconds=10,
         client_id="id",
-        concurrency_limit=1,
+        native_flow=NativeFlow(worker=NativeWindow(max_messages=1)),
     )
     assert sub.is_active
     assert sub._task is not None
@@ -146,7 +147,7 @@ async def test_process_response_filters_none_messages() -> None:
     await sub._process_response(response, config)
 
     assert sub._delivery_queue.qsize() == 1
-    assert len(sub._in_flight_messages) == 1
+    assert len(sub._buffer.owned) == 1
     delivery = sub._delivery_queue.get_nowait()
     assert delivery.message.payload == b"data"
 
@@ -165,7 +166,7 @@ async def test_request_iterator_initial_request() -> None:
     sub = _make_subscriber(
         stream_ack_deadline_seconds=20,
         client_id="cid",
-        concurrency_limit=5,
+        native_flow=NativeFlow(worker=NativeWindow(max_messages=5)),
     )
     config = _make_config(subscription_path="sub/1")
 
@@ -175,7 +176,9 @@ async def test_request_iterator_initial_request() -> None:
     assert initial.subscription == "sub/1"
     assert initial.stream_ack_deadline_seconds == 20
     assert initial.client_id == "cid"
-    assert initial.max_outstanding_messages == 5
+    assert (
+        initial.max_outstanding_messages == 1000
+    )  # Internal batch pressure, not an advertised exact window.
 
     await cast(AsyncGenerator[StreamingPullRequest, None], it).aclose()
 
@@ -238,66 +241,68 @@ async def test_request_iterator_sends_heartbeats() -> None:
 async def test_execute_callback_success() -> None:
     sub = _make_subscriber()
     msg = MagicMock()
-    sub._in_flight_messages.add(msg)
+    sub._buffer.track((msg,))
     callback = AsyncMock()
     delivery = QueuedDelivery(callback=callback, message=msg)
 
     await sub._execute_callback(delivery)
 
     callback.assert_called_once_with(msg)
-    assert msg not in sub._in_flight_messages
+    assert id(msg) not in sub._buffer.owned
 
 
 async def test_execute_callback_exception_nacks_unacted_message() -> None:
     sub = _make_subscriber()
-    msg = MagicMock()
+    msg = MagicMock(keep_alive_interval=None, reject=AsyncMock())
     msg.is_acted_on = False
-    sub._in_flight_messages.add(msg)
+    sub._buffer.track((msg,))
     delivery = QueuedDelivery(
         callback=AsyncMock(side_effect=ValueError("boom")),
         message=msg,
     )
 
-    await sub._execute_callback(delivery)
-    msg.nack.assert_called_once()
-    assert msg not in sub._in_flight_messages
+    with pytest.raises(ValueError, match="boom"):
+        await sub._execute_callback(delivery)
+    msg.nack.assert_not_called()
+    assert id(msg) not in sub._buffer.owned
 
 
 async def test_execute_callback_exception_skips_nack_when_acted_on() -> None:
     sub = _make_subscriber()
     msg = MagicMock()
     msg.is_acted_on = True
-    sub._in_flight_messages.add(msg)
+    sub._buffer.track((msg,))
     delivery = QueuedDelivery(
         callback=AsyncMock(side_effect=ValueError("boom")),
         message=msg,
     )
 
-    await sub._execute_callback(delivery)
+    with pytest.raises(ValueError, match="boom"):
+        await sub._execute_callback(delivery)
     msg.nack.assert_not_called()
-    assert msg not in sub._in_flight_messages
+    assert id(msg) not in sub._buffer.owned
 
 
 async def test_execute_callback_cancelled_rejects_unacted_message() -> None:
     sub = _make_subscriber()
-    msg = MagicMock()
+    msg = MagicMock(keep_alive_interval=None, reject=AsyncMock())
     msg.is_acted_on = False
-    sub._in_flight_messages.add(msg)
+    sub._buffer.track((msg,))
     delivery = QueuedDelivery(
         callback=AsyncMock(side_effect=asyncio.CancelledError),
         message=msg,
     )
     with pytest.raises(asyncio.CancelledError):
         await sub._execute_callback(delivery)
-    msg.reject.assert_called_once()
-    assert msg not in sub._in_flight_messages
+    msg.reject.assert_not_called()
+    assert id(msg) not in sub._buffer.owned
 
 
 async def test_execute_callback_cancelled_skips_reject_when_acted_on() -> None:
     sub = _make_subscriber()
     msg = MagicMock()
     msg.is_acted_on = True
-    sub._in_flight_messages.add(msg)
+    sub._buffer.track((msg,))
     delivery = QueuedDelivery(
         callback=AsyncMock(side_effect=asyncio.CancelledError),
         message=msg,
@@ -378,24 +383,23 @@ async def test_task_property_returns_task() -> None:
 # --- _cancel_callback_tasks ---
 
 
-def test_cancel_callback_tasks_empty() -> None:
+async def test_stop_with_empty_buffer_is_idempotent() -> None:
     sub = _make_subscriber()
-    result = sub._cancel_callback_tasks()
-    assert result == []
+    await sub.stop()
+    await sub.stop()
+    await sub.finish()
+    assert not sub.is_active
 
 
-def test_cancel_callback_tasks_cancels_all() -> None:
+async def test_stop_disposes_all_adapter_owned_deliveries() -> None:
     sub = _make_subscriber()
-    t1, t2 = MagicMock(), MagicMock()
-    sub._callback_tasks.add(t1)
-    sub._callback_tasks.add(t2)
-
-    result = sub._cancel_callback_tasks()
-
-    assert len(result) == 2
-    t1.cancel.assert_called_once()
-    t2.cancel.assert_called_once()
-    assert len(sub._callback_tasks) == 0
+    messages = [
+        MagicMock(is_acted_on=False, keep_alive_interval=None, reject=AsyncMock()) for _ in range(2)
+    ]
+    sub._buffer.track(messages)
+    await sub.stop()
+    for message in messages:
+        message.reject.assert_awaited_once()
 
 
 # --- close ---
@@ -403,7 +407,7 @@ def test_cancel_callback_tasks_cancels_all() -> None:
 
 async def test_close_basic() -> None:
     sub = _make_subscriber()
-    await sub.close()
+    await sub.finish()
     assert sub._is_closing
     assert not sub.is_active
     assert sub._shutdown_event.is_set()
@@ -411,51 +415,64 @@ async def test_close_basic() -> None:
 
 async def test_close_idempotent() -> None:
     sub = _make_subscriber()
-    await sub.close()
+    await sub.finish()
     # Second close is a no-op
     with patch.object(sub._pause_event, "clear") as mock_clear:
-        await sub.close()
+        await sub.finish()
         mock_clear.assert_not_called()
 
 
 async def test_close_cancels_main_task() -> None:
     sub = _make_subscriber()
     sub._task = asyncio.create_task(asyncio.sleep(10))
-    await sub.close()
+    await sub.finish()
     assert sub._task.cancelled()
 
 
-async def test_close_cancels_pending_callbacks() -> None:
+async def test_stop_preserves_runner_owned_processing() -> None:
     sub = _make_subscriber()
-    t = MagicMock()
-    sub._callback_tasks.add(t)
+    message = MagicMock(keep_alive_interval=None)
+    started, release = asyncio.Event(), asyncio.Event()
 
-    with patch("asyncio.wait", return_value=(set(), set())):
-        await sub.close()
+    async def process() -> None:
+        started.set()
+        await release.wait()
 
-    t.cancel.assert_called_once()
-    assert len(sub._callback_tasks) == 0
+    processing = None
+
+    async def submit(_message: Any) -> None:
+        nonlocal processing
+        processing = asyncio.create_task(process())
+
+    await sub._execute_callback(QueuedDelivery(callback=submit, message=message))
+    await started.wait()
+    await sub.stop()
+    assert processing is not None
+    assert not processing.done()
+    release.set()
+    await processing
 
 
 async def test_close_rejects_delivery_queue_messages() -> None:
     sub = _make_subscriber()
-    msg = MagicMock()
+    msg = MagicMock(keep_alive_interval=None, reject=AsyncMock())
     msg.is_acted_on = False
     delivery = QueuedDelivery(callback=AsyncMock(), message=msg)
+    sub._buffer.track((msg,))
     await sub._delivery_queue.put(delivery)
 
-    await sub.close()
+    await sub.finish()
 
     msg.reject.assert_called_once()
 
 
 async def test_close_rejects_in_flight_unacted_messages() -> None:
     sub = _make_subscriber()
-    msg = MagicMock()
+    msg = MagicMock(keep_alive_interval=None, reject=AsyncMock())
     msg.is_acted_on = False
-    sub._in_flight_messages.add(msg)
+    sub._buffer.track((msg,))
 
-    await sub.close()
+    await sub.finish()
 
     msg.reject.assert_called_once()
 
@@ -464,43 +481,19 @@ async def test_close_skips_reject_for_acted_in_flight() -> None:
     sub = _make_subscriber()
     msg = MagicMock()
     msg.is_acted_on = True
-    sub._in_flight_messages.add(msg)
+    sub._buffer.track((msg,))
 
-    await sub.close()
+    await sub.finish()
 
     msg.reject.assert_not_called()
 
 
-async def test_close_waits_for_callbacks_before_rejecting_in_flight() -> None:
+async def test_finish_does_not_settle_a_transferred_delivery_again() -> None:
     sub = _make_subscriber()
-
-    class FakeMessage:
-        def __init__(self) -> None:
-            self.acted = False
-            self.reject = AsyncMock()
-
-        @property
-        def is_acted_on(self) -> bool:
-            return self.acted
-
-    msg = FakeMessage()
-    sub._in_flight_messages.add(msg)  # type: ignore[arg-type]
-
-    async def callback_task() -> None:
-        try:
-            await asyncio.sleep(10)
-        except asyncio.CancelledError:
-            msg.acted = True
-            raise
-
-    task = asyncio.create_task(callback_task())
-    sub._callback_tasks.add(task)
-    await asyncio.sleep(0)
-
-    await sub.close()
-
-    assert msg.acted
-    msg.reject.assert_not_called()
+    message = MagicMock(keep_alive_interval=None, is_acted_on=False, reject=AsyncMock())
+    await sub._execute_callback(QueuedDelivery(callback=AsyncMock(), message=message))
+    await sub.finish()
+    message.reject.assert_not_awaited()
 
 
 # --- _streaming_pull_loop ---

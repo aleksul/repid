@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 import uuid
@@ -19,6 +18,7 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import ResponseError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
+from repid.connections._buffer import SubmissionBuffer
 from repid.connections.abc import (
     CapabilitiesT,
     MessageAction,
@@ -26,7 +26,10 @@ from repid.connections.abc import (
     SentMessageT,
     ServerT,
     SubscriberT,
+    broker_capabilities,
+    validate_native_flow,
 )
+from repid.limits import UNLIMITED_NATIVE_FLOW, NativeFlow
 
 logger = logging.getLogger("repid.connections.redis")
 
@@ -341,7 +344,7 @@ class RedisSubscriber(SubscriberT):
         channels: dict[str, ChannelConfig],
         callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
         consumer_name: str,
-        concurrency_limit: int | None,
+        native_flow: NativeFlow = UNLIMITED_NATIVE_FLOW,
         server: RedisServer,
         block_ms: int = 5000,
         batch_size: int = 10,
@@ -354,6 +357,7 @@ class RedisSubscriber(SubscriberT):
         self._callbacks = callbacks
         self._consumer_name = consumer_name
         self._server = server
+        self._native_flow = native_flow
         self._block_ms = block_ms
         self._batch_size = batch_size
         self._retry_delay = retry_delay
@@ -364,12 +368,8 @@ class RedisSubscriber(SubscriberT):
         self._paused_event = asyncio.Event()
         self._paused_event.set()  # Start in resumed state
 
-        self._semaphore: asyncio.Semaphore | None = (
-            asyncio.Semaphore(concurrency_limit)
-            if concurrency_limit and concurrency_limit > 0
-            else None
-        )
-        self._callback_tasks: set[asyncio.Task[None]] = set()
+        self._buffer = SubmissionBuffer()
+        self._finished = False
         self._in_flight_messages: set[tuple[str, str]] = set()
 
         self._task: asyncio.Task[None] | None = None
@@ -377,9 +377,13 @@ class RedisSubscriber(SubscriberT):
 
     def start(self) -> None:
         """Schedule the consume loop. Must be called inside a running event loop."""
-        self._task = asyncio.create_task(self._consume_loop())
+        self._task = asyncio.create_task(self._buffer.run(self._consume_loop))
         if self._claim_interval > 0:
             self._claim_task = asyncio.create_task(self._claim_loop())
+
+    @property
+    def native_flow(self) -> NativeFlow:
+        return self._native_flow
 
     @property
     def is_active(self) -> bool:
@@ -398,32 +402,36 @@ class RedisSubscriber(SubscriberT):
         """Number of messages currently being processed by callbacks."""
         return len(self._in_flight_messages)
 
-    async def pause(self) -> None:
+    async def pause(self, channel: str | None = None) -> None:
+        if channel is not None:
+            raise ValueError("Redis supports worker pause only")
         """Pause message consumption."""
         self._paused_event.clear()
 
-    async def resume(self) -> None:
+    async def resume(self, channel: str | None = None) -> None:
+        if channel is not None:
+            raise ValueError("Redis supports worker pause only")
         """Resume message consumption."""
         self._paused_event.set()
 
-    async def close(self) -> None:
+    async def stop(self) -> None:
         """Close the subscriber and wait for in-flight messages."""
         if self._closed:
             return
         self._closed = True
 
-        if self._task is not None and not self._task.done():
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
+        tasks = [task for task in (self._task, self._claim_task) if task is not None]
+        for task in tasks:
+            task.cancel()
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        await self._buffer.dispose()
+        for result in results:
+            if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
+                raise result
 
-        if self._claim_task is not None and not self._claim_task.done():
-            self._claim_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._claim_task
-
-        if self._callback_tasks:
-            await asyncio.gather(*self._callback_tasks, return_exceptions=True)
+    async def finish(self) -> None:
+        await self.stop()
+        self._finished = True
 
     async def _consume_loop(self) -> None:
         """Main consumption loop — one concurrent task per unique consumer group."""
@@ -434,7 +442,6 @@ class RedisSubscriber(SubscriberT):
 
         await asyncio.gather(
             *(self._consume_group_loop(gn, gc) for gn, gc in groups.items()),
-            return_exceptions=True,
         )
 
     async def _consume_group_loop(
@@ -489,6 +496,7 @@ class RedisSubscriber(SubscriberT):
         if not result:
             return
 
+        batches = []
         for stream_data in result:
             stream_name_raw, messages = stream_data
             stream_name = (
@@ -503,32 +511,31 @@ class RedisSubscriber(SubscriberT):
             if callback is None:
                 continue
 
-            await self._process_stream_messages(
-                messages,
-                channel,
-                stream_name,
-                callback,
-            )
+            batch = self._prepare_stream_messages(messages, channel, stream_name)
+            batches.append((batch, callback))
 
-    async def _process_stream_messages(
+        # XREADGROUP transfers ownership for every returned stream at once. Register
+        # all deliveries before a submission or pause can suspend this fetch.
+        for batch, callback in batches:
+            await self._submit_stream_messages(batch, callback)
+
+    def _prepare_stream_messages(
         self,
         messages: list[tuple[bytes | str, dict[bytes | str, bytes | str]]],
         channel: str,
         stream_name: str,
-        callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
-    ) -> None:
-        """Process messages from a single stream."""
+    ) -> list[RedisReceivedMessage]:
+        """Register ownership and renewal without awaiting submission."""
         cfg = self._channels[channel]
+        batch = []
         for msg_id_raw, fields in messages:
             msg_id = msg_id_raw.decode() if isinstance(msg_id_raw, bytes) else msg_id_raw
             key = (channel, msg_id)
             if key in self._in_flight_messages:
                 continue
             self._in_flight_messages.add(key)
-
             payload, headers, content_type, reply_to = _parse_message_fields(fields)
-
-            received_msg = RedisReceivedMessage(
+            message = RedisReceivedMessage(
                 payload=payload,
                 headers=headers,
                 content_type=content_type,
@@ -544,15 +551,29 @@ class RedisSubscriber(SubscriberT):
                 consumer_name=self._consumer_name,
                 min_idle_ms=self._min_idle_ms,
             )
+            batch.append(message)
+        self._buffer.track(batch)
+        return batch
 
-            if self._semaphore is not None:
-                await self._semaphore.acquire()
+    async def _submit_stream_messages(
+        self,
+        batch: list[RedisReceivedMessage],
+        callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+    ) -> None:
+        for message in batch:
+            await self._paused_event.wait()
+            await self._run_callback(callback, message, message.message_id or "")
 
-            task = asyncio.create_task(
-                self._run_callback(callback, received_msg, msg_id),
-            )
-            self._callback_tasks.add(task)
-            task.add_done_callback(self._callback_tasks.discard)
+    async def _process_stream_messages(
+        self,
+        messages: list[tuple[bytes | str, dict[bytes | str, bytes | str]]],
+        channel: str,
+        stream_name: str,
+        callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+    ) -> None:
+        """Register and submit a single-stream claim batch."""
+        batch = self._prepare_stream_messages(messages, channel, stream_name)
+        await self._submit_stream_messages(batch, callback)
 
     async def _run_callback(
         self,
@@ -560,21 +581,12 @@ class RedisSubscriber(SubscriberT):
         message: RedisReceivedMessage,
         message_id: str,
     ) -> None:
-        """Run a callback and handle cleanup."""
         try:
-            await callback(message)
-        except Exception as exc:
-            logger.exception(
-                "message.callback.error",
-                extra={"message_id": message_id},
-                exc_info=exc,
-            )
-            if not message.is_acted_on:
-                await message.nack()
+            if id(message) not in self._buffer.owned:
+                self._buffer.track((message,))
+            await self._buffer.submit(message, callback)
         finally:
             self._in_flight_messages.discard((message.channel, message_id))
-            if self._semaphore is not None:
-                self._semaphore.release()
 
     async def _claim_loop(self) -> None:
         """Periodically reclaim stale pending messages using XAUTOCLAIM."""
@@ -582,6 +594,7 @@ class RedisSubscriber(SubscriberT):
             await asyncio.sleep(self._claim_interval)
             if self._closed:
                 break
+            await self._paused_event.wait()
             for channel, cfg in self._channels.items():
                 callback = self._callbacks.get(channel)
                 if callback is None:
@@ -614,6 +627,7 @@ class RedisSubscriber(SubscriberT):
         """
         start_id = "0-0"
         while not self._closed:
+            await self._paused_event.wait()
             result = await self._redis.xautoclaim(
                 cfg.stream,
                 cfg.group,
@@ -772,11 +786,7 @@ class RedisServer(ServerT):
 
     @property
     def capabilities(self) -> CapabilitiesT:
-        return {
-            "supports_native_reply": False,
-            "supports_lightweight_pause": True,
-            "supports_keep_alive": True,
-        }
+        return broker_capabilities(native_reply=False, keep_alive=True, worker_pause=True)
 
     def stream_name_for(self, channel: str) -> str:
         """Return the Redis stream name for the given channel."""
@@ -821,7 +831,7 @@ class RedisServer(ServerT):
 
         for subscriber in subscribers:
             try:
-                await subscriber.close()
+                await subscriber.finish()
             except Exception as exc:
                 logger.exception("subscriber.close.error", exc_info=exc)
 
@@ -886,8 +896,9 @@ class RedisServer(ServerT):
         self,
         *,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        native_flow: NativeFlow = UNLIMITED_NATIVE_FLOW,
     ) -> SubscriberT:
+        validate_native_flow(native_flow, self.capabilities)
         """Subscribe to channels using Redis Streams consumer groups."""
         if self._redis is None:
             raise ConnectionError("Not connected to Redis server")
@@ -918,7 +929,7 @@ class RedisServer(ServerT):
             channels=channels,
             callbacks=channels_to_callbacks,
             consumer_name=consumer_name,
-            concurrency_limit=concurrency_limit,
+            native_flow=native_flow,
             server=self,
             block_ms=self._block_ms,
             batch_size=self._batch_size,

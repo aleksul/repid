@@ -521,6 +521,8 @@ class Session:
         ],
         name: str | None = None,
         prefetch: int = 100,
+        *,
+        intake_paused: bool = False,
     ) -> ReceiverLink:
         """
         Create a receiver link.
@@ -551,7 +553,15 @@ class Session:
         await self._ensure_incoming_window(self._receiver_prefetch_total)
 
         handle = self._allocate_handle()
-        link = links.ReceiverLink(self, name, address, handle, callback, prefetch=prefetch)
+        link = links.ReceiverLink(
+            self,
+            name,
+            address,
+            handle,
+            callback,
+            prefetch=prefetch,
+            intake_paused=intake_paused,
+        )
         self._links[name] = link
         self._links_by_handle[handle] = link
 

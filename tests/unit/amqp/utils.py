@@ -192,6 +192,12 @@ class FakeSenderLink:
 
 @dataclass(slots=True)
 class FakeReceiverLink:
+    async def pause_intake(self) -> None:
+        pass
+
+    async def resume_intake(self) -> None:
+        pass
+
     handle: int = 1
     is_usable: bool = True
     detached: bool = False
@@ -234,6 +240,7 @@ class FakeSessionForPools:
         _callback: Callable[[bytes, dict[str, Any] | None, int, bytes, ReceiverLink], Any],
         _name: str,
         prefetch: int = 100,  # noqa: ARG002
+        intake_paused: bool = False,  # noqa: ARG002
     ) -> FakeReceiverLink:
         return self.receiver_links.pop(0)
 

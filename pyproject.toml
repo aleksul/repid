@@ -31,7 +31,7 @@ tests = [
 ]
 
 [project]
-authors = [{name = "aleksul", email = "me@aleksul.space"}]
+authors = [{ name = "aleksul", email = "me@aleksul.space" }]
 classifiers = [
   "Development Status :: 5 - Production/Stable",
   "License :: OSI Approved :: MIT License",
@@ -50,7 +50,7 @@ dependencies = [
 ]
 description = "Repid is a simple, fast, and extensible async task queue framework, with built-in AsyncAPI 3.0 schema generation."
 dynamic = ["version"]
-license = {text = "MIT"}
+license = { text = "MIT" }
 name = "repid"
 readme = "README.md"
 requires-python = ">=3.10"

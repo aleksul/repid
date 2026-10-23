@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 import struct
 import uuid
 from typing import Any
@@ -472,7 +472,7 @@ def test_amqp_types_timestamp() -> None:
     # Timestamps in AMQP are milliseconds since epoch
     # _encode converts datetime to timestamp
     ts = 1600000000.0
-    now = datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc)
+    now = dt.datetime.fromtimestamp(ts, tz=dt.timezone.utc)
 
     # decode returns the raw integer value (ms since epoch)
     # it does not automatically convert back to datetime

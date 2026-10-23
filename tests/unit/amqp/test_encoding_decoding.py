@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 import decimal
 import struct
 import uuid
@@ -392,9 +392,9 @@ def test_encode_long() -> None:
     assert out == b"\x55\x0a"
 
     out = bytearray()
-    dt = datetime.datetime.fromtimestamp(100, datetime.timezone.utc)
+    long_dt = dt.datetime.fromtimestamp(100, dt.timezone.utc)
     # 100 * 1000 = 100000 ms
-    encode._encode_long(out, dt, use_smallest=False)
+    encode._encode_long(out, long_dt, use_smallest=False)
     # Should convert dt to int ms
     assert len(out) > 0
 
@@ -420,8 +420,8 @@ def test_encode_timestamp() -> None:
     assert out == b"\x83\x00\x00\x00\x00\x00\x00\x03\xe8"
 
     out = bytearray()
-    dt = datetime.datetime.fromtimestamp(100, datetime.timezone.utc)
-    encode._encode_timestamp(out, dt)
+    timestamp_dt = dt.datetime.fromtimestamp(100, dt.timezone.utc)
+    encode._encode_timestamp(out, timestamp_dt)
     assert len(out) == 9
 
 

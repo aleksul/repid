@@ -1,4 +1,8 @@
 version: 2
+multi-ecosystem-groups:
+  codeql:
+    schedule:
+      interval: monthly
 updates:
 - package-ecosystem: uv
   directory: /
@@ -16,5 +20,17 @@ updates:
   directory: /
   schedule:
     interval: daily
+  commit-message:
+    prefix: ⬆
+  ignore:
+  - dependency-name: github/codeql-action
+
+- package-ecosystem: github-actions
+  directory: /
+  schedule:
+    interval: monthly
+  patterns:
+  - github/codeql-action
+  multi-ecosystem-group: codeql
   commit-message:
     prefix: ⬆

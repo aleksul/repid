@@ -1,12 +1,6 @@
 from __future__ import annotations
 
-import sys
-from typing import TYPE_CHECKING, TypedDict
-
-if sys.version_info >= (3, 11):  # pragma: no cover
-    from typing import Required
-else:  # pragma: no cover
-    from typing_extensions import Required
+from typing import TYPE_CHECKING, Required, TypedDict
 
 if TYPE_CHECKING:
     from .external_docs import ExternalDocs

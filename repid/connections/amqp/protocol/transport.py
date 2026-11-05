@@ -20,9 +20,7 @@ import sys
 import time
 from dataclasses import dataclass
 from types import TracebackType
-from typing import TYPE_CHECKING
-
-from typing_extensions import Self
+from typing import TYPE_CHECKING, Self
 
 from repid.connections.amqp._uamqp._decode import bytes_to_performative
 from repid.connections.amqp._uamqp._encode import performative_to_bytes
@@ -273,7 +271,7 @@ class AmqpTransport:
                 ),
                 timeout=self._config.connect_timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise ConnectionTimeoutError(
                 f"Connection timed out after {self._config.connect_timeout}s",
             ) from None

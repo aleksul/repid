@@ -1,13 +1,7 @@
 from __future__ import annotations
 
-import sys
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Literal, TypedDict
-
-if sys.version_info >= (3, 11):  # pragma: no cover
-    from typing import Required
-else:  # pragma: no cover
-    from typing_extensions import Required
+from typing import TYPE_CHECKING, Any, Literal, Required, TypedDict
 
 if TYPE_CHECKING:
     from .common import ExternalDocs, OperationBindingsObject, ReferenceModel, Tag

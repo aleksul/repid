@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, TypedDict
 
 from repid.data.message import MessageData
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from repid.data import ExternalDocs, Tag
 
 
-class MessageAction(str, Enum):
+class MessageAction(StrEnum):
     acked = "acked"
     nacked = "nacked"
     rejected = "rejected"

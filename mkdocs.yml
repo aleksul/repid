@@ -109,7 +109,7 @@ plugins:
     enabled: !ENV [CI, false]
     full_output: llms-full.txt
     markdown_description: |-
-      Repid is a simple, fast, and extensible async task queue framework for Python 3.10+, featuring built-in AsyncAPI 3.0 schema generation.
+      Repid is a simple, fast, and extensible async task queue framework for Python 3.11+, featuring built-in AsyncAPI 3.0 schema generation.
     sections:
       Getting Started:
       - getting_started/*.md

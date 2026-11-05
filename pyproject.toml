@@ -36,16 +36,15 @@ classifiers = [
   "Development Status :: 5 - Production/Stable",
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
   "Programming Language :: Python :: Implementation :: CPython",
   "Typing :: Typed"
 ]
 dependencies = [
-  "typing-extensions>=4.3.0,<5.0.0; python_version < \"3.11\"",
   "packaging>=22.0"
 ]
 description = "Repid is a simple, fast, and extensible async task queue framework, with built-in AsyncAPI 3.0 schema generation."
@@ -53,7 +52,7 @@ dynamic = ["version"]
 license = { text = "MIT" }
 name = "repid"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 [project.optional-dependencies]
 amqp = []
@@ -133,7 +132,7 @@ verbosity_assertions = 2
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 ignore = ["E501", "N999", "PLR0913"]

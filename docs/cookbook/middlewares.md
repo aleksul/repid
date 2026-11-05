@@ -37,7 +37,7 @@ To create an actor middleware, you implement the `ActorMiddlewareT` protocol.
             raise e
     ```
 
-=== "Python 3.10+"
+=== "Python 3.11+"
 
     ```python
     from typing import Any, Coroutine, Callable, TypeVar
@@ -107,7 +107,7 @@ To create a producer middleware, you implement the `ProducerMiddlewareT` protoco
         return await call_next(channel, message, server_specific_parameters)
     ```
 
-=== "Python 3.10+"
+=== "Python 3.11+"
 
     ```python
     import uuid

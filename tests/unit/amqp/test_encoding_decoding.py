@@ -392,7 +392,7 @@ def test_encode_long() -> None:
     assert out == b"\x55\x0a"
 
     out = bytearray()
-    long_dt = dt.datetime.fromtimestamp(100, dt.timezone.utc)
+    long_dt = dt.datetime.fromtimestamp(100, dt.UTC)
     # 100 * 1000 = 100000 ms
     encode._encode_long(out, long_dt, use_smallest=False)
     # Should convert dt to int ms
@@ -420,7 +420,7 @@ def test_encode_timestamp() -> None:
     assert out == b"\x83\x00\x00\x00\x00\x00\x00\x03\xe8"
 
     out = bytearray()
-    timestamp_dt = dt.datetime.fromtimestamp(100, dt.timezone.utc)
+    timestamp_dt = dt.datetime.fromtimestamp(100, dt.UTC)
     encode._encode_timestamp(out, timestamp_dt)
     assert len(out) == 9
 

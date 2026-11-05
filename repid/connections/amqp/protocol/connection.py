@@ -17,9 +17,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from types import TracebackType
-from typing import Any
-
-from typing_extensions import Self
+from typing import Any, Self
 
 from repid.connections.amqp._uamqp.constants import MAX_FRAME_SIZE_BYTES, MIN_MAX_FRAME_SIZE
 from repid.connections.amqp._uamqp.performatives import (
@@ -535,7 +533,7 @@ class AmqpConnection:
                 close_frame = CloseFrame()
                 await self._transport.send_performative(0, close_frame)
                 await self._state_machine.transition("send_close")
-            except (OSError, asyncio.TimeoutError):
+            except (TimeoutError, OSError):
                 logger.debug("connection.close_frame.error", exc_info=True)
 
         # Cancel read task

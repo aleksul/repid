@@ -4,10 +4,8 @@ import asyncio
 from contextlib import suppress
 from datetime import datetime
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, overload
+from typing import TYPE_CHECKING, Any, Self, overload
 from uuid import uuid4
-
-from typing_extensions import Self
 
 from repid._runner import _actor_run
 from repid.connections.abc import CapabilitiesT, MessageAction, ServerT

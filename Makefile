@@ -5,7 +5,7 @@
 	uv -V || echo 'Please install uv: https://docs.astral.sh/uv/getting-started/installation/'
 
 install: .uv
-	uv sync --frozen --all-extras --all-groups --python 3.10
+	uv sync --frozen --all-extras --all-groups --python 3.11
 	uv run pre-commit install --install-hooks
 
 rebuild-lockfiles: .uv

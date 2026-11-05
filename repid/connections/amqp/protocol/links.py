@@ -181,7 +181,7 @@ class Link(ABC):
                     detach_frame,
                 )
                 await self._state_machine.transition("send_detach")
-            except (OSError, asyncio.TimeoutError):
+            except (TimeoutError, OSError):
                 logger.warning("link.detach_frame.error", exc_info=True)
 
         # Remove from session
@@ -381,7 +381,7 @@ class SenderLink(Link):
         while self._link_credit <= 0:
             try:
                 await asyncio.wait_for(self._credit_available.wait(), timeout=timeout)
-            except asyncio.TimeoutError as e:
+            except TimeoutError as e:
                 raise LinkError("Timeout waiting for link credit") from e
 
     def _build_transfer_frames(
@@ -423,7 +423,7 @@ class SenderLink(Link):
         for frame in frames:
             try:
                 await self._session.wait_for_remote_incoming_window(timeout)
-            except asyncio.TimeoutError as e:
+            except TimeoutError as e:
                 raise LinkError("Timeout waiting for session window") from e
 
             if not credit_consumed:
@@ -461,7 +461,7 @@ class SenderLink(Link):
     ) -> None:
         try:
             state = await asyncio.wait_for(settlement_future, timeout=timeout)
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             self._unsettled.pop(delivery_id, None)
             raise LinkError("Timeout waiting for delivery settlement") from e
         if not isinstance(state, Accepted):

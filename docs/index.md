@@ -67,7 +67,7 @@ if __name__ == "__main__":
 
 ## Install
 
-**Repid** supports Python 3.10 and later. Install it with `pip`:
+**Repid** supports Python 3.11 and later. Install it with `pip`:
 
 ```bash
 pip install repid

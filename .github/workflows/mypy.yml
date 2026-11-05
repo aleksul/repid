@@ -7,7 +7,7 @@ on:
 
 jobs:
   mypy:
-    name: MyPy (Python 3.10)
+    name: MyPy (Python 3.11)
     runs-on: ubuntu-latest
 
     steps:
@@ -18,7 +18,7 @@ jobs:
       uses: astral-sh/setup-uv@v7
 
     - name: Install or update dependencies
-      run: uv sync --frozen --all-extras --all-groups --python 3.10
+      run: uv sync --frozen --all-extras --all-groups --python 3.11
 
     - name: Add mypy annotator
       uses: pr-annotators/mypy-pr-annotator@v1.0.0

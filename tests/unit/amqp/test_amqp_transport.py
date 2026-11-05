@@ -386,7 +386,7 @@ async def test_transport_connect_read_write_and_decode(monkeypatch: Any) -> None
 
 async def test_transport_errors(monkeypatch: Any) -> None:
     async def fake_timeout(*_args: Any, **_kwargs: Any) -> tuple[Any, Any]:
-        raise asyncio.TimeoutError
+        raise TimeoutError
 
     monkeypatch.setattr(asyncio, "open_connection", fake_timeout)
 

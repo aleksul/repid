@@ -41,7 +41,7 @@ It will create virtual environment and install inside of it all dependencies, in
 which are needed for development.
 
 !!! example "Python version"
-    Use lowest supported by `repid` version of Python (== 3.10 for now) for your venv.
+    Use lowest supported by `repid` version of Python (== 3.11 for now) for your venv.
 
 To activate a venv run:
 

@@ -264,7 +264,7 @@ class Session:
         for link in list(self._links.values()):
             try:
                 await link.detach()
-            except (OSError, asyncio.TimeoutError):
+            except (TimeoutError, OSError):
                 logger.warning(
                     "session.link.detach_error",
                     extra={"link": link.name},
@@ -277,7 +277,7 @@ class Session:
                 end_frame = EndFrame()
                 await self._connection.send_performative(self._channel, end_frame)
                 await self._state_machine.transition("send_end")
-            except (OSError, asyncio.TimeoutError):
+            except (TimeoutError, OSError):
                 logger.debug("session.end_frame.error", exc_info=True)
 
         # Remove from connection

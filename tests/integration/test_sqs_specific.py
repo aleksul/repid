@@ -407,8 +407,11 @@ async def test_sqs_server_connection_state(sqs_connection: ServerT) -> None:
     async with server.connection():
         assert server.is_connected is True
 
+        # Publish on a queue no other test consumes: this test never settles
+        # the message, so it would otherwise redeliver forever in a shared
+        # queue (it has no topic, so it is unroutable).
         await server.publish(
-            channel="default",
+            channel="other_channel",
             message=DummySentMessage(b"cov"),
             server_specific_parameters={"DelaySeconds": 1},
         )
@@ -510,13 +513,17 @@ async def test_sqs_message_nack_without_dlq(sqs_connection: ServerT) -> None:
 
 
 async def test_sqs_subscriber_active_state(sqs_connection: ServerT) -> None:
+    # Subscriber-state tests run against a dedicated, never-published channel:
+    # their callbacks never settle deliveries, and a received-but-never-settled
+    # delivery reappears once its visibility timeout expires, polluting the
+    # queue for any test that consumes it afterwards.
     server = cast(SqsServer, sqs_connection)
     async with server.connection():
         sub = cast(
             SqsSubscriber,
             await server.subscribe(
                 channels_to_callbacks={
-                    "default": lambda m: asyncio.sleep(0),  # noqa: ARG005
+                    "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
             ),
         )
@@ -531,7 +538,7 @@ async def test_sqs_subscriber_task_property(sqs_connection: ServerT) -> None:
             SqsSubscriber,
             await server.subscribe(
                 channels_to_callbacks={
-                    "default": lambda m: asyncio.sleep(0),  # noqa: ARG005
+                    "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
             ),
         )
@@ -547,7 +554,7 @@ async def test_sqs_subscriber_start_consuming_when_already_active(sqs_connection
             SqsSubscriber,
             await server.subscribe(
                 channels_to_callbacks={
-                    "default": lambda m: asyncio.sleep(0),  # noqa: ARG005
+                    "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
             ),
         )
@@ -562,7 +569,7 @@ async def test_sqs_subscriber_resume_when_active(sqs_connection: ServerT) -> Non
             SqsSubscriber,
             await server.subscribe(
                 channels_to_callbacks={
-                    "default": lambda m: asyncio.sleep(0),  # noqa: ARG005
+                    "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
             ),
         )
@@ -577,7 +584,7 @@ async def test_sqs_subscriber_pause_and_resume(sqs_connection: ServerT) -> None:
             SqsSubscriber,
             await server.subscribe(
                 channels_to_callbacks={
-                    "default": lambda m: asyncio.sleep(0),  # noqa: ARG005
+                    "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
             ),
         )
@@ -595,7 +602,7 @@ async def test_sqs_subscriber_process_message_handles_callback_exception(
             SqsSubscriber,
             await server.subscribe(
                 channels_to_callbacks={
-                    "default": lambda m: asyncio.sleep(0),  # noqa: ARG005
+                    "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
             ),
         )
@@ -619,7 +626,7 @@ async def test_sqs_subscriber_task_raises_when_not_active(sqs_connection: Server
             SqsSubscriber,
             await server.subscribe(
                 channels_to_callbacks={
-                    "default": lambda m: asyncio.sleep(0),  # noqa: ARG005
+                    "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
             ),
         )
@@ -636,7 +643,7 @@ async def test_sqs_subscriber_handles_receive_exception(sqs_connection: ServerT)
             SqsSubscriber,
             await server.subscribe(
                 channels_to_callbacks={
-                    "default": lambda m: asyncio.sleep(0),  # noqa: ARG005
+                    "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
             ),
         )
@@ -644,7 +651,7 @@ async def test_sqs_subscriber_handles_receive_exception(sqs_connection: ServerT)
         original_client = server._client
         server._client = cast(Any, MockClientFailingReceive())
 
-        task = asyncio.create_task(sub._consume_channel("default"))
+        task = asyncio.create_task(sub._consume_channel("test_subscriber_state_channel"))
         await asyncio.sleep(0.1)
         task.cancel()
         await asyncio.sleep(0.1)
@@ -660,7 +667,7 @@ async def test_sqs_subscriber_handles_consume_cancellation(sqs_connection: Serve
             SqsSubscriber,
             await server.subscribe(
                 channels_to_callbacks={
-                    "default": lambda m: asyncio.sleep(0),  # noqa: ARG005
+                    "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
             ),
         )
@@ -679,7 +686,7 @@ async def test_sqs_subscriber_handles_pause_cancellation(sqs_connection: ServerT
             SqsSubscriber,
             await server.subscribe(
                 channels_to_callbacks={
-                    "default": lambda m: asyncio.sleep(0),  # noqa: ARG005
+                    "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
             ),
         )
@@ -695,7 +702,7 @@ async def test_sqs_subscriber_raises_if_client_is_none(sqs_connection: ServerT) 
     async with server.connection():
         sub = await server.subscribe(
             channels_to_callbacks={
-                "default": lambda m: asyncio.sleep(0),  # noqa: ARG005
+                "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
             },
         )
 
@@ -703,7 +710,7 @@ async def test_sqs_subscriber_raises_if_client_is_none(sqs_connection: ServerT) 
         server._client = None
         try:
             with pytest.raises(RuntimeError, match=r"SQS client is not connected\."):
-                await sub._consume_channel("default")  # type: ignore[attr-defined]
+                await sub._consume_channel("test_subscriber_state_channel")  # type: ignore[attr-defined]
         finally:
             server._client = original_client
             await sub.close()
@@ -721,15 +728,21 @@ async def test_sqs_subscriber_handles_process_message_exception(sqs_connection: 
     server = cast(SqsServer, sqs_connection)
 
     async with server.connection():
-        await server.publish(channel="default", message=DummySentMessage(payload=b"trigger"))
+        # Use a queue no other test consumes: the mock subscriber raises before
+        # settling the delivery, so the message would otherwise be left behind
+        # in a shared queue (unroutable, as it carries no topic).
+        await server.publish(
+            channel="other_channel",
+            message=DummySentMessage(payload=b"trigger"),
+        )
 
         sub = MockSubscriberWithProcessException(
             server,
-            {"default": lambda _: asyncio.sleep(0)},
+            {"other_channel": lambda _: asyncio.sleep(0)},
             concurrency_limit=1,
         )
         try:
-            await sub._consume_channel("default")
+            await sub._consume_channel("other_channel")
         finally:
             with contextlib.suppress(ValueError):
                 await sub.close()
@@ -741,7 +754,7 @@ async def test_sqs_subscriber_handles_message_instantiation_error(sqs_connection
     async with server.connection():
         sub = MockSubscriberWithMessageException(
             server,
-            {"default": lambda _: asyncio.sleep(0)},
+            {"test_subscriber_state_channel": lambda _: asyncio.sleep(0)},
             concurrency_limit=1,
         )
         await sub._process_message("default", "http://queue", {}, lambda _: asyncio.sleep(0))
@@ -752,7 +765,10 @@ async def test_sqs_server_handles_subscriber_close_error(sqs_connection: ServerT
     server = cast(SqsServer, sqs_connection)
 
     async with server.connection():
-        sub = MockSubscriberWithCloseException(server, {"default": lambda _: asyncio.sleep(0)})
+        sub = MockSubscriberWithCloseException(
+            server,
+            {"test_subscriber_state_channel": lambda _: asyncio.sleep(0)},
+        )
         server._active_subscribers.add(sub)
         await server.disconnect()
 

@@ -74,33 +74,33 @@ class _Worker:
             },
         )
 
-        if self.health_check_server is not None:
-            await self.health_check_server.start()
-
-        if self.asyncapi_server is not None:
-            await self.asyncapi_server.start()
-
-        runner = _Runner(
-            actor_context=self.actor_context,
-            max_tasks=self.messages_limit,
-            tasks_concurrency_limit=self.tasks_limit,
-            health_check_server=self.health_check_server,
-        )
-
-        if not self.centralized_router.actors:
-            logger.info("worker.run.exit.no_actors")
-            if self.health_check_server is not None:  # pragma: no cover
-                await self.health_check_server.stop()
-            if self.asyncapi_server is not None:  # pragma: no cover
-                await self.asyncapi_server.stop()
-            return runner
-
         loop = asyncio.get_running_loop()
-        self._register_signals(loop, runner)
-
-        logger.info("worker.consumer.start")
-
+        registered_signals: tuple[signal.Signals, ...] = ()
+        started_health_check_server: HealthCheckServer | None = None
+        started_asyncapi_server: AsyncAPIServer | None = None
         try:
+            if self.health_check_server is not None:
+                await self.health_check_server.start()
+                started_health_check_server = self.health_check_server
+
+            if self.asyncapi_server is not None:
+                await self.asyncapi_server.start()
+                started_asyncapi_server = self.asyncapi_server
+
+            runner = _Runner(
+                actor_context=self.actor_context,
+                max_tasks=self.messages_limit,
+                tasks_concurrency_limit=self.tasks_limit,
+                health_check_server=self.health_check_server,
+            )
+
+            if not self.centralized_router.actors:
+                logger.info("worker.run.exit.no_actors")
+                return runner
+
+            registered_signals = self._register_signals(loop, runner)
+
+            logger.info("worker.consumer.start")
             await runner.run(
                 channels_to_actors=self.centralized_router._actors_per_channel_address,
                 graceful_termination_timeout=self.graceful_shutdown_time,
@@ -108,36 +108,91 @@ class _Worker:
         except asyncio.CancelledError as exc:
             logger.critical("worker.cancelled", exc_info=exc)
             raise
-
-        if self.health_check_server is not None:
-            await asyncio.wait_for(
-                self.health_check_server.stop(),
-                timeout=self.graceful_health_check_server_finish_time,
+        finally:
+            await self._cleanup_resources(
+                loop,
+                registered_signals,
+                started_health_check_server,
+                started_asyncapi_server,
             )
-
-        if self.asyncapi_server is not None:
-            await asyncio.wait_for(
-                self.asyncapi_server.stop(),
-                timeout=self.graceful_asyncapi_server_finish_time,
-            )
-
-        self._unregister_signals(loop)
 
         logger.info("worker.run.exit")
 
         return runner
 
-    def _register_signals(self, loop: asyncio.AbstractEventLoop, runner: _Runner) -> None:
+    async def _cleanup_resources(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        registered_signals: tuple[signal.Signals, ...],
+        health_check_server: HealthCheckServer | None,
+        asyncapi_server: AsyncAPIServer | None,
+    ) -> None:
+        cleanup_errors: list[BaseException] = []
+        if registered_signals:
+            try:
+                self._unregister_signals(loop, registered_signals)
+            except BaseException as exc:  # noqa: BLE001
+                cleanup_errors.append(exc)
+
+        if health_check_server is not None:
+            try:
+                await asyncio.wait_for(
+                    health_check_server.stop(),
+                    timeout=self.graceful_health_check_server_finish_time,
+                )
+            except BaseException as exc:  # noqa: BLE001
+                cleanup_errors.append(exc)
+
+        if asyncapi_server is not None:
+            try:
+                await asyncio.wait_for(
+                    asyncapi_server.stop(),
+                    timeout=self.graceful_asyncapi_server_finish_time,
+                )
+            except BaseException as exc:  # noqa: BLE001
+                cleanup_errors.append(exc)
+
+        if cleanup_errors:
+            for cleanup_error in cleanup_errors[1:]:
+                logger.exception("worker.cleanup.error", exc_info=cleanup_error)
+            raise cleanup_errors[0]
+
+    def _register_signals(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        runner: _Runner,
+    ) -> tuple[signal.Signals, ...]:
         def signal_handler() -> None:
             logger.info("worker.signal.stop")
             runner.stop_consume_event.set()
-            self._unregister_signals(loop)
 
         if self.register_signals:
             logger.debug("worker.signal.register", extra={"signals": self.register_signals})
-        for sig in self.register_signals:
-            loop.add_signal_handler(sig, signal_handler)
+        registered: list[signal.Signals] = []
+        try:
+            for sig in self.register_signals:
+                loop.add_signal_handler(sig, signal_handler)
+                registered.append(sig)
+        except BaseException:
+            try:
+                self._unregister_signals(loop, registered)
+            except BaseException as exc:
+                logger.exception("worker.signal.rollback.error", exc_info=exc)
+            raise
+        return tuple(registered)
 
-    def _unregister_signals(self, loop: asyncio.AbstractEventLoop) -> None:
-        for sig in self.register_signals:
-            loop.remove_signal_handler(sig)
+    def _unregister_signals(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        signals: Iterable[signal.Signals] | None = None,
+    ) -> None:
+        errors: list[BaseException] = []
+        for sig in self.register_signals if signals is None else signals:
+            try:
+                loop.remove_signal_handler(sig)
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+        if errors:
+            for unregistration_error in errors[1:]:
+                logger.exception("worker.signal.unregister.error", exc_info=unregistration_error)
+            raise errors[0]

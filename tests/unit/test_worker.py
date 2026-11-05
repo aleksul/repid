@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import signal
-from typing import Any
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
 from repid import Router
+from repid._runner import _Runner
 from repid._worker import _Worker
 from repid.asyncapi import AsyncAPI3Schema
 from repid.asyncapi_server import AsyncAPIServerSettings
@@ -250,3 +252,153 @@ async def test_worker_run_cancel() -> None:
 
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, timeout=3.0)
+
+
+async def test_worker_cleanup_stops_asyncapi_when_health_stop_fails() -> None:
+    server = InMemoryServer()
+    worker = _Worker(
+        actor_context=_make_actor_context(server),
+        router=Router()._materialize(),
+        register_signals=[],
+    )
+    health = MagicMock(start=AsyncMock(), stop=AsyncMock(side_effect=RuntimeError("health failed")))
+    asyncapi = MagicMock(start=AsyncMock(), stop=AsyncMock())
+    worker.health_check_server = cast(Any, health)
+    worker.asyncapi_server = cast(Any, asyncapi)
+
+    with pytest.raises(RuntimeError, match="health failed"):
+        await worker.run()
+
+    health.start.assert_awaited_once()
+    health.stop.assert_awaited_once()
+    asyncapi.start.assert_awaited_once()
+    asyncapi.stop.assert_awaited_once()
+
+
+async def test_worker_cleanup_stops_asyncapi_when_health_stop_times_out() -> None:
+    server = InMemoryServer()
+    worker = _Worker(
+        actor_context=_make_actor_context(server),
+        router=Router()._materialize(),
+        register_signals=[],
+    )
+
+    async def blocked_stop() -> None:
+        await asyncio.Future()
+
+    health = MagicMock(start=AsyncMock(), stop=AsyncMock(side_effect=blocked_stop))
+    asyncapi = MagicMock(start=AsyncMock(), stop=AsyncMock())
+    worker.health_check_server = cast(Any, health)
+    worker.asyncapi_server = cast(Any, asyncapi)
+    worker.graceful_health_check_server_finish_time = 0.01
+
+    with pytest.raises(asyncio.TimeoutError):
+        await worker.run()
+
+    health.stop.assert_awaited_once()
+    asyncapi.stop.assert_awaited_once()
+
+
+async def test_worker_cleanup_stops_servers_when_signal_unregistration_fails() -> None:
+    router = Router()
+
+    @router.actor
+    async def actor() -> None:
+        pass
+
+    worker = _Worker(
+        actor_context=_make_actor_context(InMemoryServer()),
+        router=router._materialize(),
+        register_signals=[signal.SIGUSR1],
+    )
+    health = MagicMock(start=AsyncMock(), stop=AsyncMock())
+    asyncapi = MagicMock(start=AsyncMock(), stop=AsyncMock())
+    worker.health_check_server = cast(Any, health)
+    worker.asyncapi_server = cast(Any, asyncapi)
+    loop = asyncio.get_running_loop()
+    registered: list[signal.Signals] = []
+
+    def add_signal_handler(sig: signal.Signals, _callback: Any) -> None:
+        registered.append(sig)
+
+    def remove_signal_handler(sig: signal.Signals) -> bool:
+        assert sig in registered
+        raise RuntimeError("unregister failed")
+
+    with (
+        patch.object(loop, "add_signal_handler", side_effect=add_signal_handler),
+        patch.object(loop, "remove_signal_handler", side_effect=remove_signal_handler),
+        patch.object(_Runner, "run", new=AsyncMock()),
+        pytest.raises(RuntimeError, match="unregister failed"),
+    ):
+        await worker.run()
+
+    assert registered == [signal.SIGUSR1]
+    health.stop.assert_awaited_once()
+    asyncapi.stop.assert_awaited_once()
+
+
+def test_worker_unregister_signals_logs_subsequent_errors() -> None:
+    worker = _Worker(
+        actor_context=_make_actor_context(InMemoryServer()),
+        router=Router()._materialize(),
+        register_signals=[signal.SIGUSR1, signal.SIGUSR2],
+    )
+    first_error = RuntimeError("first failure")
+    second_error = RuntimeError("second failure")
+    loop = MagicMock(spec=asyncio.AbstractEventLoop)
+    loop.remove_signal_handler.side_effect = [first_error, second_error]
+
+    with (
+        patch("repid._worker.logger.exception") as log_exception,
+        pytest.raises(RuntimeError) as raised,
+    ):
+        worker._unregister_signals(loop)
+
+    assert raised.value is first_error
+    assert loop.remove_signal_handler.call_count == 2
+    log_exception.assert_called_once_with(
+        "worker.signal.unregister.error",
+        exc_info=second_error,
+    )
+
+
+async def test_worker_rolls_back_partially_registered_signals() -> None:
+    router = Router()
+
+    @router.actor
+    async def actor() -> None:
+        pass
+
+    worker = _Worker(
+        actor_context=_make_actor_context(InMemoryServer()),
+        router=router._materialize(),
+        register_signals=[signal.SIGUSR1, signal.SIGUSR2],
+    )
+    health = MagicMock(start=AsyncMock(), stop=AsyncMock())
+    asyncapi = MagicMock(start=AsyncMock(), stop=AsyncMock())
+    worker.health_check_server = cast(Any, health)
+    worker.asyncapi_server = cast(Any, asyncapi)
+    loop = asyncio.get_running_loop()
+    registered: list[signal.Signals] = []
+    removed: list[signal.Signals] = []
+
+    def add_signal_handler(sig: signal.Signals, _callback: Any) -> None:
+        if registered:
+            raise RuntimeError("register failed")
+        registered.append(sig)
+
+    def remove_signal_handler(sig: signal.Signals) -> bool:
+        removed.append(sig)
+        return True
+
+    with (
+        patch.object(loop, "add_signal_handler", side_effect=add_signal_handler),
+        patch.object(loop, "remove_signal_handler", side_effect=remove_signal_handler),
+        pytest.raises(RuntimeError, match="register failed"),
+    ):
+        await worker.run()
+
+    assert removed == registered
+    health.stop.assert_awaited_once()
+    asyncapi.stop.assert_awaited_once()

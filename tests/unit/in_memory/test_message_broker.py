@@ -415,6 +415,40 @@ async def test_subscriber_close_twice() -> None:
     await subscriber.close()  # Should be fine
 
 
+async def test_consumer_cancellation_requeues_fetched_message() -> None:
+    queue = DummyQueue()
+    message = DummyQueue.Message(payload=b"pending")
+    queue.queue.put_nowait(message)
+    callback_called = False
+
+    async def callback(_msg: ReceivedMessageT) -> None:
+        nonlocal callback_called
+        callback_called = True
+
+    subscriber = InMemorySubscriber(
+        channels_to_callbacks={},
+        queues={"chan": queue},
+        concurrency_limit=None,
+    )
+    consumer = asyncio.create_task(
+        subscriber._channel_consumer(channel="chan", queue=queue, callback=callback),
+    )
+    try:
+        # The consumer fetches the message and yields before delivering it.
+        await asyncio.sleep(0)
+        assert queue.queue.empty()
+        consumer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await consumer
+
+        assert queue.queue.get_nowait() is message
+        assert queue.queue.empty()
+        assert not queue.processing
+        assert not callback_called
+    finally:
+        await subscriber.close()
+
+
 async def test_supervisor_cancellation() -> None:
     # This test tries to hit the except asyncio.CancelledError block in _supervisor
     server = InMemoryServer()

@@ -421,6 +421,7 @@ async def sqs_connection(elasticmq_container: "wrappers.Container") -> ServerT:
         # Create necessary queues for tests
         queues_to_create = [
             "default",
+            "test_subscriber_state_channel",
             "test_nack_channel",
             "repid_test_nack_channel_dlq",
             "test_reply_channel",

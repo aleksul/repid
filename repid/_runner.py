@@ -292,7 +292,7 @@ class _Runner:
             self._server_subscriber_was_paused
             and self._server_subscriber is not None
             and self._tasks_concurrency_limit - self._limiter._value
-            > self._server_subscriber_concurrency_unpause_threshold
+            >= self._server_subscriber_concurrency_unpause_threshold
         ):
             async with self._server_subscriber_pause_lock:
                 if self._server_subscriber_was_paused:  # double check inside of the lock

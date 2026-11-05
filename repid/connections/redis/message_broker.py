@@ -4,12 +4,14 @@ import asyncio
 import contextlib
 import json
 import logging
+import math
 import uuid
 from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from functools import partial
 from itertools import groupby
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 from urllib.parse import urlparse
 
 from redis.asyncio import Redis
@@ -29,6 +31,14 @@ from repid.connections.abc import (
 )
 
 logger = logging.getLogger("repid.connections.redis")
+
+_StreamEntriesT = list[tuple[bytes | str, dict[bytes | str, bytes | str] | None]]
+_StreamReadResultT = list[tuple[bytes | str, _StreamEntriesT]]
+
+
+class _PendingEntryT(TypedDict):
+    message_id: bytes | str
+
 
 if TYPE_CHECKING:
     from repid.asyncapi.models.common import ServerBindingsObject
@@ -159,6 +169,7 @@ class RedisReceivedMessage(ReceivedMessageT):
         "_headers",
         "_keep_alive_interval",
         "_message_id",
+        "_on_settled",
         "_payload",
         "_redis",
         "_reply_to",
@@ -183,6 +194,7 @@ class RedisReceivedMessage(ReceivedMessageT):
         server: RedisServer,
         consumer_name: str = "",
         min_idle_ms: int = 0,
+        on_settled: Callable[[], None] | None = None,
     ) -> None:
         self._payload = payload
         self._headers = headers
@@ -197,6 +209,7 @@ class RedisReceivedMessage(ReceivedMessageT):
         self._dlq_maxlen = dlq_maxlen
         self._server = server
         self._action: MessageAction | None = None
+        self._on_settled = on_settled
         self._consumer_name = consumer_name
         self._keep_alive_interval: int | None = min_idle_ms // 3000 if min_idle_ms > 0 else None
 
@@ -257,6 +270,8 @@ class RedisReceivedMessage(ReceivedMessageT):
         self._action = MessageAction.acked
         try:
             await self._redis.xack(self._stream_name, self._consumer_group, self._message_id)
+            if self._on_settled is not None:
+                self._on_settled()
         except Exception:
             # Cancellation is not caught, so a cancelled settlement stays
             # reserved even if the RPC may have reached the server.
@@ -287,6 +302,8 @@ class RedisReceivedMessage(ReceivedMessageT):
 
                 pipe.xack(self._stream_name, self._consumer_group, self._message_id)
                 await pipe.execute()
+            if self._on_settled is not None:
+                self._on_settled()
         except Exception:
             self._action = None
             raise
@@ -312,6 +329,8 @@ class RedisReceivedMessage(ReceivedMessageT):
                 pipe.xadd(self._stream_name, fields)  # type: ignore[arg-type]
                 pipe.xack(self._stream_name, self._consumer_group, self._message_id)
                 await pipe.execute()
+            if self._on_settled is not None:
+                self._on_settled()
         except Exception:
             self._action = None
             raise
@@ -348,7 +367,10 @@ class RedisSubscriber(SubscriberT):
         retry_delay: float = 1.0,
         claim_interval: float = 0.0,
         min_idle_ms: int = 60_000,
+        read_timeout: float = 5.0,
     ) -> None:
+        if read_timeout <= 0 or not math.isfinite(read_timeout):
+            raise ValueError("read_timeout must be positive and finite")
         self._redis = redis_client
         self._channels = channels
         self._callbacks = callbacks
@@ -359,8 +381,10 @@ class RedisSubscriber(SubscriberT):
         self._retry_delay = retry_delay
         self._claim_interval = claim_interval
         self._min_idle_ms = min_idle_ms
+        self._read_timeout = read_timeout
 
         self._closed = False
+        self._close_event = asyncio.Event()
         self._paused_event = asyncio.Event()
         self._paused_event.set()  # Start in resumed state
 
@@ -371,6 +395,11 @@ class RedisSubscriber(SubscriberT):
         )
         self._callback_tasks: set[asyncio.Task[None]] = set()
         self._in_flight_messages: set[tuple[str, str]] = set()
+        self._delivered_messages: set[tuple[str, str]] = set()
+        self._recovery_deliveries: dict[str, set[tuple[str, str]]] = {}
+        self._uncertain_groups: set[str] = set()
+        self._pending_cursors: dict[str, dict[str, str]] = {}
+        self._notification_tasks: set[asyncio.Task[None]] = set()
 
         self._task: asyncio.Task[None] | None = None
         self._claim_task: asyncio.Task[None] | None = None
@@ -407,13 +436,18 @@ class RedisSubscriber(SubscriberT):
         self._paused_event.set()
 
     async def close(self) -> None:
-        """Close the subscriber and wait for in-flight messages."""
+        """Close after the outstanding read and in-flight callbacks finish."""
         if self._closed:
             return
         self._closed = True
+        self._close_event.set()
+        self._paused_event.set()
+        for task in self._notification_tasks:
+            task.cancel()
 
         if self._task is not None and not self._task.done():
-            self._task.cancel()
+            # Only notification reads are cancelled. Nonblocking XREADGROUP
+            # responses must drain, since they can contain claimed messages.
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
 
@@ -424,6 +458,18 @@ class RedisSubscriber(SubscriberT):
 
         if self._callback_tasks:
             await asyncio.gather(*self._callback_tasks, return_exceptions=True)
+
+        # A read may time out while close is draining it. Return any deliveries
+        # already assigned by Redis, without starting actors during shutdown.
+        for group in self._uncertain_groups.copy():
+            channels = {ch: cfg for ch, cfg in self._channels.items() if cfg.group == group}
+            self._pending_cursors.pop(group, None)
+            try:
+                while await self._recover_pending(group, channels):
+                    if self._callback_tasks:
+                        await asyncio.gather(*self._callback_tasks, return_exceptions=True)
+            except (ConnectionError, TimeoutError, RedisConnectionError, RedisTimeoutError):
+                logger.exception("consumer.recovery.error")
 
     async def _consume_loop(self) -> None:
         """Main consumption loop — one concurrent task per unique consumer group."""
@@ -459,12 +505,16 @@ class RedisSubscriber(SubscriberT):
                 if self._closed:  # pragma: no cover
                     break
                 logger.exception("consumer.error.redis", exc_info=exc)
-                await asyncio.sleep(self._retry_delay)
+                await self._wait_for_retry()
             except Exception as exc:
                 if self._closed:  # pragma: no cover
                     break
                 logger.exception("consumer.error.unexpected", exc_info=exc)
-                await asyncio.sleep(self._retry_delay)
+                await self._wait_for_retry()
+
+    async def _wait_for_retry(self) -> None:
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(self._close_event.wait(), timeout=self._retry_delay)
 
     async def _consume_batch(
         self,
@@ -476,15 +526,16 @@ class RedisSubscriber(SubscriberT):
             return
 
         streams_dict = {cfg.stream: ">" for cfg in group_channels.values()}
+        if group_name in self._uncertain_groups and await self._recover_pending(
+            group_name,
+            group_channels,
+        ):
+            return
         stream_to_channel = {cfg.stream: ch for ch, cfg in group_channels.items()}
 
-        result = await self._redis.xreadgroup(
-            groupname=group_name,
-            consumername=self._consumer_name,
-            streams=streams_dict,  # type: ignore[arg-type]
-            count=self._batch_size,
-            block=self._block_ms,
-        )
+        result = await self._read_group(group_name, streams_dict)
+        if not result:
+            result = await self._wait_for_messages(group_name, streams_dict)
 
         if not result:
             return
@@ -510,9 +561,147 @@ class RedisSubscriber(SubscriberT):
                 callback,
             )
 
+    async def _wait_for_messages(
+        self,
+        group_name: str,
+        streams: dict[str, str],
+    ) -> _StreamReadResultT:
+        """Wait without claiming messages, so shutdown can safely cancel the wait."""
+        if self._closed:
+            return []
+        if group_name in self._uncertain_groups:
+            # An abandoned command can reach Redis after the first recovery
+            # scan. Keep checking our own PEL even without new stream activity.
+            await self._wait_for_retry()
+            return []
+        tails = await asyncio.wait_for(
+            asyncio.gather(*(self._redis.xrevrange(stream, count=1) for stream in streams)),
+            timeout=self._read_timeout,
+        )
+        cursors = {
+            stream: tail[0][0] if tail else "0-0"
+            for stream, tail in zip(streams, tails, strict=True)
+        }
+        if self._closed:
+            return []
+        # Messages may arrive before the cursors are captured. Check the group
+        # again so those messages cannot be hidden behind the notification read.
+        result = await self._read_group(group_name, streams)
+        if result or self._closed:
+            return result
+        notification = asyncio.create_task(self._wait_for_activity(cursors))
+        self._notification_tasks.add(notification)
+        try:
+            await notification
+        except asyncio.CancelledError:
+            if not self._closed:
+                raise
+        finally:
+            self._notification_tasks.discard(notification)
+        return []
+
+    async def _read_group(self, group_name: str, streams: dict[str, str]) -> _StreamReadResultT:
+        # Bound the entire RPC, including redis-py's connection/retry handling.
+        try:
+            result = await asyncio.wait_for(
+                self._redis.xreadgroup(
+                    groupname=group_name,
+                    consumername=self._consumer_name,
+                    streams=streams,  # type: ignore[arg-type]
+                    count=self._batch_size,
+                ),
+                timeout=self._read_timeout,
+            )
+        except (ConnectionError, TimeoutError, RedisConnectionError, RedisTimeoutError):
+            self._uncertain_groups.add(group_name)
+            self._pending_cursors.pop(group_name, None)
+            raise
+        return cast("_StreamReadResultT", result)
+
+    async def _recover_pending(
+        self,
+        group_name: str,
+        channels: dict[str, ChannelConfig],
+    ) -> bool:
+        delivered = self._delivered_messages.copy()
+        self._recovery_deliveries[group_name] = delivered
+        try:
+            return await self._recover_pending_page(group_name, channels, delivered)
+        finally:
+            self._recovery_deliveries.pop(group_name)
+
+    async def _recover_pending_page(
+        self,
+        group_name: str,
+        channels: dict[str, ChannelConfig],
+        delivered: set[tuple[str, str]],
+    ) -> bool:
+        cursors = self._pending_cursors.setdefault(
+            group_name,
+            dict.fromkeys((cfg.stream for cfg in channels.values()), "0-0"),
+        )
+        found = False
+        for channel, cfg in channels.items():
+            # XPENDING only inspects metadata. History XREADGROUP would refresh
+            # every returned entry's idle time, including work we skip below.
+            pending = cast(
+                "list[_PendingEntryT]",
+                await asyncio.wait_for(
+                    self._redis.xpending_range(
+                        cfg.stream,
+                        group_name,
+                        min=f"({cursors[cfg.stream]}",
+                        max="+",
+                        count=self._batch_size,
+                        consumername=self._consumer_name,
+                    ),
+                    timeout=self._read_timeout,
+                ),
+            )
+            if not pending:
+                continue
+            found = True
+            callback = self._callbacks[channel]
+            messages: _StreamEntriesT = []
+            for entry in pending:
+                message_id = entry["message_id"]
+                msg_id = message_id.decode() if isinstance(message_id, bytes) else message_id
+                key = (channel, msg_id)
+                if key in delivered or key in self._delivered_messages:
+                    continue
+                payload = cast(
+                    "_StreamEntriesT",
+                    await asyncio.wait_for(
+                        self._redis.xrange(cfg.stream, min=message_id, max=message_id, count=1),
+                        timeout=self._read_timeout,
+                    ),
+                )
+                messages.append((message_id, payload[0][1] if payload else None))
+            # A claim callback may have delivered an entry, or an actor settled
+            # it, while the inspection requests were in flight.
+            delivered.update(self._delivered_messages)
+            unknown = [
+                (message_id, fields)
+                for message_id, fields in messages
+                if (
+                    channel,
+                    message_id.decode() if isinstance(message_id, bytes) else message_id,
+                )
+                not in delivered
+            ]
+            await self._process_stream_messages(unknown, channel, cfg.stream, callback)
+            last_id = pending[-1]["message_id"]
+            cursors[cfg.stream] = last_id.decode() if isinstance(last_id, bytes) else last_id
+        if not found:
+            self._pending_cursors.pop(group_name, None)
+        return found
+
+    async def _wait_for_activity(self, cursors: dict[str, bytes | str]) -> None:
+        await self._redis.xread(streams=cursors, count=1, block=self._block_ms)  # type: ignore[arg-type]
+
     async def _process_stream_messages(
         self,
-        messages: list[tuple[bytes | str, dict[bytes | str, bytes | str]]],
+        messages: list[tuple[bytes | str, dict[bytes | str, bytes | str] | None]],
         channel: str,
         stream_name: str,
         callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
@@ -524,7 +713,20 @@ class RedisSubscriber(SubscriberT):
             key = (channel, msg_id)
             if key in self._in_flight_messages:
                 continue
+            if fields is None:
+                # History can contain entries deleted while still pending.
+                await asyncio.wait_for(
+                    self._redis.xack(stream_name, cfg.group, msg_id),
+                    timeout=self._read_timeout,
+                )
+                continue
             self._in_flight_messages.add(key)
+            self._delivered_messages.add(key)
+            recovery = self._recovery_deliveries.get(cfg.group)
+            if recovery is not None:
+                # Settlement can finish before recovery's network request.
+                # Keep the delivery visible until that recovery page finishes.
+                recovery.add(key)
 
             payload, headers, content_type, reply_to = _parse_message_fields(fields)
 
@@ -543,6 +745,7 @@ class RedisSubscriber(SubscriberT):
                 server=self._server,
                 consumer_name=self._consumer_name,
                 min_idle_ms=self._min_idle_ms,
+                on_settled=partial(self._delivered_messages.discard, key),
             )
 
             if self._semaphore is not None:
@@ -562,7 +765,13 @@ class RedisSubscriber(SubscriberT):
     ) -> None:
         """Run a callback and handle cleanup."""
         try:
-            await callback(message)
+            # A read can finish after pause(), and already scheduled callbacks
+            # may not have started yet. Hold those deliveries until resume().
+            await self._paused_event.wait()
+            if self._closed:
+                await message.reject()
+            else:
+                await callback(message)
         except Exception as exc:
             logger.exception(
                 "message.callback.error",
@@ -637,6 +846,8 @@ class RedisServer(ServerT):
 
     Uses Redis Streams with consumer groups for reliable, persistent messaging.
     Built-in retry logic is handled by redis-py library.
+    After an uncertain group read, the subscriber also polls its own pending
+    deliveries on retry_delay, independently of optional stale-message reclaim.
 
     Args:
         dsn: Redis connection URL (e.g., 'redis://localhost:6379/0')
@@ -648,7 +859,11 @@ class RedisServer(ServerT):
             If None, DLQ is disabled and nack() will just discard messages.
             Default: 'repid:{channel}:dlq'
         retry_attempts: Number of retry attempts for Redis operations.
-        block_ms: Milliseconds to block on XREADGROUP when no messages are available.
+        block_ms: Milliseconds to block on notification reads (XREAD) when no messages are available.
+            Zero waits indefinitely until activity or close.
+        read_timeout: Maximum seconds for each nonblocking read or pending-recovery request,
+            including connection setup and retries. Must be positive and finite. Default: 5.0.
+            This bounds reads drained on shutdown; notification waits still use block_ms.
         batch_size: Maximum number of messages to fetch per XREADGROUP call.
         retry_delay: Seconds to wait after a recoverable error before retrying.
         consumer_group_start_id: Stream ID from which new consumer groups begin reading.
@@ -684,6 +899,7 @@ class RedisServer(ServerT):
         block_ms: int = 5000,
         batch_size: int = 10,
         retry_delay: float = 1.0,
+        read_timeout: float = 5.0,
         title: str | None = None,
         summary: str | None = None,
         description: str | None = None,
@@ -693,6 +909,8 @@ class RedisServer(ServerT):
         external_docs: ExternalDocs | None = None,
         bindings: ServerBindingsObject | None = None,
     ) -> None:
+        if read_timeout <= 0 or not math.isfinite(read_timeout):
+            raise ValueError("read_timeout must be positive and finite")
         self._dsn = dsn
         self._stream_name_strategy = stream_name_strategy or _default_stream_name_strategy
         self._consumer_group_strategy = consumer_group_strategy or _default_consumer_group_strategy
@@ -705,6 +923,7 @@ class RedisServer(ServerT):
         self._block_ms = block_ms
         self._batch_size = batch_size
         self._retry_delay = retry_delay
+        self._read_timeout = read_timeout
 
         self._title = title
         self._summary = summary
@@ -925,6 +1144,7 @@ class RedisServer(ServerT):
             retry_delay=self._retry_delay,
             claim_interval=self._claim_interval,
             min_idle_ms=self._min_idle_ms,
+            read_timeout=self._read_timeout,
         )
         subscriber.start()
 

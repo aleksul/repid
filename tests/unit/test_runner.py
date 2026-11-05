@@ -393,6 +393,58 @@ async def test_runner_pause_and_resume_with_concurrency_limit() -> None:
         assert len(processing) == 3
 
 
+@pytest.mark.parametrize("tasks_limit", [1, 2, 10])
+async def test_runner_resumes_saturated_in_memory_subscriber(tasks_limit: int) -> None:
+    server = InMemoryServer()
+    router = Router()
+    release = asyncio.Event()
+    finished = 0
+    message_count = tasks_limit * 2 + 2
+
+    @router.actor
+    async def job() -> None:
+        nonlocal finished
+        await release.wait()
+        finished += 1
+
+    async with server.connection():
+        for _ in range(message_count):
+            await server.publish(
+                channel="default",
+                message=MessageData(
+                    payload=b"{}",
+                    headers={"topic": "job"},
+                    content_type="application/json",
+                ),
+            )
+        runner = _Runner(
+            actor_context=_make_actor_context(server),
+            tasks_concurrency_limit=tasks_limit,
+            max_tasks=message_count,
+        )
+        running = asyncio.create_task(
+            runner.run(
+                channels_to_actors=router._actors_per_channel_address,
+                graceful_termination_timeout=1,
+            ),
+        )
+        try:
+
+            async def wait_for_pause() -> None:
+                while not runner._server_subscriber_was_paused:
+                    await asyncio.sleep(0)
+
+            await asyncio.wait_for(wait_for_pause(), timeout=1)
+            release.set()
+            await asyncio.wait_for(asyncio.shield(running), timeout=1)
+            assert finished == message_count
+            assert runner.processed == message_count
+        finally:
+            release.set()
+            runner.stop_consume_event.set()
+            await asyncio.wait_for(running, timeout=1)
+
+
 async def test_runner_subscriber_exception_sets_unhealthy() -> None:
     server = InMemoryServer()
 

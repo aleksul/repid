@@ -606,15 +606,18 @@ async def test_runner_tasks_not_finishing_after_cancellation(
     router = Router()
 
     processing_event = asyncio.Event()
+    release_event = asyncio.Event()
+    finished_event = asyncio.Event()
 
     @router.actor()
     async def stubborn_actor() -> None:
         processing_event.set()
-        while True:
-            try:
-                await asyncio.sleep(1)
-            except asyncio.CancelledError:
-                await asyncio.sleep(10)
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            await release_event.wait()
+        finally:
+            finished_event.set()
 
     async with server.connection():
         runner = _Runner(
@@ -645,15 +648,20 @@ async def test_runner_tasks_not_finishing_after_cancellation(
         await run_task
         await runner_task
 
-        error_log = next(
-            (
-                r
+        tasks = set(runner._tasks)
+        try:
+            assert not finished_event.is_set()
+            assert tasks
+            assert any(
+                r.levelno == logging.ERROR and r.message == "runner.shutdown.tasks_unfinished"
                 for r in caplog.get_records(when="call")
-                if r.levelno == logging.ERROR and r.message == "runner.shutdown.tasks_unfinished"
-            ),
-            None,
-        )
-        assert error_log is not None
+            )
+        finally:  # even if test fails, do a cleanup
+            release_event.set()
+            await asyncio.gather(*tasks)
+
+        assert finished_event.is_set()
+        assert not runner._tasks
 
 
 async def test_runner_on_error_reject_rejects_message() -> None:

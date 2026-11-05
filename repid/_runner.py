@@ -180,6 +180,8 @@ async def _actor_run_with_cancel_event_and_callback(  # noqa: PLR0917
         process_task.cancel()
         if not message.is_acted_on:
             await message.reject()
+        with suppress(asyncio.CancelledError):
+            await process_task
         return
     await process_task
     await callback()

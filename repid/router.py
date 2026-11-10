@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable, Coroutine, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, overload
 
@@ -24,6 +24,7 @@ from repid.middlewares import ActorMiddlewareT, _compile_actor_middleware_pipeli
 if TYPE_CHECKING:
     from concurrent.futures import Executor
 
+    from repid._concurrency import Concurrency
     from repid.asyncapi.models import OperationBindingsObject
     from repid.connections.abc import BaseMessageT, ReceivedMessageT
     from repid.converter import ConverterT
@@ -218,7 +219,11 @@ class Router:
 
     def _merge_defaults(self, defaults: _RouterDefaults) -> _RouterDefaults:
         return _RouterDefaults(
-            channel=(defaults.channel if isinstance(self.channel, _NotSet) else self.channel),
+            channel=(
+                defaults.channel
+                if isinstance(self.channel, _NotSet)
+                else self._resolve_channel(self.channel, defaults)
+            ),
             middlewares=(
                 defaults.middlewares
                 if self.middlewares is None
@@ -244,12 +249,23 @@ class Router:
         )
 
     @staticmethod
-    def _add_channel(channels: dict[str, Channel], channel: Channel) -> None:
+    def _merge_channel_concurrency(existing: Channel, channel: Channel) -> Concurrency | None:
+        if (
+            existing.concurrency is not None
+            and channel.concurrency is not None
+            and existing.concurrency != channel.concurrency
+        ):
+            raise ValueError(f"Conflicting concurrency for channel {channel.address!r}")
+        return existing.concurrency or channel.concurrency
+
+    @classmethod
+    def _add_channel(cls, channels: dict[str, Channel], channel: Channel) -> None:
         if channel.address not in channels:
             channels[channel.address] = channel
             return
 
         existing = channels[channel.address]
+        concurrency = cls._merge_channel_concurrency(existing, channel)
         if not any(
             (
                 existing.title,
@@ -267,7 +283,8 @@ class Router:
                 channel.external_docs,
             ),
         ):
-            channels[channel.address] = channel
+            existing = channel
+        channels[channel.address] = replace(existing, concurrency=concurrency)
 
     def _materialize_actor(
         self,
@@ -364,8 +381,9 @@ class Router:
         )
         return actor_data, channel_obj
 
-    @staticmethod
+    @classmethod
     def _resolve_channel(
+        cls,
         channel: Channel | str | None,
         defaults: _RouterDefaults,
     ) -> Channel:
@@ -376,9 +394,14 @@ class Router:
             else (fallback_channel if isinstance(defaults.channel, _NotSet) else defaults.channel)
         )
 
-        if isinstance(resolved_channel, Channel):
-            return resolved_channel
-        return Channel(address=resolved_channel)
+        if isinstance(resolved_channel, str):
+            resolved_channel = Channel(address=resolved_channel)
+        default = defaults.channel
+        if isinstance(default, Channel) and default.address == resolved_channel.address:
+            concurrency = cls._merge_channel_concurrency(default, resolved_channel)
+            if resolved_channel.concurrency is None and concurrency is not None:
+                resolved_channel = replace(resolved_channel, concurrency=concurrency)
+        return resolved_channel
 
     @property
     def _actors_per_channel_address(self) -> dict[str, list[ActorData]]:

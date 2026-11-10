@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from repid._concurrency import Concurrency
+
 if TYPE_CHECKING:
     from repid.asyncapi.models import ChannelBindingsObject
 
@@ -10,8 +12,9 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
-class Channel:  # noqa: PLW1641
+class Channel:
     address: str
+    concurrency: Concurrency | None = None
     title: str | None = None
     summary: str | None = None
     description: str | None = None
@@ -22,3 +25,6 @@ class Channel:  # noqa: PLW1641
         if isinstance(value, Channel):
             return self.address == value.address
         raise ValueError(f"Cannot compare Channel with {type(value)}.")
+
+    def __hash__(self) -> int:
+        return hash((self.address,))

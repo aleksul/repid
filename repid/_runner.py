@@ -6,8 +6,9 @@ import math
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
+from repid._message_lifecycle import _actor_run
 from repid.connections.abc import SubscriberT
 from repid.data.actor import ActorExecutionContext
 from repid.health_check_server import HealthCheckStatus
@@ -18,149 +19,6 @@ if TYPE_CHECKING:
     from repid.connections.abc import ReceivedMessageT
     from repid.data.actor import ActorData
     from repid.health_check_server import HealthCheckServer
-
-
-ActorResultT = Any
-
-
-async def _actor_execution(
-    message: ReceivedMessageT,
-    actor: ActorData,
-    actor_context: ActorExecutionContext,
-) -> ActorResultT:
-    args, kwargs = await actor.converter.convert_inputs(
-        message=message,
-        actor=actor,
-        actor_context=actor_context,
-    )
-    return await actor.fn(*args, **kwargs)
-
-
-async def _keep_alive_loop(message: ReceivedMessageT, interval: float) -> None:
-    while True:
-        await asyncio.sleep(interval)
-        if message.is_acted_on:
-            return
-        try:
-            await message.keep_alive()
-        except Exception:  # noqa: BLE001
-            logger.warning("message.keep_alive.error", extra={"message_id": message.message_id})
-
-
-async def _run_with_keepalive(
-    message: ReceivedMessageT,
-    actor: ActorData,
-    actor_context: ActorExecutionContext,
-) -> ActorResultT:
-    if actor.keep_alive is False:
-        return await _actor_execution(message, actor, actor_context)
-
-    interval = (
-        actor.keep_alive
-        if isinstance(actor.keep_alive, (int, float)) and not isinstance(actor.keep_alive, bool)
-        else message.keep_alive_interval
-    )
-    if not actor_context.server.capabilities["supports_keep_alive"] or interval is None:
-        return await _actor_execution(message, actor, actor_context)
-
-    keepalive_task = asyncio.create_task(_keep_alive_loop(message, interval))
-    try:
-        return await _actor_execution(message, actor, actor_context)
-    finally:
-        keepalive_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await keepalive_task
-
-
-async def _actor_execution_with_confirmation(  # noqa: C901, PLR0912
-    message: ReceivedMessageT,
-    actor: ActorData,
-    actor_context: ActorExecutionContext,
-) -> ActorResultT:
-    """Wraps `_actor_execution` to ack/nack the message immediately after the actor fn runs,
-    so middlewares unwinding above this leaf can observe `message.action`."""
-    try:
-        if actor.timeout is None or actor.timeout <= 0 or actor.timeout == float("inf"):
-            result = await _run_with_keepalive(message, actor, actor_context)
-        else:
-            result = await asyncio.wait_for(
-                _run_with_keepalive(message, actor, actor_context),
-                timeout=actor.timeout,
-            )
-    except Exception as exc:
-        if not message.is_acted_on:
-            if actor.confirmation_mode in ("auto", "manual", "manual_explicit"):
-                error_action = (
-                    actor.on_error if isinstance(actor.on_error, str) else actor.on_error(exc)
-                )
-                if error_action == "reject":
-                    await message.reject()
-                elif error_action == "nack":
-                    await message.nack()
-                elif error_action == "ack":
-                    await message.ack()
-            elif actor.confirmation_mode == "always_ack":
-                await message.ack()
-        raise
-    else:
-        if not message.is_acted_on:
-            if actor.confirmation_mode in ("auto", "always_ack"):
-                await message.ack()
-            elif actor.confirmation_mode == "manual_explicit":
-                if result == "reject":
-                    await message.reject()
-                elif result == "nack":
-                    await message.nack()
-                elif result == "ack":
-                    await message.ack()
-                elif result == "no_action":
-                    pass
-                else:
-                    raise ValueError(
-                        f"Actor '{actor.name}' with confirmation_mode='manual_explicit' "
-                        f"returned an invalid value: {result!r}. Expected one of: "
-                        "'ack', 'nack', 'reject', 'no_action'.",
-                    )
-        return result
-
-
-async def _actor_run(
-    actor: ActorData,
-    message: ReceivedMessageT,
-    actor_context: ActorExecutionContext,
-) -> ActorResultT | Exception:
-    if (
-        not message.is_acted_on  # theoretically a server can automatically ack the message on receive
-        and actor.confirmation_mode == "ack_first"
-    ):
-        await message.ack()
-
-    logger_extra = {
-        "actor_name": actor.name,
-        "time_limit": actor.timeout,
-        "message_id": message.message_id,
-    }
-
-    exception = None
-    result = None
-
-    leaf = partial(
-        _actor_execution_with_confirmation,
-        actor_context=actor_context,
-    )
-
-    try:
-        result = await actor.middleware_pipeline(leaf, message, actor)
-    except Exception as exc:
-        exception = exc
-        logger.debug("actor.run.error", extra=logger_extra, exc_info=exc)
-    else:
-        logger.debug("actor.run.success", extra=logger_extra)
-
-    if not message.is_acted_on and actor.confirmation_mode == "manual":
-        logger.warning("actor.ack.manual.unacknowledged", extra=logger_extra)
-
-    return exception if exception is not None else result
 
 
 async def _actor_run_with_cancel_event_and_callback(  # noqa: PLR0917

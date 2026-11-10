@@ -72,6 +72,13 @@ def _make_nats_received_message(msg: MagicMock) -> NatsReceivedMessage:
     return NatsReceivedMessage(msg, NatsServer("nats://localhost:4222"), "chan")
 
 
+@pytest.mark.parametrize(("ack_wait", "interval"), [(None, None), (0.75, 0.25), (3.0, 1.0)])
+def test_nats_keep_alive_interval(ack_wait: float | None, interval: float | None) -> None:
+    server = NatsServer("nats://localhost:4222")
+    message = NatsReceivedMessage(MagicMock(), server, "chan", ack_wait=ack_wait)
+    assert message.keep_alive_interval == interval
+
+
 async def test_nats_received_message_ack_failure_resets_action() -> None:
     msg = MagicMock()
     msg.ack = AsyncMock(side_effect=RuntimeError("ack failed"))

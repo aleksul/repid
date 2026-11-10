@@ -41,6 +41,8 @@ class _PendingEntryT(TypedDict):
 
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable
+
     from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
     from repid.data import ExternalDocs, Tag
@@ -209,9 +211,10 @@ class RedisReceivedMessage(ReceivedMessageT):
         self._dlq_maxlen = dlq_maxlen
         self._server = server
         self._action: MessageAction | None = None
+        self._keep_alive_during_settlement = False
         self._on_settled = on_settled
         self._consumer_name = consumer_name
-        self._keep_alive_interval: int | None = min_idle_ms // 3000 if min_idle_ms > 0 else None
+        self._keep_alive_interval: float | None = min_idle_ms / 3000 if min_idle_ms > 0 else None
 
     @property
     def payload(self) -> bytes:
@@ -246,12 +249,12 @@ class RedisReceivedMessage(ReceivedMessageT):
         return self._action
 
     @property
-    def keep_alive_interval(self) -> int | None:
+    def keep_alive_interval(self) -> float | None:
         return self._keep_alive_interval
 
-    async def keep_alive(self) -> None:
-        if self._action is not None:
-            return
+    async def keep_alive(self) -> bool | None:
+        if self._action is not None and not self._keep_alive_during_settlement:
+            return False
         await self._redis.xclaim(
             self._stream_name,
             self._consumer_group,
@@ -259,17 +262,22 @@ class RedisReceivedMessage(ReceivedMessageT):
             min_idle_time=0,
             message_ids=[self._message_id],
         )
+        return None
 
-    async def ack(self) -> None:
-        """Acknowledge the message - removes it from the pending entries list."""
+    async def _settle(
+        self,
+        action: MessageAction,
+        operation: Callable[[], Awaitable[None]],
+    ) -> None:
         # Reserve the action before the RPC: in a single event loop the
         # check-and-set is atomic, so concurrent settlements are deduplicated,
         # and a settlement cancelled mid-RPC is never followed by a second one.
         if self._action is not None:
             return
-        self._action = MessageAction.acked
+        self._action = action
+        self._keep_alive_during_settlement = True
         try:
-            await self._redis.xack(self._stream_name, self._consumer_group, self._message_id)
+            await operation()
             if self._on_settled is not None:
                 self._on_settled()
         except Exception:
@@ -277,36 +285,39 @@ class RedisReceivedMessage(ReceivedMessageT):
             # reserved even if the RPC may have reached the server.
             self._action = None
             raise
+        finally:
+            self._keep_alive_during_settlement = False
+
+    async def ack(self) -> None:
+        """Acknowledge the message - removes it from the pending entries list."""
+        await self._settle(MessageAction.acked, self._ack_pending_entry)
+
+    async def _ack_pending_entry(self) -> None:
+        await self._redis.xack(self._stream_name, self._consumer_group, self._message_id)
 
     async def nack(self) -> None:
         """Negative acknowledge - move to DLQ if configured, otherwise just ack and discard."""
-        if self._action is not None:
-            return
-        self._action = MessageAction.nacked
-        try:
-            async with self._redis.pipeline(transaction=True) as pipe:
-                if self._dlq_stream is not None:
-                    fields = _build_message_fields(
-                        self._payload,
-                        self._headers,
-                        self._content_type,
-                        self._reply_to,
-                    )
-                    fields[b"original_stream"] = self._stream_name
-                    fields[b"original_id"] = self._message_id
-                    xadd_kwargs: dict[str, Any] = {}
-                    if self._dlq_maxlen is not None:
-                        xadd_kwargs["maxlen"] = self._dlq_maxlen
-                        xadd_kwargs["approximate"] = True
-                    pipe.xadd(self._dlq_stream, fields, **xadd_kwargs)  # pyrefly: ignore[bad-argument-type]
+        await self._settle(MessageAction.nacked, self._discard_or_dead_letter)
 
-                pipe.xack(self._stream_name, self._consumer_group, self._message_id)
-                await pipe.execute()
-            if self._on_settled is not None:
-                self._on_settled()
-        except Exception:
-            self._action = None
-            raise
+    async def _discard_or_dead_letter(self) -> None:
+        async with self._redis.pipeline(transaction=True) as pipe:
+            if self._dlq_stream is not None:
+                fields = _build_message_fields(
+                    self._payload,
+                    self._headers,
+                    self._content_type,
+                    self._reply_to,
+                )
+                fields[b"original_stream"] = self._stream_name
+                fields[b"original_id"] = self._message_id
+                xadd_kwargs: dict[str, Any] = {}
+                if self._dlq_maxlen is not None:
+                    xadd_kwargs["maxlen"] = self._dlq_maxlen
+                    xadd_kwargs["approximate"] = True
+                pipe.xadd(self._dlq_stream, fields, **xadd_kwargs)  # pyrefly: ignore[bad-argument-type]
+
+            pipe.xack(self._stream_name, self._consumer_group, self._message_id)
+            await pipe.execute()
 
     async def reject(self) -> None:
         """Reject the message — re-add it to the stream for reprocessing.
@@ -315,25 +326,19 @@ class RedisReceivedMessage(ReceivedMessageT):
         the end of the stream. Delivery order relative to other messages is
         not preserved.
         """
-        if self._action is not None:
-            return
-        self._action = MessageAction.rejected
-        try:
-            async with self._redis.pipeline(transaction=True) as pipe:
-                fields = _build_message_fields(
-                    self._payload,
-                    self._headers,
-                    self._content_type,
-                    self._reply_to,
-                )
-                pipe.xadd(self._stream_name, fields)  # pyrefly: ignore[bad-argument-type]
-                pipe.xack(self._stream_name, self._consumer_group, self._message_id)
-                await pipe.execute()
-            if self._on_settled is not None:
-                self._on_settled()
-        except Exception:
-            self._action = None
-            raise
+        await self._settle(MessageAction.rejected, self._requeue)
+
+    async def _requeue(self) -> None:
+        async with self._redis.pipeline(transaction=True) as pipe:
+            fields = _build_message_fields(
+                self._payload,
+                self._headers,
+                self._content_type,
+                self._reply_to,
+            )
+            pipe.xadd(self._stream_name, fields)  # pyrefly: ignore[bad-argument-type]
+            pipe.xack(self._stream_name, self._consumer_group, self._message_id)
+            await pipe.execute()
 
     async def reply(
         self,

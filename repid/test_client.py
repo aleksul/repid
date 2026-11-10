@@ -7,7 +7,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Any, Self, overload
 from uuid import uuid4
 
-from repid._runner import _actor_run
+from repid._message_lifecycle import _actor_run
 from repid.connections.abc import CapabilitiesT, MessageAction, ServerT
 from repid.data import ActorExecutionContext, MessageData
 from repid.message_registry import MessageRegistry

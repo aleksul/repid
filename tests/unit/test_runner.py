@@ -9,7 +9,9 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from repid import Repid, Router, ServerT
-from repid._runner import _keep_alive_loop, _run_with_keepalive, _Runner
+from repid._keep_alive import _keep_alive_loop
+from repid._message_lifecycle import _actor_run
+from repid._runner import _Runner
 from repid.connections.in_memory import InMemoryServer
 from repid.data import ActorExecutionContext, MessageData
 from repid.health_check_server import HealthCheckServer, HealthCheckStatus
@@ -904,17 +906,12 @@ async def test_keep_alive_loop_calls_keep_alive() -> None:
     assert message.keep_alive.call_count >= 1
 
 
-async def test_keep_alive_loop_exits_when_message_acted_on() -> None:
-    message = Mock()
-    message.is_acted_on = True
-    message.keep_alive = AsyncMock()
-    message.message_id = "test-msg"
+async def test_keep_alive_loop_exits_when_adapter_stops_renewal() -> None:
+    message = Mock(keep_alive=AsyncMock(return_value=False))
 
-    task = asyncio.create_task(_keep_alive_loop(message, interval=0))
-    await asyncio.sleep(0.05)
+    await asyncio.wait_for(_keep_alive_loop(message, interval=0), timeout=1)
 
-    assert task.done()
-    message.keep_alive.assert_not_called()
+    message.keep_alive.assert_awaited_once()
 
 
 async def test_keep_alive_loop_logs_error_and_continues(
@@ -941,7 +938,12 @@ async def test_keep_alive_loop_logs_error_and_continues(
 
 
 def _make_mock_actor(fn: AsyncMock | None = None) -> Mock:
-    actor = Mock()
+    actor = Mock(keep_alive=True, timeout=None, confirmation_mode="manual", on_error="nack")
+
+    async def middleware(leaf: AsyncMock, message: Mock, actor: Mock) -> object:
+        return await leaf(message, actor)
+
+    actor.middleware_pipeline = middleware
     actor.converter.convert_inputs = AsyncMock(return_value=([], {}))
     actor.fn = fn if fn is not None else AsyncMock()
     return actor
@@ -955,33 +957,30 @@ def _make_actor_context(server: Mock | ServerT) -> ActorExecutionContext:
     )
 
 
-async def test_run_with_keepalive_skipped_when_capability_false() -> None:
-    message = Mock()
-    message.keep_alive_interval = 0
-    message.keep_alive = AsyncMock()
+@pytest.mark.parametrize(
+    ("supported", "interval", "enabled"),
+    [(False, 0, True), (True, None, True), (True, 0, False)],
+)
+async def test_actor_skips_keep_alive(
+    supported: bool,
+    interval: int | None,
+    enabled: bool,
+) -> None:
+    message = Mock(is_acted_on=False, keep_alive_interval=interval, keep_alive=AsyncMock())
+    server = Mock(capabilities={"supports_keep_alive": supported})
+    actor = _make_mock_actor()
+    actor.keep_alive = enabled
 
-    server = Mock()
-    server.capabilities = {"supports_keep_alive": False}
+    async def slow_fn() -> None:
+        await asyncio.sleep(0.01)
 
-    await _run_with_keepalive(message, _make_mock_actor(), _make_actor_context(server))
-
-    message.keep_alive.assert_not_called()
-
-
-async def test_run_with_keepalive_skipped_when_interval_none() -> None:
-    message = Mock()
-    message.keep_alive_interval = None
-    message.keep_alive = AsyncMock()
-
-    server = Mock()
-    server.capabilities = {"supports_keep_alive": True}
-
-    await _run_with_keepalive(message, _make_mock_actor(), _make_actor_context(server))
+    actor.fn = slow_fn
+    await _actor_run(actor, message, _make_actor_context(server))
 
     message.keep_alive.assert_not_called()
 
 
-async def test_run_with_keepalive_fires_during_slow_actor() -> None:
+async def test_keep_alive_runs_during_slow_actor() -> None:
     message = Mock()
     message.keep_alive_interval = 0
     message.is_acted_on = False
@@ -994,16 +993,16 @@ async def test_run_with_keepalive_fires_during_slow_actor() -> None:
     async def slow_fn() -> None:
         await asyncio.sleep(0.1)
 
-    await _run_with_keepalive(
-        message,
+    await _actor_run(
         _make_mock_actor(AsyncMock(side_effect=slow_fn)),
+        message,
         _make_actor_context(server),
     )
 
     assert message.keep_alive.call_count >= 1
 
 
-async def test_run_with_keepalive_task_cancelled_on_actor_timeout() -> None:
+async def test_keep_alive_task_cancelled_on_actor_timeout() -> None:
     message = Mock()
     message.keep_alive_interval = 0
     message.is_acted_on = False
@@ -1016,16 +1015,98 @@ async def test_run_with_keepalive_task_cancelled_on_actor_timeout() -> None:
     async def very_slow_fn() -> None:
         await asyncio.sleep(10)
 
-    with pytest.raises(asyncio.TimeoutError):
-        await asyncio.wait_for(
-            _run_with_keepalive(
-                message,
-                _make_mock_actor(AsyncMock(side_effect=very_slow_fn)),
-                _make_actor_context(server),
-            ),
-            timeout=0.05,
-        )
+    message.nack = AsyncMock()
+    actor = _make_mock_actor(AsyncMock(side_effect=very_slow_fn))
+    actor.timeout = 0.05
+    result = await _actor_run(actor, message, _make_actor_context(server))
+    assert isinstance(result, TimeoutError)
+    message.nack.assert_awaited_once()
 
     call_count_after_timeout = message.keep_alive.call_count
     await asyncio.sleep(0.05)
     assert message.keep_alive.call_count == call_count_after_timeout
+
+
+async def test_actor_keep_alive_propagates_cancellation_during_cleanup() -> None:
+    keep_alive_started = asyncio.Event()
+    cleaning = asyncio.Event()
+
+    async def keep_alive() -> None:
+        keep_alive_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleaning.set()
+            await asyncio.Event().wait()
+
+    message = Mock(is_acted_on=False, keep_alive_interval=0, keep_alive=keep_alive)
+    actor = _make_mock_actor(AsyncMock(side_effect=keep_alive_started.wait))
+    server = Mock(capabilities={"supports_keep_alive": True})
+    running = asyncio.create_task(_actor_run(actor, message, _make_actor_context(server)))
+    await asyncio.wait_for(cleaning.wait(), 1)
+    running.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await running
+
+
+@pytest.mark.parametrize("settlement", ["ack", "nack"])
+async def test_keep_alive_runs_during_middleware_and_settlement(settlement: str) -> None:
+    keep_alive_before_actor = asyncio.Event()
+    keep_alive_during_settlement = asyncio.Event()
+    settling = asyncio.Event()
+
+    def record_keep_alive() -> None:
+        if settling.is_set():
+            keep_alive_during_settlement.set()
+        else:
+            keep_alive_before_actor.set()
+
+    async def middleware(leaf: AsyncMock, message: Mock, actor: Mock) -> object:
+        await asyncio.wait_for(keep_alive_before_actor.wait(), 0.5)
+        return await leaf(message, actor)
+
+    async def settle() -> None:
+        settling.set()
+        await asyncio.wait_for(keep_alive_during_settlement.wait(), 0.5)
+
+    actor = _make_mock_actor()
+    actor.confirmation_mode = "auto"
+    actor.keep_alive = 0.001
+    actor.middleware_pipeline = middleware
+    if settlement == "nack":
+        actor.fn.side_effect = ValueError("actor failed")
+    message = Mock(
+        is_acted_on=False,
+        keep_alive_interval=None,
+        keep_alive=AsyncMock(side_effect=record_keep_alive),
+    )
+    setattr(message, settlement, AsyncMock(side_effect=settle))
+    server = Mock(capabilities={"supports_keep_alive": True})
+    await _actor_run(actor, message, _make_actor_context(server))
+    assert keep_alive_before_actor.is_set()
+    assert keep_alive_during_settlement.is_set()
+    getattr(message, settlement).assert_awaited_once()
+
+
+async def test_actor_failure_after_ack_does_not_settle_again() -> None:
+    message = Mock(is_acted_on=False, ack=AsyncMock(), nack=AsyncMock(), reject=AsyncMock())
+    error = RuntimeError("actor failed after acknowledging")
+
+    def acknowledge() -> None:
+        message.is_acted_on = True
+
+    async def fail_after_ack() -> None:
+        await message.ack()
+        raise error
+
+    message.ack.side_effect = acknowledge
+    actor = _make_mock_actor(AsyncMock(side_effect=fail_after_ack))
+    actor.keep_alive = False
+    actor.confirmation_mode = "auto"
+
+    result = await _actor_run(actor, message, _make_actor_context(InMemoryServer()))
+
+    assert result is error
+    message.ack.assert_awaited_once()
+    message.nack.assert_not_awaited()
+    message.reject.assert_not_awaited()

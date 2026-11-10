@@ -1328,7 +1328,7 @@ async def test_redis_received_message_already_acted_guard(
     redis_client.pipeline.assert_not_called()
 
 
-async def test_redis_concurrent_settlement_issues_only_one_operation(
+async def test_redis_ack_allows_keep_alive_but_blocks_other_settlements(
     make_received_message: Any,
     pipeline_mock: tuple[MagicMock, MagicMock],
 ) -> None:
@@ -1343,6 +1343,7 @@ async def test_redis_concurrent_settlement_issues_only_one_operation(
         await release_xack.wait()
 
     redis_client.xack.side_effect = block_xack
+    redis_client.xclaim = AsyncMock()
 
     ack_task = asyncio.create_task(msg.ack())
     await xack_started.wait()
@@ -1351,15 +1352,15 @@ async def test_redis_concurrent_settlement_issues_only_one_operation(
         asyncio.create_task(msg.reject()),
         asyncio.create_task(msg.keep_alive()),
     ]
+    await asyncio.gather(*other_tasks)
     release_xack.set()
-
-    await asyncio.gather(ack_task, *other_tasks)
+    await ack_task
 
     assert msg.action is MessageAction.acked
     redis_client.xack.assert_awaited_once_with("s", "g", "1-0")
     pipe.xack.assert_not_called()
     pipe.xadd.assert_not_called()
-    redis_client.xclaim.assert_not_called()
+    redis_client.xclaim.assert_awaited_once()
 
 
 async def test_redis_cancelled_settlement_stays_reserved_and_blocks_retry(

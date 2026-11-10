@@ -66,11 +66,11 @@ class ReceivedMessageT(BaseMessageT, Protocol):
     async def reject(self) -> None: ...
 
     @property
-    def keep_alive_interval(self) -> int | None:
-        """Recommended seconds between keep_alive() calls, or None if not needed."""
+    def keep_alive_interval(self) -> float | None:
+        """Recommended positive interval in seconds, or None if keep-alive is unnecessary."""
 
-    async def keep_alive(self) -> None:
-        """Signal the broker that this message is still being processed."""
+    async def keep_alive(self) -> bool | None:
+        """Renew the broker lease when needed. Return False to stop periodic renewals."""
 
     async def reply(
         self,

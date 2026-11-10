@@ -43,8 +43,9 @@ class NatsReceivedMessage(ReceivedMessageT):
         self._server = server
         self._channel = channel
         self._action: MessageAction | None = None
-        self._keep_alive_interval: int | None = (
-            int(ack_wait) // 3 if ack_wait is not None and ack_wait > 0 else None
+        self._keep_alive_during_settlement = False
+        self._keep_alive_interval: float | None = (
+            ack_wait / 3 if ack_wait is not None and ack_wait > 0 else None
         )
 
     @property
@@ -89,15 +90,14 @@ class NatsReceivedMessage(ReceivedMessageT):
         return None
 
     @property
-    def keep_alive_interval(self) -> int | None:
+    def keep_alive_interval(self) -> float | None:
         return self._keep_alive_interval
 
-    async def keep_alive(self) -> None:
-        # Settlements reserve _action before their first await, so a plain
-        # check here is enough to keep a renewal from racing a settlement.
-        if self._action is not None:
-            return
+    async def keep_alive(self) -> bool | None:
+        if self._action is not None and not self._keep_alive_during_settlement:
+            return False
         await self._msg.in_progress()
+        return None
 
     async def ack(self) -> None:
         # Reserve the action before the RPC: in a single event loop the
@@ -106,6 +106,7 @@ class NatsReceivedMessage(ReceivedMessageT):
         if self._action is not None:
             return
         self._action = MessageAction.acked
+        self._keep_alive_during_settlement = True
         try:
             await self._msg.ack()
         except Exception:
@@ -113,12 +114,15 @@ class NatsReceivedMessage(ReceivedMessageT):
             # reserved even if the RPC may have reached the server.
             self._action = None
             raise
+        finally:
+            self._keep_alive_during_settlement = False
         logger.debug("message.ack", extra={"channel": self._channel})
 
     async def nack(self) -> None:
         if self._action is not None:
             return
         self._action = MessageAction.nacked
+        self._keep_alive_during_settlement = True
         try:
             dlq = (
                 self._server._dlq_topic_strategy(self._channel)
@@ -145,6 +149,8 @@ class NatsReceivedMessage(ReceivedMessageT):
         except Exception:
             self._action = None
             raise
+        finally:
+            self._keep_alive_during_settlement = False
         logger.debug("message.nack", extra={"channel": self._channel})
 
     async def reject(self) -> None:
@@ -181,6 +187,7 @@ class NatsReceivedMessage(ReceivedMessageT):
             reply_headers["content-type"] = content_type
 
         self._action = MessageAction.replied
+        self._keep_alive_during_settlement = True
         try:
             # Reply then ack as one reserved unit: another settlement cannot
             # interleave, since _action is already reserved.
@@ -196,6 +203,8 @@ class NatsReceivedMessage(ReceivedMessageT):
         except Exception:
             self._action = None
             raise
+        finally:
+            self._keep_alive_during_settlement = False
         logger.debug("message.reply", extra={"channel": self._channel})
 
 

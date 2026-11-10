@@ -1,6 +1,7 @@
 from unittest.mock import ANY, AsyncMock, MagicMock
 
 import grpc.aio
+import pytest
 
 from repid.connections.pubsub.protocol import InsecureCredentials, ResilienceConfig, ResilienceState
 from repid.connections.pubsub.protocol.client import (
@@ -10,6 +11,7 @@ from repid.connections.pubsub.protocol.client import (
     PubsubProtocolClient,
 )
 from repid.connections.pubsub.protocol.proto import PublishRequest, PubsubMessage
+from repid.connections.pubsub.protocol.resilience import ReconnectionExhaustedError
 
 
 def _make_client() -> tuple[PubsubProtocolClient, MagicMock, AsyncMock]:
@@ -24,21 +26,25 @@ def _make_client() -> tuple[PubsubProtocolClient, MagicMock, AsyncMock]:
     return client, channel, mock_unary
 
 
-async def test_publish_calls_unary_with_correct_method_and_timeout() -> None:
+@pytest.mark.parametrize("timeout", [None, 3])
+async def test_publish_calls_unary_with_correct_method_and_timeout(timeout: int | None) -> None:
     client, channel, mock_unary = _make_client()
     request = PublishRequest(
         topic="projects/p/topics/t",
         messages=[PubsubMessage(data=b"payload")],
     )
 
-    await client.publish(request, timeout=3)
+    await client.publish(request, timeout=timeout)
 
     channel.unary_unary.assert_called_with(
         PUBLISH_METHOD,
         request_serializer=ANY,
         response_deserializer=ANY,
     )
-    mock_unary.assert_awaited_once_with(request, timeout=3)
+    if timeout is None:
+        mock_unary.assert_awaited_once_with(request)
+    else:
+        mock_unary.assert_awaited_once_with(request, timeout=timeout)
 
 
 async def test_acknowledge_with_empty_ids_is_noop() -> None:
@@ -59,10 +65,13 @@ async def test_acknowledge_with_ids_serializes_correct_request() -> None:
         request_serializer=ANY,
         response_deserializer=ANY,
     )
-    mock_unary.assert_awaited_once()
     request = mock_unary.call_args[0][0]
     assert request.subscription == "projects/p/subscriptions/s"
     assert request.ack_ids == ["ack1", "ack2"]
+    mock_unary.assert_awaited_once_with(request, timeout=10)
+    serializers = channel.unary_unary.call_args.kwargs
+    assert serializers["request_serializer"](request) == request.serialize()
+    assert serializers["response_deserializer"](b"") == b""
 
 
 async def test_modify_ack_deadline_with_empty_ids_is_noop() -> None:
@@ -83,11 +92,11 @@ async def test_modify_ack_deadline_with_ids_serializes_correct_request() -> None
         request_serializer=ANY,
         response_deserializer=ANY,
     )
-    mock_unary.assert_awaited_once()
     request = mock_unary.call_args[0][0]
     assert request.subscription == "projects/p/subscriptions/s"
     assert request.ack_ids == ["ack1"]
     assert request.ack_deadline_seconds == 60
+    mock_unary.assert_awaited_once_with(request, timeout=10)
 
 
 async def test_modify_ack_deadline_clamps_seconds_to_valid_range() -> None:
@@ -101,3 +110,26 @@ async def test_modify_ack_deadline_clamps_seconds_to_valid_range() -> None:
     await client.modify_ack_deadline("projects/p/subscriptions/s", ["ack1"], 1000)
     request = mock_unary.call_args[0][0]
     assert request.ack_deadline_seconds == 600
+
+
+async def test_ack_retry_exhaustion_does_not_prevent_lease_renewal() -> None:
+    error = grpc.aio.AioRpcError(
+        grpc.StatusCode.UNAVAILABLE,
+        grpc.aio.Metadata(),
+        grpc.aio.Metadata(),
+    )
+    ack = AsyncMock(side_effect=error)
+    extend = AsyncMock()
+    channel = MagicMock(spec=grpc.aio.Channel)
+    channel.unary_unary.side_effect = [ack, extend]
+    client = PubsubProtocolClient(
+        channel=channel,
+        credentials_provider=InsecureCredentials(),
+        resilience_state=ResilienceState(ResilienceConfig(max_attempts=1)),
+    )
+
+    with pytest.raises(ReconnectionExhaustedError):
+        await client.acknowledge("subscription", ["first"])
+
+    await client.modify_ack_deadline("subscription", ["second"], 60)
+    extend.assert_awaited_once()

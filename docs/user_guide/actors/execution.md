@@ -24,20 +24,21 @@ async def fetch_slow_api():
 ## Keep-alive
 
 For long-running actors, Repid automatically tells the broker that the message
-is still being worked on (assuming the broker supports it). This keeps the message from
-timing out and being redelivered while it's still being processed.
+is still being worked on (assuming the broker supports it). Keep-alive covers middleware,
+actor execution, and settlement while the broker can safely extend the delivery lease.
 
-By default, Repid uses the broker's recommended interval for sending keep-alive signals.
-You can configure or disable this behavior per-actor:
+While a delivery waits for worker or channel capacity, Repid uses the broker's recommended
+keep-alive interval. That interval is also the default during processing. Actor settings can
+override or disable keep-alive from the start of processing.
 
 ```python
-# Disable keep-alive entirely for this actor
+# Disable keep-alive during processing for this actor
 @router.actor(keep_alive=False)
 async def my_actor():
     pass
 
 
-# Override the keep-alive interval to ping the broker every 15 seconds
+# Send a keep-alive every 15 seconds during processing
 @router.actor(keep_alive=15.0)
 async def my_long_running_actor():
     pass

@@ -15,6 +15,7 @@ Here is a simplified overview of what you need to implement:
 import asyncio
 from typing import Mapping, Sequence, Callable, Coroutine, Any
 from collections.abc import AbstractAsyncContextManager
+from repid import Concurrency
 from repid.connections.abc import (
     ServerT,
     SubscriberT,
@@ -42,6 +43,7 @@ class MyCustomServer:
         return {
             "supports_native_reply": False,
             "supports_lightweight_pause": False,
+            "supports_keep_alive": False,
         }
 
     # 3. Connection Lifecycle
@@ -78,12 +80,26 @@ class MyCustomServer:
         self,
         *,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        concurrency: Concurrency,
+        channel_concurrency: dict[str, Concurrency],
     ) -> SubscriberT:
         # Start consuming from the requested channels and map them to their callbacks
         # Return an object that implements `SubscriberT` (can manage pauses, resumes, closures)
         ...
 ```
+
+The worker enforces execution budgets locally and passes its budget as `concurrency`.
+The `channel_concurrency` mapping contains the explicitly configured channel budgets.
+For native intake settings, use the tighter finite limit for each field. Direct calls
+can pass an empty mapping when all channels inherit the worker budget.
+
+Await each callback. It returns once Repid has scheduled the message for processing or
+acknowledged or rejected it. It may wait for room in the worker, so keep reading broker events
+and handling other channels while it waits. Once the callback starts, Repid takes care of
+acknowledgments and rejections.
+
+If your broker supports keep-alive, use `keep_alive()` to renew the message's lease.
+Return `False` when renewal is no longer needed, so Repid stops calling it.
 
 ## Creating a Subscriber
 

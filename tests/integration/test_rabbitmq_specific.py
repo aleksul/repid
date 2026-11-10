@@ -6,7 +6,7 @@ from uuid import UUID
 
 import pytest
 
-from repid import Repid
+from repid import Concurrency, Repid
 from repid.connections.abc import ReceivedMessageT
 from repid.connections.amqp import AmqpServer
 from repid.connections.amqp._uamqp.message import Properties
@@ -29,10 +29,14 @@ async def test_server_side_cancel(
     async with repid_app.servers.default.connection() as conn:
 
         async def dummy_callback(msg: ReceivedMessageT) -> None:
-            callback_event.set()
             await msg.ack()
+            callback_event.set()
 
-        subscriber = await conn.subscribe(channels_to_callbacks={"default": dummy_callback})
+        subscriber = await conn.subscribe(
+            concurrency=Concurrency(),
+            channel_concurrency={},
+            channels_to_callbacks={"default": dummy_callback},
+        )
 
         consumers = rabbitmq_container.exec("rabbitmqctl", "list_consumers")
         pid: str = (
@@ -68,10 +72,14 @@ async def test_message_id_is_set_to_uuid4(rabbitmq_connection: AmqpServer) -> No
         async def capture_callback(msg: ReceivedMessageT) -> None:
             nonlocal received_message_id
             received_message_id = msg.message_id
-            done.set()
             await msg.ack()
+            done.set()
 
-        subscriber = await conn.subscribe(channels_to_callbacks={"default": capture_callback})
+        subscriber = await conn.subscribe(
+            concurrency=Concurrency(),
+            channel_concurrency={},
+            channels_to_callbacks={"default": capture_callback},
+        )
 
         await repid_app.send_message(channel="default", payload=b"")
         await asyncio.wait_for(done.wait(), timeout=10.0)
@@ -94,10 +102,14 @@ async def test_message_id_is_preserved_when_set_by_user(rabbitmq_connection: Amq
         async def capture_callback(msg: ReceivedMessageT) -> None:
             nonlocal received_message_id
             received_message_id = msg.message_id
-            done.set()
             await msg.ack()
+            done.set()
 
-        subscriber = await conn.subscribe(channels_to_callbacks={"default": capture_callback})
+        subscriber = await conn.subscribe(
+            concurrency=Concurrency(),
+            channel_concurrency={},
+            channels_to_callbacks={"default": capture_callback},
+        )
 
         await repid_app.send_message(
             channel="default",

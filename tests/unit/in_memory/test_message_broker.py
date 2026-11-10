@@ -5,8 +5,10 @@ from typing import cast
 
 import pytest
 
+from repid import Concurrency
 from repid.connections.abc import MessageAction, ReceivedMessageT
 from repid.connections.in_memory.message_broker import (
+    _SUBMISSION_BATCH_SIZE,
     InMemoryReceivedMessage,
     InMemorySentMessage,
     InMemoryServer,
@@ -45,7 +47,11 @@ async def test_in_memory_subscriber_acks_duplicate_ids_after_header_mutation() -
             completed.set()
 
     async with server.connection():
-        subscriber = await server.subscribe(channels_to_callbacks={"jobs": callback})
+        subscriber = await server.subscribe(
+            concurrency=Concurrency(),
+            channel_concurrency={},
+            channels_to_callbacks={"jobs": callback},
+        )
         for _ in range(2):
             await server.publish(
                 channel="jobs",
@@ -235,7 +241,11 @@ async def test_server_publish() -> None:
 async def test_server_subscribe_not_connected() -> None:
     server = InMemoryServer()
     with pytest.raises(RuntimeError):
-        await server.subscribe(channels_to_callbacks={})
+        await server.subscribe(
+            concurrency=Concurrency(),
+            channel_concurrency={},
+            channels_to_callbacks={},
+        )
 
 
 async def test_server_subscribe_and_consume() -> None:
@@ -251,6 +261,8 @@ async def test_server_subscribe_and_consume() -> None:
     subscriber = cast(
         InMemorySubscriber,
         await server.subscribe(
+            concurrency=Concurrency(),
+            channel_concurrency={},
             channels_to_callbacks={
                 "chan1": cast(
                     Callable[[ReceivedMessageT], Coroutine[None, None, None]],
@@ -275,27 +287,30 @@ async def test_server_subscribe_and_consume() -> None:
     assert not subscriber.is_active
 
 
-async def test_server_subscribe_callback_exception_releases_semaphore() -> None:
+@pytest.mark.parametrize("ack_first", [False, True])
+async def test_server_subscribe_callback_exception_releases_semaphore(ack_first: bool) -> None:
     server = InMemoryServer()
     await server.connect()
 
     error_event = asyncio.Event()
 
     async def failing_callback(msg: InMemoryReceivedMessage) -> None:
-        await msg.ack()
+        if ack_first:
+            await msg.ack()
         error_event.set()
         raise RuntimeError("boom")
 
     subscriber = cast(
         InMemorySubscriber,
         await server.subscribe(
+            channel_concurrency={},
             channels_to_callbacks={
                 "chan1": cast(
                     Callable[[ReceivedMessageT], Coroutine[None, None, None]],
                     failing_callback,
                 ),
             },
-            concurrency_limit=2,
+            concurrency=Concurrency(messages=1),
         ),
     )
 
@@ -303,11 +318,12 @@ async def test_server_subscribe_callback_exception_releases_semaphore() -> None:
     await asyncio.wait_for(error_event.wait(), timeout=1.0)
     await asyncio.sleep(0.05)  # Let the finally block complete
 
-    # Semaphore should have been released despite the exception
-    assert subscriber._semaphore is not None
-    assert subscriber._semaphore._value == 2  # Back to full capacity
+    error_event.clear()
+    await server.publish(channel="chan1", message=InMemorySentMessage(payload=b"2"))
+    await asyncio.wait_for(error_event.wait(), timeout=1.0)
 
     await subscriber.close()
+    assert not server.queues["chan1"].processing
 
 
 async def test_server_subscribe_concurrency_limit() -> None:
@@ -323,21 +339,20 @@ async def test_server_subscribe_concurrency_limit() -> None:
     subscriber = cast(
         InMemorySubscriber,
         await server.subscribe(
+            channel_concurrency={},
             channels_to_callbacks={
                 "chan1": cast(
                     Callable[[ReceivedMessageT], Coroutine[None, None, None]],
                     callback,
                 ),
             },
-            concurrency_limit=2,
+            concurrency=Concurrency(messages=2),
         ),
     )
 
     await server.publish(channel="chan1", message=InMemorySentMessage(payload=b"1"))
 
     await asyncio.wait_for(ack_event.wait(), timeout=1.0)
-
-    assert subscriber._semaphore is not None  # Implementation detail check
 
     await subscriber.close()
 
@@ -352,17 +367,16 @@ async def test_server_subscribe_no_concurrency_limit() -> None:
     subscriber = cast(
         InMemorySubscriber,
         await server.subscribe(
+            concurrency=Concurrency(),
+            channel_concurrency={},
             channels_to_callbacks={
                 "chan1": cast(
                     Callable[[ReceivedMessageT], Coroutine[None, None, None]],
                     callback,
                 ),
             },
-            concurrency_limit=0,
         ),
     )
-
-    assert subscriber._semaphore is None
 
     await subscriber.close()
 
@@ -371,37 +385,33 @@ async def test_subscriber_pause_resume() -> None:
     server = InMemoryServer()
     await server.connect()
 
-    received_count = 0
+    received: asyncio.Queue[bytes] = asyncio.Queue()
 
-    async def callback(msg: InMemoryReceivedMessage) -> None:
-        nonlocal received_count
-        received_count += 1
+    async def callback(msg: ReceivedMessageT) -> None:
         await msg.ack()
+        received.put_nowait(msg.payload)
 
-    subscriber = cast(
-        InMemorySubscriber,
-        await server.subscribe(
-            channels_to_callbacks={
-                "chan1": cast(
-                    Callable[[ReceivedMessageT], Coroutine[None, None, None]],
-                    callback,
-                ),
-            },
-        ),
+    subscriber = await server.subscribe(
+        concurrency=Concurrency(),
+        channel_concurrency={},
+        channels_to_callbacks={"chan1": callback},
     )
+    try:
+        # Let the supervisor start and the channel reader wait for a message.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        await subscriber.pause()
+        for payload in (b"first", b"second"):
+            await server.publish(channel="chan1", message=InMemorySentMessage(payload=payload))
+        await asyncio.sleep(0)
+        assert received.empty()
+        assert server.queues["chan1"].queue.qsize() == 2
 
-    await subscriber.pause()
-    await server.publish(channel="chan1", message=InMemorySentMessage(payload=b"1"))
-
-    await asyncio.sleep(0.05)
-    assert received_count == 0
-
-    await subscriber.resume()
-    for _ in range(10):
-        await asyncio.sleep(0.01)
-    assert received_count == 1
-
-    await subscriber.close()
+        await subscriber.resume()
+        assert await asyncio.wait_for(received.get(), 1) == b"first"
+        assert await asyncio.wait_for(received.get(), 1) == b"second"
+    finally:
+        await subscriber.close()
 
 
 async def test_subscriber_close_twice() -> None:
@@ -409,44 +419,140 @@ async def test_subscriber_close_twice() -> None:
     await server.connect()
     subscriber = cast(
         InMemorySubscriber,
-        await server.subscribe(channels_to_callbacks={}),
+        await server.subscribe(
+            concurrency=Concurrency(),
+            channel_concurrency={},
+            channels_to_callbacks={},
+        ),
     )
     await subscriber.close()
     await subscriber.close()  # Should be fine
 
 
-async def test_consumer_cancellation_requeues_fetched_message() -> None:
+async def test_closing_saturated_consumer_leaves_pending_deliveries_in_order() -> None:
     queue = DummyQueue()
-    message = DummyQueue.Message(payload=b"pending")
-    queue.queue.put_nowait(message)
-    callback_called = False
+    first = DummyQueue.Message(payload=b"first")
+    pending = DummyQueue.Message(payload=b"pending")
+    later = DummyQueue.Message(payload=b"later")
+    queue.queue.put_nowait(first)
+    queue.queue.put_nowait(pending)
+    queue.queue.put_nowait(later)
+    started = asyncio.Event()
+    release = asyncio.Event()
 
-    async def callback(_msg: ReceivedMessageT) -> None:
-        nonlocal callback_called
-        callback_called = True
+    async def callback(msg: ReceivedMessageT) -> None:
+        assert msg.payload == first.payload
+        started.set()
+        await release.wait()
+        await msg.ack()
 
     subscriber = InMemorySubscriber(
-        channels_to_callbacks={},
+        channels_to_callbacks={"chan": callback},
         queues={"chan": queue},
-        concurrency_limit=None,
-    )
-    consumer = asyncio.create_task(
-        subscriber._channel_consumer(channel="chan", queue=queue, callback=callback),
+        channel_concurrency={"chan": Concurrency(messages=1)},
     )
     try:
-        # The consumer fetches the message and yields before delivering it.
-        await asyncio.sleep(0)
-        assert queue.queue.empty()
-        consumer.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await consumer
-
-        assert queue.queue.get_nowait() is message
-        assert queue.queue.empty()
-        assert not queue.processing
-        assert not callback_called
-    finally:
+        await asyncio.wait_for(started.wait(), 1)
         await subscriber.close()
+        assert queue.queue.get_nowait() is pending
+        assert queue.queue.get_nowait() is later
+        assert queue.processing == {first}
+    finally:
+        release.set()
+        await asyncio.gather(*subscriber._callback_tasks)
+        await subscriber.close()
+
+
+@pytest.mark.parametrize("cancel_before_start", [True, False])
+async def test_cancelled_callback_requeues_message_and_releases_slot(
+    cancel_before_start: bool,
+) -> None:
+    server = InMemoryServer()
+    received: asyncio.Queue[ReceivedMessageT] = asyncio.Queue()
+    cancelled: ReceivedMessageT | None = None
+
+    async def callback(message: ReceivedMessageT) -> None:
+        nonlocal cancelled
+        if not cancel_before_start and cancelled is None:
+            cancelled = message
+            raise asyncio.CancelledError
+        await message.ack()
+        received.put_nowait(message)
+
+    async with server.connection():
+        subscriber = cast(
+            InMemorySubscriber,
+            await server.subscribe(
+                channels_to_callbacks={"jobs": callback},
+                concurrency=Concurrency(messages=1),
+                channel_concurrency={},
+            ),
+        )
+        try:
+            await server.publish(
+                channel="jobs",
+                message=InMemorySentMessage(payload=b"pending"),
+                server_specific_parameters={"message_id": "retry"},
+            )
+            if cancel_before_start:
+                # The supervisor starts the reader, which then schedules the callback.
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+                (scheduled,) = subscriber._callback_tasks
+                scheduled.cancel()
+            redelivery = await asyncio.wait_for(received.get(), 1)
+            assert redelivery.action == MessageAction.acked
+            assert redelivery.message_id == "retry"
+            if not cancel_before_start:
+                assert cancelled is not None
+                assert cancelled.action == MessageAction.rejected
+        finally:
+            await subscriber.close()
+    assert not server.queues["jobs"].processing
+
+
+async def test_saturated_consumer_leaves_work_for_a_competing_subscriber() -> None:
+    server = InMemoryServer()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    other_received: asyncio.Queue[bytes] = asyncio.Queue()
+
+    async def slow_callback(message: ReceivedMessageT) -> None:
+        started.set()
+        await release.wait()
+        await message.ack()
+
+    async def other_callback(message: ReceivedMessageT) -> None:
+        await message.ack()
+        other_received.put_nowait(message.payload)
+
+    async with server.connection():
+        for payload in (b"first", b"pending"):
+            await server.publish(channel="jobs", message=InMemorySentMessage(payload=payload))
+        subscriber = cast(
+            InMemorySubscriber,
+            await server.subscribe(
+                channels_to_callbacks={"jobs": slow_callback},
+                concurrency=Concurrency(messages=1),
+                channel_concurrency={},
+            ),
+        )
+        try:
+            await asyncio.wait_for(started.wait(), 1)
+            other = await server.subscribe(
+                channels_to_callbacks={"jobs": other_callback},
+                concurrency=Concurrency(messages=1),
+                channel_concurrency={},
+            )
+            try:
+                assert await asyncio.wait_for(other_received.get(), 1) == b"pending"
+            finally:
+                await other.close()
+        finally:
+            await subscriber.close()
+            release.set()
+            await asyncio.gather(*subscriber._callback_tasks)
+    assert not server.queues["jobs"].processing
 
 
 async def test_supervisor_cancellation() -> None:
@@ -460,6 +566,8 @@ async def test_supervisor_cancellation() -> None:
     subscriber = cast(
         InMemorySubscriber,
         await server.subscribe(
+            concurrency=Concurrency(),
+            channel_concurrency={},
             channels_to_callbacks={
                 "chan1": cast(
                     Callable[[ReceivedMessageT], Coroutine[None, None, None]],
@@ -488,3 +596,68 @@ async def test_supervisor_cancellation() -> None:
     # cleanup for clean teardown of subscribers registry in server
     await subscriber.close()
     await asyncio.sleep(0)  # Let done callback run
+
+
+async def test_batching_yields_to_other_channels_with_a_backlog() -> None:
+    server = InMemoryServer()
+    first_channel_count = 0
+    other_channel_seen: asyncio.Queue[int] = asyncio.Queue()
+    message_count = 2 * _SUBMISSION_BATCH_SIZE
+
+    async def first(message: ReceivedMessageT) -> None:
+        nonlocal first_channel_count
+        first_channel_count += 1
+        await message.ack()
+
+    async def other(message: ReceivedMessageT) -> None:
+        other_channel_seen.put_nowait(first_channel_count)
+        await message.ack()
+
+    async with server.connection():
+        message = InMemorySentMessage(payload=b"x")
+        for _ in range(message_count):
+            await server.publish(channel="first", message=message)
+        await server.publish(channel="other", message=message)
+        subscriber = await server.subscribe(
+            concurrency=Concurrency(),
+            channel_concurrency={},
+            channels_to_callbacks={"first": first, "other": other},
+        )
+        try:
+            assert await asyncio.wait_for(other_channel_seen.get(), 1) < message_count
+        finally:
+            await subscriber.close()
+
+
+async def test_channel_intake_limits_pending_callbacks() -> None:
+    server = InMemoryServer()
+    callbacks = 0
+    saturated = asyncio.Event()
+    release = asyncio.Event()
+
+    async def callback(message: ReceivedMessageT) -> None:
+        nonlocal callbacks
+        callbacks += 1
+        if callbacks == 3:
+            saturated.set()
+        await release.wait()
+        await message.ack()
+
+    async with server.connection():
+        for _ in range(6):
+            await server.publish(channel="images", message=InMemorySentMessage(payload=b"x"))
+        subscriber = cast(
+            InMemorySubscriber,
+            await server.subscribe(
+                channels_to_callbacks={"images": callback},
+                concurrency=Concurrency(messages=1000),
+                channel_concurrency={"images": Concurrency(messages=3)},
+            ),
+        )
+        try:
+            await asyncio.wait_for(saturated.wait(), 1)
+            assert callbacks == 3
+        finally:
+            await subscriber.close()
+            release.set()
+            await asyncio.gather(*subscriber._callback_tasks)

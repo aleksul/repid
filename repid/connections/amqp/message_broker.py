@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlparse
 from uuid import uuid4
 
+from repid._concurrency import Concurrency, _channel_hints
 from repid.connections.abc import CapabilitiesT, SentMessageT, SubscriberT
 from repid.connections.amqp._uamqp.message import Properties
 from repid.connections.amqp.protocol import (
@@ -323,7 +324,8 @@ class AmqpServer:
         self,
         *,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        concurrency: Concurrency,
+        channel_concurrency: dict[str, Concurrency],
     ) -> SubscriberT:
         logger.debug("channel.subscribe", extra={"channels": list(channels_to_callbacks.keys())})
 
@@ -333,7 +335,14 @@ class AmqpServer:
         # Create and store subscriber
         subscriber = await AmqpSubscriber.create(
             queues_to_callbacks=channels_to_callbacks,
-            concurrency_limit=concurrency_limit,
+            prefetch_by_queue={
+                channel: min(hint.messages or 100, 2**32 - 1)
+                for channel, hint in _channel_hints(
+                    channels_to_callbacks,
+                    concurrency,
+                    channel_concurrency,
+                ).items()
+            },
             managed_session=self._managed_session,
             naming_strategy=self._subscribe_naming_strategy,
             publish_fn=self.publish,

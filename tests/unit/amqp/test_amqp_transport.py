@@ -324,12 +324,30 @@ async def test_transport_set_events() -> None:
     assert transport._events == emitter
 
 
+@patch("asyncio.open_connection", new=AsyncMock(side_effect=TimeoutError))
 async def test_transport_connect_timeout() -> None:
-    config = TransportConfig(host="192.0.2.1", port=5672, connect_timeout=0.01)
+    config = TransportConfig(host="localhost", port=5672, connect_timeout=0.01)
     transport = AmqpTransport(config)
 
     with pytest.raises(ConnectionTimeoutError, match="Connection timed out"):
         await transport.connect()
+
+
+async def test_pending_frame_is_never_sent_on_reconnected_transport() -> None:
+    transport = AmqpTransport(TransportConfig(host="localhost", port=5672))
+    old_writer = MagicMock()
+    new_writer = MagicMock()
+    transport._writer = old_writer
+
+    async with transport._write_lock:
+        task = asyncio.create_task(transport.send_performative(1, EmptyFrame()))
+        await asyncio.sleep(0)
+        transport._writer = new_writer
+
+    with pytest.raises(ConnectionClosedError, match="Not connected"):
+        await task
+    old_writer.write.assert_not_called()
+    new_writer.write.assert_not_called()
 
 
 @patch(

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
-from collections.abc import Callable, Coroutine
+import logging
+from collections.abc import Callable, Coroutine, Mapping
+from functools import partial
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from repid.connections.amqp._uamqp.message import Properties
 from repid.connections.amqp.helpers import AmqpReceivedMessage
@@ -13,161 +15,139 @@ if TYPE_CHECKING:
     from repid.connections.abc import ReceivedMessageT
 
 
+logger = logging.getLogger("repid.connections.amqp")
+
+_MessageCallback = Callable[["ReceivedMessageT"], Coroutine[None, None, None]]
+
+
 class AmqpSubscriber:
-    """
-    Implementation of SubscriberT for AmqpServer.
+    """Submit deliveries independently of the AMQP frame reader.
 
-    This subscriber uses ManagedSession's ReceiverPool, which automatically
-    handles reconnection and link recreation.
-
-    ``concurrency_limit`` is forwarded as the AMQP link-credit (prefetch) so
-    the broker limits in-flight deliveries at the protocol level.  Concurrency
-    of the user callbacks themselves is managed by the runner's semaphore.
+    Link credit bounds outstanding deliveries per queue. The runner controls
+    actor execution through its admission controller.
     """
 
-    def __init__(
-        self,
-        *,
-        managed_session: ManagedSession,
-        links: list[ReceiverLink],
-        queues_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
-        paused_event: asyncio.Event,
-        naming_strategy: Callable[[str], str],
-    ) -> None:
+    def __init__(self, managed_session: ManagedSession) -> None:
         self._managed_session = managed_session
-        self._links = links
-        self._queues_to_callbacks = queues_to_callbacks
-        self._concurrency_limit = concurrency_limit
-        self._is_active = True
-        self._paused_event = paused_event
-        self._naming_strategy = naming_strategy
+        self._subscription_keys: list[str] = []
+        self._submission_tasks: set[asyncio.Task[None]] = set()
+        self._resumed = asyncio.Event()
         self._stop_event = asyncio.Event()
-
-        # Start the background task that monitors the connection
-        # Note: With ManagedSession, reconnection is handled automatically by ReceiverPool
-        self._task = asyncio.create_task(self._run_forever())
+        self._close_lock = asyncio.Lock()
+        self._task = asyncio.create_task(self._stop_event.wait())
 
     @property
     def is_active(self) -> bool:
-        return self._is_active
+        return self._resumed.is_set() and not self._stop_event.is_set()
 
     @property
-    def task(self) -> asyncio.Task[object]:
+    def task(self) -> asyncio.Task[bool]:
         return self._task
 
     async def pause(self) -> None:
-        self._is_active = False
-        self._paused_event.clear()
+        self._resumed.clear()
 
     async def resume(self) -> None:
-        self._is_active = True
-        self._paused_event.set()
-
-    async def _run_forever(self) -> None:
-        """
-        Run forever, waiting for stop signal.
-
-        Unlike the previous implementation, reconnection handling is now done
-        by the ManagedSession's ReceiverPool. This task just waits for the stop signal.
-        """
-        with contextlib.suppress(asyncio.CancelledError):
-            await self._stop_event.wait()
+        if not self._stop_event.is_set():
+            self._resumed.set()
 
     @classmethod
     async def create(
         cls,
         *,
         managed_session: ManagedSession,
-        queues_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        queues_to_callbacks: dict[str, _MessageCallback],
         naming_strategy: Callable[[str], str],
         publish_fn: Callable[..., Coroutine[Any, Any, None]],
+        prefetch_by_queue: Mapping[str, int],
     ) -> AmqpSubscriber:
-        """
-        Create a new subscriber.
-
-        Args:
-            managed_session: The managed session to use
-            queues_to_callbacks: Mapping of queue names to callback functions
-            concurrency_limit: Maximum number of callbacks that may execute
-                concurrently.  When set, this value is also used as the AMQP
-                link-credit (prefetch) so the broker limits in-flight deliveries
-                at the protocol level.
-            naming_strategy: Function to convert queue names to AMQP addresses
-
-        Returns:
-            A new AmqpSubscriber instance
-        """
-        links: list[ReceiverLink] = []
+        subscriber = cls(managed_session)
         receiver_pool = managed_session.receiver_pool
-
-        paused_event = asyncio.Event()
-        paused_event.set()
-
-        for queue, callback in queues_to_callbacks.items():
-            # Create wrapper callback that handles the message
-            async def wrapped_callback(  # noqa: PLR0917
-                payload: bytes,
-                headers: dict[str, Any] | None,
-                delivery_id: int,
-                delivery_tag: bytes,
-                link_ref: ReceiverLink,
-                properties: Properties | None = None,
-                queue: str = queue,
-                callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]] = callback,
-                paused_event: asyncio.Event = paused_event,
-                managed_session: ManagedSession = managed_session,
-            ) -> None:
-                await paused_event.wait()
-                link_ref.defer_delivery_credit(delivery_id)
-
-                msg = AmqpReceivedMessage(
-                    payload=payload,
-                    headers=headers,
-                    link=link_ref,
-                    delivery_id=delivery_id,
-                    delivery_tag=delivery_tag,
-                    channel_name=queue,
-                    managed_session=managed_session,
-                    publish_fn=publish_fn,
-                    properties=properties,
+        try:
+            for queue, callback in queues_to_callbacks.items():
+                key = uuid4().hex
+                await receiver_pool.subscribe(
+                    naming_strategy(queue),
+                    partial(subscriber._receive, callback, queue, publish_fn),
+                    f"receiver-{queue}",
+                    prefetch=prefetch_by_queue[queue],
+                    subscription_key=key,
                 )
-                try:
-                    await callback(msg)
-                except Exception:
-                    await link_ref.release_delivery_credit(delivery_id)
-                    raise
+                subscriber._subscription_keys.append(key)
+        except BaseException:
+            try:
+                await subscriber.close()
+            except Exception:
+                logger.exception("subscriber.create.cleanup_error")
+            raise
 
-            # Subscribe using the receiver pool (handles reconnection automatically)
-            address = naming_strategy(queue)
-            prefetch = concurrency_limit if concurrency_limit and concurrency_limit > 0 else 100
-            link = await receiver_pool.subscribe(
-                address,
-                wrapped_callback,
-                f"receiver-{queue}",
-                prefetch=prefetch,
-            )
-            links.append(link)
+        await subscriber.resume()
+        return subscriber
 
-        return cls(
-            managed_session=managed_session,
-            links=links,
-            queues_to_callbacks=queues_to_callbacks,
-            concurrency_limit=concurrency_limit,
-            paused_event=paused_event,
-            naming_strategy=naming_strategy,
+    async def _receive(  # noqa: PLR0917
+        self,
+        callback: _MessageCallback,
+        queue: str,
+        publish_fn: Callable[..., Coroutine[Any, Any, None]],
+        payload: bytes,
+        headers: dict[str, Any] | None,
+        delivery_id: int,
+        delivery_tag: bytes,
+        link: ReceiverLink,
+        properties: Properties | None = None,
+    ) -> None:
+        link.defer_delivery_credit(delivery_id)
+        if self._stop_event.is_set():
+            return
+
+        message = AmqpReceivedMessage(
+            payload=payload,
+            headers=headers,
+            link=link,
+            delivery_id=delivery_id,
+            delivery_tag=delivery_tag,
+            channel_name=queue,
+            managed_session=self._managed_session,
+            publish_fn=publish_fn,
+            properties=properties,
         )
+        task = asyncio.create_task(self._submit(callback, message))
+        self._submission_tasks.add(task)
+        task.add_done_callback(self._submission_done)
+        link.track_delivery_task(task)
+
+    async def _submit(self, callback: _MessageCallback, message: AmqpReceivedMessage) -> None:
+        try:
+            while not self._resumed.is_set():
+                await self._resumed.wait()
+            await callback(message)
+        except asyncio.CancelledError:
+            await message.reject()
+            raise
+        except Exception:
+            logger.exception("subscriber.callback.error")
+            await message.reject()
+
+    def _submission_done(self, task: asyncio.Task[None]) -> None:
+        self._submission_tasks.discard(task)
+        if not task.cancelled() and (exc := task.exception()) is not None:
+            logger.error("subscriber.callback.rejection_error", exc_info=exc)
 
     async def close(self) -> None:
-        """Close the subscriber and release resources."""
-        self._stop_event.set()
-        self._task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await self._task
-
-        # Unsubscribe from all queues
-        receiver_pool = self._managed_session.receiver_pool
-        for queue in self._queues_to_callbacks:
-            address = self._naming_strategy(queue)
-            await receiver_pool.unsubscribe(address)
+        async with self._close_lock:
+            self._stop_event.set()
+            self._resumed.clear()
+            # Closing a link requeues its unsettled deliveries on the broker.
+            # Detach before canceling tasks to avoid returning live link credit.
+            receiver_pool = self._managed_session.receiver_pool
+            try:
+                for key in self._subscription_keys:
+                    await receiver_pool.unsubscribe(key)
+                self._subscription_keys.clear()
+            finally:
+                current_task = asyncio.current_task()
+                tasks = self._submission_tasks - {current_task}
+                for task in tasks:
+                    if not task.cancelling():
+                        task.cancel()
+                await asyncio.gather(self._task, *tasks, return_exceptions=True)

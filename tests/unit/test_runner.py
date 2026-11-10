@@ -8,11 +8,12 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from repid import Repid, Router, ServerT
+from repid import Concurrency, Repid, Router, ServerT
 from repid._keep_alive import _keep_alive_loop
 from repid._message_lifecycle import _actor_run
 from repid._runner import _Runner
 from repid.connections.in_memory import InMemoryServer
+from repid.connections.in_memory.message_broker import InMemoryReceivedMessage
 from repid.data import ActorExecutionContext, MessageData
 from repid.health_check_server import HealthCheckServer, HealthCheckStatus
 from repid.serializer import default_serializer
@@ -214,7 +215,7 @@ async def test_runner_max_tasks_hit(supports_lightweight_pause: bool) -> None:
         runner = _Runner(
             actor_context=_make_actor_context(mocked_server),
             max_tasks=5,
-            tasks_concurrency_limit=10,
+            concurrency=Concurrency(messages=10),
         )
 
         assert not runner.max_tasks_hit
@@ -236,18 +237,6 @@ async def test_runner_max_tasks_hit(supports_lightweight_pause: bool) -> None:
 
         assert runner.processed == 5
         assert runner.max_tasks_hit
-
-
-async def test_runner_unpause_threshold_validation() -> None:
-    server = InMemoryServer()
-
-    with pytest.raises(ValueError, match="Subscriber will never unpause"):
-        _Runner(
-            actor_context=_make_actor_context(server),
-            max_tasks=10,
-            tasks_concurrency_limit=1,
-            concurrency_unpause_percent=2.0,  # 200% - more than limit
-        )
 
 
 async def test_runner_cancel_event_during_actor_execution() -> None:
@@ -327,6 +316,13 @@ async def test_runner_no_matching_actor_rejects_message(
             ),
         )
 
+        queue = server.queues["default"]
+        raw = await queue.queue.get()
+        queue.processing.add(raw)
+        await runner._message_handler(
+            router._actors_per_channel_address["default"],
+            InMemoryReceivedMessage(raw, queue, "default"),
+        )
         runner.stop_consume_event.set()
 
         await runner.run(
@@ -360,7 +356,7 @@ async def test_runner_pause_and_resume_with_concurrency_limit() -> None:
     async with server.connection():
         runner = _Runner(
             actor_context=_make_actor_context(server),
-            tasks_concurrency_limit=2,
+            concurrency=Concurrency(messages=2),
         )
 
         async def publish_messages() -> None:
@@ -395,17 +391,21 @@ async def test_runner_pause_and_resume_with_concurrency_limit() -> None:
         assert len(processing) == 3
 
 
-@pytest.mark.parametrize("tasks_limit", [1, 2, 10])
-async def test_runner_resumes_saturated_in_memory_subscriber(tasks_limit: int) -> None:
+@pytest.mark.parametrize("message_cap", [1, 2, 10])
+async def test_runner_resumes_saturated_in_memory_subscriber(message_cap: int) -> None:
     server = InMemoryServer()
     router = Router()
     release = asyncio.Event()
-    finished = 0
-    message_count = tasks_limit * 2 + 2
+    saturated = asyncio.Event()
+    started = finished = 0
+    message_count = message_cap * 2 + 2
 
     @router.actor
     async def job() -> None:
-        nonlocal finished
+        nonlocal started, finished
+        started += 1
+        if started == message_cap:
+            saturated.set()
         await release.wait()
         finished += 1
 
@@ -421,7 +421,7 @@ async def test_runner_resumes_saturated_in_memory_subscriber(tasks_limit: int) -
             )
         runner = _Runner(
             actor_context=_make_actor_context(server),
-            tasks_concurrency_limit=tasks_limit,
+            concurrency=Concurrency(messages=message_cap),
             max_tasks=message_count,
         )
         running = asyncio.create_task(
@@ -431,12 +431,7 @@ async def test_runner_resumes_saturated_in_memory_subscriber(tasks_limit: int) -
             ),
         )
         try:
-
-            async def wait_for_pause() -> None:
-                while not runner._server_subscriber_was_paused:
-                    await asyncio.sleep(0)
-
-            await asyncio.wait_for(wait_for_pause(), timeout=1)
+            await asyncio.wait_for(saturated.wait(), timeout=1)
             release.set()
             await asyncio.wait_for(asyncio.shield(running), timeout=1)
             assert finished == message_count
@@ -702,20 +697,23 @@ async def test_runner_tasks_not_finishing_after_cancellation(
         await run_task
         await runner_task
 
-        tasks = set(runner._tasks)
         try:
             assert not finished_event.is_set()
-            assert tasks
+            queue = server.queues["default"]
+            assert not queue.processing
+            assert queue.queue.qsize() == 1
+            assert runner.processed == 0
             assert any(
                 r.levelno == logging.ERROR and r.message == "runner.shutdown.tasks_unfinished"
                 for r in caplog.get_records(when="call")
             )
-        finally:  # even if test fails, do a cleanup
+        finally:
             release_event.set()
-            await asyncio.gather(*tasks)
-
-        assert finished_event.is_set()
-        assert not runner._tasks
+            await asyncio.wait_for(finished_event.wait(), timeout=1)
+            async with asyncio.timeout(1):
+                while runner.processed == 0:
+                    await asyncio.sleep(0)
+        assert runner.processed == 1
 
 
 async def test_runner_on_error_reject_rejects_message() -> None:
@@ -829,13 +827,15 @@ async def test_runner_unrouted_message_reject_below_threshold() -> None:
         msg.nack.assert_not_called()
 
 
+@pytest.mark.parametrize("limit", [1, 3])
 async def test_runner_unrouted_message_nack_at_threshold(
     caplog: pytest.LogCaptureFixture,
+    limit: int,
 ) -> None:
     server = InMemoryServer()
-    runner = _Runner(actor_context=_make_actor_context(server), max_unrouted_retries=3)
+    runner = _Runner(actor_context=_make_actor_context(server), max_unrouted_retries=limit)
 
-    for _ in range(2):
+    for _ in range(limit - 1):
         await runner._message_handler([], _make_unrouted_message("msg-poison"))
 
     msg = _make_unrouted_message("msg-poison")

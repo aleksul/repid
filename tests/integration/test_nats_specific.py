@@ -5,10 +5,12 @@ from unittest.mock import AsyncMock, MagicMock, Mock, PropertyMock, patch
 from urllib.parse import urlparse
 
 import pytest
+from nats.js.api import ConsumerConfig, StreamConsumerLimits
 
-from repid.connections.abc import MessageAction
+from repid import Concurrency, Repid, Router
+from repid.connections.abc import MessageAction, ReceivedMessageT, ServerT
 from repid.connections.nats import NatsServer
-from repid.connections.nats.message_broker import NatsReceivedMessage, NatsSubscriber
+from repid.connections.nats.message_broker import NatsReceivedMessage
 
 pytestmark = pytest.mark.integration_target(name="nats")
 
@@ -67,7 +69,11 @@ async def test_nats_publish_subscribe(nats_connection: NatsServer) -> None:
             await msg.ack()  # Double ack
             event.set()
 
-        sub = await nats_connection.subscribe(channels_to_callbacks={"another": cb})
+        sub = await nats_connection.subscribe(
+            concurrency=Concurrency(),
+            channel_concurrency={},
+            channels_to_callbacks={"another": cb},
+        )
         await asyncio.wait_for(event.wait(), timeout=5.0)
         assert len(hit) == 1
 
@@ -98,6 +104,8 @@ async def test_nats_reject(nats_connection: NatsServer) -> None:
 
         await nats_connection.publish(channel="test_reject_channel", message=MockSentMsg())
         sub_reject = await nats_connection.subscribe(
+            concurrency=Concurrency(),
+            channel_concurrency={},
             channels_to_callbacks={"test_reject_channel": cb_reject},
         )
         await asyncio.wait_for(event_reject.wait(), timeout=5.0)
@@ -120,6 +128,8 @@ async def test_nats_nack(nats_connection: NatsServer) -> None:
 
         await nats_connection.publish(channel="test_nack_channel", message=MockSentMsg())
         sub_nack = await nats_connection.subscribe(
+            concurrency=Concurrency(),
+            channel_concurrency={},
             channels_to_callbacks={"test_nack_channel": cb_nack},
         )
         await asyncio.wait_for(event_nack.wait(), timeout=5.0)
@@ -139,6 +149,8 @@ async def test_nats_reply(nats_connection: NatsServer) -> None:
 
         await nats_connection.publish(channel="test_reply_channel", message=MockSentMsg())
         sub_reply = await nats_connection.subscribe(
+            concurrency=Concurrency(),
+            channel_concurrency={},
             channels_to_callbacks={"test_reply_channel": cb_reply},
         )
         await asyncio.wait_for(event_reply.wait(), timeout=5.0)
@@ -160,8 +172,9 @@ async def test_nats_exception(nats_connection: NatsServer) -> None:
 
         await nats_connection.publish(channel="test_exc_channel", message=MockSentMsg())
         sub_exc = await nats_connection.subscribe(
+            channel_concurrency={},
             channels_to_callbacks={"test_exc_channel": cb_exc},
-            concurrency_limit=1,
+            concurrency=Concurrency(messages=1),
         )
         await asyncio.wait_for(event_exc.wait(), timeout=5.0)
         assert hit_exc
@@ -184,7 +197,11 @@ async def test_nats_subscribe_already_connected(nats_connection: NatsServer) -> 
     async def cb(msg: Any) -> None:
         pass
 
-    sub_dummy = await server.subscribe(channels_to_callbacks={"another_edge_case": cb})
+    sub_dummy = await server.subscribe(
+        concurrency=Concurrency(),
+        channel_concurrency={},
+        channels_to_callbacks={"another_edge_case": cb},
+    )
     await sub_dummy.close()
     await server.disconnect()
 
@@ -214,7 +231,11 @@ async def test_nats_message_without_headers_and_content_type(
         event.set()
 
     # Call subscribe BEFORE publish to cover `if not self.is_connected` inside `subscribe`
-    sub = await server.subscribe(channels_to_callbacks={"test_nack_channel_2": cb})
+    sub = await server.subscribe(
+        concurrency=Concurrency(),
+        channel_concurrency={},
+        channels_to_callbacks={"test_nack_channel_2": cb},
+    )
 
     await server.publish(channel="test_nack_channel_2", message=MockSentMsgNoHeaders())
     await asyncio.wait_for(event.wait(), timeout=5.0)
@@ -401,7 +422,11 @@ async def test_nats_publish_when_not_connected() -> None:
 async def test_nats_subscribe_when_not_connected() -> None:
     server = NatsServer("nats://localhost:4222", dlq_topic_strategy=None)
     with suppress(ConnectionError):
-        await server.subscribe(channels_to_callbacks={"test": AsyncMock()})
+        await server.subscribe(
+            concurrency=Concurrency(),
+            channel_concurrency={},
+            channels_to_callbacks={"test": AsyncMock()},
+        )
 
 
 async def test_nats_subscribe_connection_error_when_no_js() -> None:
@@ -415,26 +440,42 @@ async def test_nats_subscribe_connection_error_when_no_js() -> None:
             match=r"NATS connection is not initialized\. Call connect\(\) first\.",
         ),
     ):
-        await server.subscribe(channels_to_callbacks={"test": AsyncMock()})
+        await server.subscribe(
+            concurrency=Concurrency(),
+            channel_concurrency={},
+            channels_to_callbacks={"test": AsyncMock()},
+        )
 
 
 async def test_nats_subscribe_callback_exception_calls_term() -> None:
     server = NatsServer("nats://localhost:4222", dlq_topic_strategy=None)
-    server._js = Mock(subscribe=AsyncMock(), publish=AsyncMock())
+    info = Mock(
+        config=ConsumerConfig(ack_wait=30, deliver_group="test_group", deliver_subject="inbox"),
+    )
+    subscription = Mock(unsubscribe=AsyncMock())
+    server._nc = MagicMock(is_connected=True)
+    server._js = Mock(
+        find_stream_name_by_subject=AsyncMock(return_value="stream"),
+        consumer_info=AsyncMock(return_value=info),
+        subscribe_bind=AsyncMock(return_value=subscription),
+        publish=AsyncMock(),
+    )
     server._dlq_topic_strategy = None
 
     with patch.object(NatsServer, "is_connected", new_callable=PropertyMock, return_value=True):
         sub_test = await server.subscribe(
+            concurrency=Concurrency(),
+            channel_concurrency={},
             channels_to_callbacks={"test": AsyncMock(side_effect=ValueError)},
-            concurrency_limit=None,
         )
         await asyncio.sleep(0.1)
 
-    message_handler = server._js.subscribe.call_args[1]["cb"]
+    message_handler = server._js.subscribe_bind.call_args[1]["cb"]
 
+    terminated = asyncio.Event()
     fake_nats_msg = Mock(
         nak=AsyncMock(),
-        term=AsyncMock(),
+        term=AsyncMock(side_effect=terminated.set),
         ack=AsyncMock(),
         headers=None,
         data=b"",
@@ -442,7 +483,8 @@ async def test_nats_subscribe_callback_exception_calls_term() -> None:
     )
 
     await message_handler(fake_nats_msg)
-    fake_nats_msg.term.assert_called_once()
+    await asyncio.wait_for(terminated.wait(), 1)
+    fake_nats_msg.term.assert_awaited_once()
     await sub_test.close()
 
 
@@ -470,36 +512,113 @@ async def test_nats_received_message_keep_alive() -> None:
     mock_msg.in_progress.assert_not_called()
 
 
-async def test_nats_subscriber_subscribe_exception() -> None:
-    mock_js = AsyncMock()
-    mock_js.consumer_info.side_effect = Exception("test")
-
-    mock_server = MagicMock(spec=NatsServer)
-    mock_server._js = mock_js
-
-    subscriber = NatsSubscriber(mock_server, {})
-
-    # We just want to cover the suppress(Exception)
-    await subscriber._subscribe_channel("test_channel", AsyncMock())
-
-
-async def test_nats_subscriber_subscribe_success() -> None:
-    mock_js = AsyncMock()
-    mock_consumer_info = MagicMock()
-    mock_consumer_info.config.ack_wait = 1.0
-    mock_js.consumer_info.return_value = mock_consumer_info
-
-    mock_server = MagicMock(spec=NatsServer)
-    mock_server._js = mock_js
-
-    subscriber = NatsSubscriber(mock_server, {})
-
-    # We just want to cover the successful consumer_info
-    await subscriber._subscribe_channel("test_channel", AsyncMock())
-
-
 async def test_nats_keep_alive_interval() -> None:
     mock_msg = AsyncMock()
     mock_server = MagicMock()
     msg = NatsReceivedMessage(mock_msg, mock_server, "test_channel", ack_wait=3.0)
     assert msg.keep_alive_interval == 1
+
+
+@pytest.mark.parametrize("hint", [None, 20])
+async def test_nats_new_durable_inherits_stream_ack_limit(
+    nats_connection: ServerT,
+    hint: int | None,
+) -> None:
+    assert isinstance(nats_connection, NatsServer)
+    channel = "limited_ack_pending"
+    stream = "limited_ack_pending_stream"
+    delivered = asyncio.Event()
+
+    async def callback(message: ReceivedMessageT) -> None:
+        await message.ack()
+        delivered.set()
+
+    async with nats_connection.connection():
+        js = nats_connection._js
+        assert js is not None
+        await js.add_stream(
+            name=stream,
+            subjects=[channel],
+            consumer_limits=StreamConsumerLimits(max_ack_pending=3),
+        )
+        try:
+            subscriber = await nats_connection.subscribe(
+                channel_concurrency={},
+                channels_to_callbacks={channel: callback},
+                concurrency=Concurrency(messages=hint),
+            )
+            try:
+                await js.publish(channel, b"{}")
+                await asyncio.wait_for(delivered.wait(), 2)
+                info = await js.consumer_info(stream, f"{channel}_group")
+                assert info.config.max_ack_pending == 3
+            finally:
+                await subscriber.close()
+        finally:
+            await js.delete_stream(stream)
+
+
+async def test_nats_waiting_backlog_retains_short_broker_leases(
+    nats_connection: NatsServer,
+) -> None:
+    channel = "admission_leases"
+    stream = "admission_leases_stream"
+    durable = f"{channel}_group"
+    ack_wait = 0.25
+    actor_started = asyncio.Event()
+    release_actor = asyncio.Event()
+
+    app = Repid()
+    app.servers.register_server("nats", nats_connection, is_default=True)
+    router = Router(channel=channel)
+
+    @router.actor
+    async def job() -> None:
+        actor_started.set()
+        await release_actor.wait()
+
+    app.include_router(router)
+    async with nats_connection.connection():
+        js = nats_connection._js
+        nc = nats_connection._nc
+        assert js is not None
+        assert nc is not None
+        await js.add_stream(name=stream, subjects=[channel])
+        try:
+            await js.add_consumer(
+                stream,
+                config=ConsumerConfig(
+                    durable_name=durable,
+                    deliver_group=durable,
+                    deliver_subject=nc.new_inbox(),
+                    filter_subject=channel,
+                    ack_wait=ack_wait,
+                    max_deliver=1,
+                    max_ack_pending=3,
+                ),
+            )
+            for _ in range(3):
+                await app.send_message_json(channel=channel, payload={}, headers={"topic": "job"})
+            worker = asyncio.create_task(
+                app.run_worker(
+                    messages_limit=3,
+                    concurrency=Concurrency(messages=1),
+                    register_signals=[],
+                ),
+            )
+            try:
+                async with asyncio.timeout(5):
+                    await actor_started.wait()
+                    while (await js.consumer_info(stream, durable)).delivered.consumer_seq < 3:
+                        await asyncio.sleep(0.01)
+                    await asyncio.sleep(ack_wait * 3)
+                    assert (await js.consumer_info(stream, durable)).num_ack_pending == 3
+                    release_actor.set()
+                    assert (await worker).processed == 3
+            finally:
+                release_actor.set()
+                if not worker.done():
+                    worker.cancel()
+                    await asyncio.gather(worker, return_exceptions=True)
+        finally:
+            await js.delete_stream(stream)

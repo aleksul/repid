@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Mapping
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
+from repid._concurrency import Concurrency
 from repid.connections.abc import ReceivedMessageT, SubscriberT
 from repid.connections.sqs.message import SqsReceivedMessage
 
 if TYPE_CHECKING:
+    from types_aiobotocore_sqs.client import SQSClient
+    from types_aiobotocore_sqs.type_defs import ReceiveMessageRequestTypeDef
+
     from repid.connections.sqs.message_broker import SqsServer
 
 logger = logging.getLogger("repid.connections.sqs")
@@ -20,28 +24,19 @@ class SqsSubscriber(SubscriberT):
         self,
         server: SqsServer,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        channel_concurrency: Mapping[str, Concurrency] | None = None,
     ) -> None:
-        if concurrency_limit is not None and concurrency_limit <= 0:
-            raise ValueError(  # pragma: no cover
-                "concurrency_limit must be None or a positive integer.",
-            )
-
         self._server = server
+        self._channel_concurrency = dict(channel_concurrency or {})
         self._channels_to_callbacks = channels_to_callbacks
-        self._concurrency_limit = concurrency_limit
-        self._semaphore = (
-            asyncio.Semaphore(concurrency_limit) if concurrency_limit is not None else None
-        )
         self._active = False
         self._paused_event = asyncio.Event()
         self._paused_event.set()
-        self._pause_requested_event = asyncio.Event()
+        self._pause_signal: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         self._shutdown_event = asyncio.Event()
-        self._shutdown_wait_task: asyncio.Task[bool] | None = None
-        self._pause_wait_task: asyncio.Task[bool] | None = None
-        self._tasks: list[asyncio.Task[object]] = []
-        self._main_task: asyncio.Task[object] | None = None
+        self._close_lock = asyncio.Lock()
+        self._message_tasks: set[asyncio.Task[None]] = set()
+        self._main_task: asyncio.Task[None] | None = None
 
         self._start_consuming()
 
@@ -70,17 +65,41 @@ class SqsSubscriber(SubscriberT):
 
     async def _consume(self) -> None:
         logger.info("subscriber.start")
-        for channel in self._channels_to_callbacks:
-            self._tasks.append(asyncio.create_task(self._consume_channel(channel)))
-
+        tasks = {
+            asyncio.create_task(self._consume_channel(ch)) for ch in self._channels_to_callbacks
+        }
         try:
-            await asyncio.gather(*self._tasks)
+            if tasks:
+                done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+                for task in done:
+                    task.result()
         except asyncio.CancelledError:
             logger.info("subscriber.cancelled")
             raise
         finally:
+            await self._cancel_and_drain(tasks)
             self._active = False
-            self._tasks.clear()
+            if self._shutdown_event.is_set():
+                self._server._active_subscribers.discard(self)
+
+    def _make_message(self, channel: str, queue_url: str, raw: Any) -> SqsReceivedMessage | None:
+        try:
+            return SqsReceivedMessage(
+                self._server,
+                channel,
+                queue_url,
+                raw,
+                self._server._visibility_timeout,
+            )
+        except Exception:
+            logger.exception("message.creation_error", extra={"channel": channel})
+            return None
+
+    async def _return_message(self, message: SqsReceivedMessage) -> None:
+        try:
+            await message.reject()
+        except Exception:
+            logger.exception("message.reject_unprocessed_error")
 
     async def _reject_unprocessed(
         self,
@@ -91,205 +110,189 @@ class SqsSubscriber(SubscriberT):
         if not messages or queue_url is None:
             return
 
-        for msg in messages:
-            try:
-                # Run reject in detached task to avoid blocking loop teardown.
-                t = asyncio.create_task(
-                    SqsReceivedMessage(
-                        self._server,
-                        channel,
-                        queue_url,
-                        msg,
-                        self._server._visibility_timeout,
-                    ).reject(),
-                )
-
-                def _ignore_exception(task: asyncio.Task[object]) -> None:
-                    with contextlib.suppress(Exception, asyncio.CancelledError):
-                        task.result()
-
-                t.add_done_callback(_ignore_exception)
-            except Exception:
-                logger.exception(
-                    "message.reject_unprocessed_error",
-                    extra={"channel": channel},
-                )
+        returns = asyncio.gather(
+            *(
+                self._return_message(message)
+                for raw in messages
+                if (message := self._make_message(channel, queue_url, raw)) is not None
+            ),
+            return_exceptions=True,
+        )
+        try:
+            await asyncio.shield(returns)
+        except asyncio.CancelledError:
+            # Disconnect must wait for receipts we have already started returning.
+            await asyncio.wait({returns})
+            raise
 
     async def _cancel_and_drain(self, tasks: set[asyncio.Task[Any]]) -> None:
         for task in tasks:
-            task.cancel()
+            if not task.cancelling():
+                task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    def _get_shutdown_wait_task(self) -> asyncio.Task[bool]:
-        if self._shutdown_wait_task is None or (
-            self._shutdown_wait_task.done() and not self._shutdown_event.is_set()
-        ):
-            self._shutdown_wait_task = asyncio.create_task(self._shutdown_event.wait())
-        return self._shutdown_wait_task
+    def _can_receive(self) -> bool:
+        return self._active and not self._shutdown_event.is_set() and self._paused_event.is_set()
 
-    def _get_pause_wait_task(self) -> asyncio.Task[bool]:
-        if self._pause_wait_task is None or (
-            self._pause_wait_task.done() and not self._pause_requested_event.is_set()
-        ):
-            self._pause_wait_task = asyncio.create_task(self._pause_requested_event.wait())
-        return self._pause_wait_task
+    async def _receive_batch(
+        self,
+        client: SQSClient,
+        channel: str,
+        queue_url: str,
+        count: int,
+    ) -> list[Any]:
+        pause_signal = self._pause_signal
+        request: ReceiveMessageRequestTypeDef = {
+            "QueueUrl": queue_url,
+            "MaxNumberOfMessages": count,
+            "WaitTimeSeconds": self._server._receive_wait_time_seconds,
+            "MessageAttributeNames": ["All"],
+        }
+        # The first renewal uses this timeout to schedule its wakeup. Request
+        # the same lease on receipt even if the queue's default is shorter.
+        if self._server._visibility_timeout > 0:
+            request["VisibilityTimeout"] = self._server._visibility_timeout
+        receive = asyncio.create_task(client.receive_message(**request))
+        waits: set[asyncio.Future[Any]] = {receive, pause_signal}
+        handed_off = False
+        try:
+            await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
+            if receive.done() and not pause_signal.done() and self._can_receive():
+                messages = receive.result().get("Messages", [])
+                handed_off = True
+                return messages
+            return []
+        finally:
+            if not handed_off:
+                receive.cancel()
+                (response,) = await asyncio.gather(receive, return_exceptions=True)
+                if not isinstance(response, BaseException):
+                    await self._reject_unprocessed(channel, queue_url, response.get("Messages", []))
 
-    async def _consume_channel(self, channel: str) -> None:  # noqa: C901, PLR0912, PLR0915
-        logger.debug("consuming.started", extra={"channel": channel})
+    def _message_done(
+        self,
+        message: SqsReceivedMessage,
+        active: set[asyncio.Task[None]],
+        returning: set[asyncio.Task[None]],
+        task: asyncio.Task[None],
+    ) -> None:
+        self._message_tasks.discard(task)
+        active.discard(task)
+        if not task.cancelled():
+            exc = task.exception()
+            if exc is None:
+                return
+            logger.error("message.callback_error", exc_info=exc, extra={"channel": message.channel})
+        if not message.is_acted_on:
+            # This also handles cancellation before the callback starts.
+            cleanup = asyncio.create_task(self._return_message(message))
+            returning.add(cleanup)
+            cleanup.add_done_callback(returning.discard)
+
+    async def _poll_channel(
+        self,
+        client: SQSClient,
+        channel: str,
+        queue_url: str,
+        *,
+        count: int,
+        active: set[asyncio.Task[None]],
+        returning: set[asyncio.Task[None]],
+    ) -> bool:
+        messages = await self._receive_batch(client, channel, queue_url, count)
+        if not messages:
+            return False
         callback = self._channels_to_callbacks[channel]
-        active_message_tasks: set[asyncio.Task[Any]] = set()
+        try:
+            while messages:
+                message = self._make_message(channel, queue_url, messages[0])
+                if message is not None:
+                    task = asyncio.create_task(self._process_message(message, callback))
+                    self._message_tasks.add(task)
+                    active.add(task)
+                    task.add_done_callback(partial(self._message_done, message, active, returning))
+                messages.pop(0)
+        except BaseException:
+            await self._reject_unprocessed(channel, queue_url, messages)
+            raise
+        return True
+
+    async def _consume_channel(self, channel: str) -> None:
+        logger.debug("consuming.started", extra={"channel": channel})
+        active_message_tasks: set[asyncio.Task[None]] = set()
+        returning: set[asyncio.Task[None]] = set()
 
         client = self._server._client
         if client is None:
             raise RuntimeError("SQS client is not connected.")
 
         queue_url = None
-        max_messages = self._server._batch_size
+        hint = self._channel_concurrency.get(channel)
+        limit = hint.messages if hint is not None else None
+        max_messages = min(self._server._batch_size, 10)
+        intake_limit = limit if limit and limit > 0 else max_messages
 
-        while self._active and not self._shutdown_event.is_set():
-            await self._paused_event.wait()
-            if self._shutdown_event.is_set():
-                break
-
-            messages = []
-            try:
-                if queue_url is None:
-                    queue_url = await self._server._get_queue_url(channel)
-
-                receive_task = asyncio.create_task(
-                    client.receive_message(
-                        QueueUrl=queue_url,
-                        MaxNumberOfMessages=max_messages,
-                        WaitTimeSeconds=self._server._receive_wait_time_seconds,
-                        MessageAttributeNames=["All"],
-                    ),
-                )
-                shutdown_task = self._get_shutdown_wait_task()
-                pause_task = self._get_pause_wait_task()
-
-                done, pending = await asyncio.wait(
-                    {receive_task, shutdown_task, pause_task},
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                pending_to_cancel = {task for task in pending if task is receive_task}
-                await self._cancel_and_drain(pending_to_cancel)
-
-                if receive_task not in done:
+        try:
+            while self._active and not self._shutdown_event.is_set():
+                await self._paused_event.wait()
+                if not self._can_receive():
                     continue
 
-                response = await receive_task
+                # This channel has only one receive loop. While it polls,
+                # active callbacks can finish but no new ones can start.
+                pending = active_message_tasks | returning
+                count = min(max_messages, intake_limit - len(pending))
+                if not count:
+                    await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                    continue
 
-                messages = response.get("Messages", [])
-                if not messages and self._server._receive_wait_time_seconds <= 0:
+                try:
+                    if queue_url is None:
+                        queue_url = await self._server._get_queue_url(channel)
+
+                    if not self._can_receive():
+                        continue
+                    received = await self._poll_channel(
+                        client,
+                        channel,
+                        queue_url,
+                        count=count,
+                        active=active_message_tasks,
+                        returning=returning,
+                    )
+                except Exception:
+                    logger.exception("consuming.receive_error", extra={"channel": channel})
+                    await asyncio.sleep(1)
+                    continue
+
+                if not received and self._server._receive_wait_time_seconds <= 0:
                     await asyncio.sleep(0.1)
-                    continue
-                for msg in messages.copy():
-                    if self._shutdown_event.is_set() or not self._paused_event.is_set():
-                        break
-
-                    if self._semaphore:
-                        acquired = False
-                        while not acquired:
-                            if self._shutdown_event.is_set() or not self._paused_event.is_set():
-                                break
-                            acquire_task = asyncio.create_task(self._semaphore.acquire())
-                            shutdown_task = self._get_shutdown_wait_task()
-                            pause_task = self._get_pause_wait_task()
-
-                            done, pending = await asyncio.wait(
-                                {acquire_task, shutdown_task, pause_task},
-                                return_when=asyncio.FIRST_COMPLETED,
-                            )
-                            pending_to_cancel = {task for task in pending if task is acquire_task}
-                            await self._cancel_and_drain(pending_to_cancel)
-
-                            if acquire_task not in done:
-                                break
-                            if acquire_task.cancelled():
-                                raise asyncio.CancelledError
-                            acquired = acquire_task.result()
-                        if not acquired:
-                            break
-
-                    try:
-                        task = asyncio.create_task(
-                            self._process_message(channel, queue_url, msg, callback),
-                        )
-                        active_message_tasks.add(task)
-                        messages.remove(msg)
-
-                        def _done_callback(t: asyncio.Task[object]) -> None:
-                            active_message_tasks.discard(t)
-                            if self._semaphore:
-                                self._semaphore.release()
-
-                        task.add_done_callback(_done_callback)
-                    except Exception:
-                        if self._semaphore:
-                            self._semaphore.release()
-                        raise
-
-            except asyncio.CancelledError:
-                await self._reject_unprocessed(channel, queue_url, messages)
-                raise
-            except Exception:
-                logger.exception("consuming.receive_error", extra={"channel": channel})
-                await asyncio.sleep(1)
-            finally:
-                if (self._shutdown_event.is_set() or not self._paused_event.is_set()) and messages:
-                    await self._reject_unprocessed(channel, queue_url, messages)
-
-        await self._cancel_and_drain(active_message_tasks)
+        finally:
+            await self._cancel_and_drain(active_message_tasks)
+            if returning:
+                await asyncio.wait(returning)
         logger.debug("consuming.stopped", extra={"channel": channel})
 
     async def _process_message(
         self,
-        channel: str,
-        queue_url: str,
-        msg: Any,
+        message: SqsReceivedMessage,
         callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
     ) -> None:
         try:
-            message = SqsReceivedMessage(
-                self._server,
-                channel,
-                queue_url,
-                msg,
-                self._server._visibility_timeout,
-            )
-        except Exception:
-            logger.exception("message.creation_error", extra={"channel": channel})
-            return
-
-        try:
             await callback(message)
-        except asyncio.CancelledError:
-            if not message.is_acted_on:
-                # Run reject in a detached task because this task is already cancelled
-                # and awaiting reject() would raise CancelledError instantly.
-                t = asyncio.create_task(message.reject())
-
-                # Suppress exceptions from the detached reject task
-                def _ignore_exception(task: asyncio.Task[object]) -> None:
-                    with contextlib.suppress(Exception):
-                        task.result()
-
-                t.add_done_callback(_ignore_exception)
-            raise
         except Exception:
-            logger.exception("message.callback_error", extra={"channel": channel})
+            logger.exception("message.callback_error", extra={"channel": message.channel})
             if not message.is_acted_on:
                 try:
                     await message.nack()
-                except asyncio.CancelledError:
-                    pass
                 except Exception:
-                    logger.exception("message.nack_error", extra={"channel": channel})
+                    logger.exception("message.nack_error", extra={"channel": message.channel})
 
     async def pause(self) -> None:
         self._paused_event.clear()
-        self._pause_requested_event.set()
+        if not self._pause_signal.done():
+            self._pause_signal.set_result(None)
         logger.info("subscriber.paused")
 
     async def resume(self) -> None:
@@ -297,37 +300,34 @@ class SqsSubscriber(SubscriberT):
             return
         if not self._active:
             self._active = True
-        self._pause_requested_event.clear()
-        if self._pause_wait_task and self._pause_wait_task.done():
-            self._pause_wait_task = None
+        if self._pause_signal.done():
+            self._pause_signal = asyncio.get_running_loop().create_future()
         self._paused_event.set()
         if self._main_task is None or self._main_task.done():
             self._start_consuming()
         logger.info("subscriber.resumed")
 
     async def close(self) -> None:
-        logger.info("subscriber.closing")
+        if asyncio.current_task() in self._message_tasks:
+            # The consumer joins this callback during shutdown.
+            self._request_close()
+            return
+        async with self._close_lock:
+            logger.info("subscriber.closing")
+            self._request_close()
+            if self._main_task is not None:
+                await asyncio.wait({self._main_task})
+                if not self._main_task.cancelled():
+                    self._main_task.exception()
+                self._main_task = None
+            self._server._active_subscribers.discard(self)
+            logger.info("subscriber.closed")
+
+    def _request_close(self) -> None:
         self._active = False
         self._shutdown_event.set()
-        self._pause_requested_event.set()
+        if not self._pause_signal.done():
+            self._pause_signal.set_result(None)
         self._paused_event.set()
-
-        wait_tasks: set[asyncio.Task[Any]] = set()
-        if self._pause_wait_task and not self._pause_wait_task.done():
-            wait_tasks.add(self._pause_wait_task)
-        if self._shutdown_wait_task and not self._shutdown_wait_task.done():
-            wait_tasks.add(self._shutdown_wait_task)
-        await self._cancel_and_drain(wait_tasks)
-        self._pause_wait_task = None
-        self._shutdown_wait_task = None
-
-        await self._cancel_and_drain(set(self._tasks))
-        self._tasks.clear()
-
-        if self._main_task:
-            await self._cancel_and_drain({self._main_task})
-            self._main_task = None
-
-        if self in self._server._active_subscribers:
-            self._server._active_subscribers.discard(self)
-        logger.info("subscriber.closed")
+        if self._main_task is not None and not self._main_task.cancelling():
+            self._main_task.cancel()

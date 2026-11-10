@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import logging
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import botocore.exceptions
 import pytest
 
-from repid import Repid
+from repid import Concurrency, Repid
 from repid._utils._typing import override
 from repid.connections.abc import MessageAction, ReceivedMessageT, SentMessageT
 from repid.connections.sqs import SqsServer
@@ -72,23 +71,6 @@ class MockSubscriberWithCloseException(SqsSubscriber):
         raise ValueError("mock close exception")
 
 
-class MockSubscriberWithMessageException(SqsSubscriber):
-    @override
-    async def _process_message(
-        self,
-        channel: str,
-        queue_url: str,
-        msg: Any,
-        callback: Any,  # noqa: ARG002 - match the overridden signature
-    ) -> None:
-        try:
-            SqsReceivedMessage(self._server, channel, queue_url, msg)
-        except Exception:
-            logger = logging.getLogger("repid.connections.sqs")
-            logger.exception("Error creating message", extra={"channel": channel})
-            return
-
-
 class MockClientFailingReceive:
     async def receive_message(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ARG002
         raise ValueError("mock error")
@@ -110,6 +92,7 @@ def make_mock_server(
         _client=client,
         _receive_wait_time_seconds=receive_wait_time_seconds,
         _batch_size=batch_size,
+        _visibility_timeout=30,
         _dlq_queue_strategy=dlq_queue_strategy,
     )
     if queue_url is not None:
@@ -140,8 +123,9 @@ async def test_sqs_nack_routes_message_to_dlq(sqs_repid: Repid, sqs_connection: 
             event.set()
 
         subscriber = await sqs_connection.subscribe(
+            channel_concurrency={},
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            concurrency=Concurrency(messages=1),
         )
 
         await asyncio.wait_for(event.wait(), timeout=15.0)
@@ -161,8 +145,9 @@ async def test_sqs_nack_routes_message_to_dlq(sqs_repid: Repid, sqs_connection: 
             dlq_event.set()
 
         dlq_subscriber = await sqs_connection.subscribe(
+            channel_concurrency={},
             channels_to_callbacks={dlq_channel_name: on_dlq_message},
-            concurrency_limit=1,
+            concurrency=Concurrency(messages=1),
         )
 
         await asyncio.wait_for(dlq_event.wait(), timeout=15.0)
@@ -198,8 +183,9 @@ async def test_sqs_reply_sends_message_to_reply_channel(
             event.set()
 
         subscriber = await sqs_connection.subscribe(
+            channel_concurrency={},
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            concurrency=Concurrency(messages=1),
         )
 
         await asyncio.wait_for(event.wait(), timeout=15.0)
@@ -239,8 +225,9 @@ async def test_sqs_publish_preserves_empty_payload(
             event.set()
 
         subscriber = await sqs_connection.subscribe(
+            channel_concurrency={},
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            concurrency=Concurrency(messages=1),
         )
 
         await asyncio.wait_for(event.wait(), timeout=15.0)
@@ -274,8 +261,9 @@ async def test_sqs_reply_preserves_empty_payload(sqs_repid: Repid, sqs_connectio
             event.set()
 
         subscriber = await sqs_connection.subscribe(
+            channel_concurrency={},
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            concurrency=Concurrency(messages=1),
         )
 
         await asyncio.wait_for(event.wait(), timeout=15.0)
@@ -306,8 +294,9 @@ async def test_sqs_multiple_actions_are_ignored(sqs_repid: Repid, sqs_connection
             event.set()
 
         subscriber = await sqs_connection.subscribe(
+            channel_concurrency={},
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            concurrency=Concurrency(messages=1),
         )
 
         await asyncio.wait_for(event.wait(), timeout=15.0)
@@ -344,8 +333,9 @@ async def test_sqs_subscriber_handles_callback_exception(
             raise Exception("Test exception in callback")
 
         subscriber = await sqs_connection.subscribe(
+            channel_concurrency={},
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            concurrency=Concurrency(messages=1),
         )
 
         await asyncio.wait_for(event.wait(), timeout=15.0)
@@ -361,8 +351,9 @@ async def test_sqs_subscriber_closes_gracefully(
 
     async with sqs_repid.servers.default.connection():
         subscriber = await sqs_connection.subscribe(
+            channel_concurrency={},
             channels_to_callbacks={channel_name: lambda msg: asyncio.sleep(0)},  # noqa: ARG005
-            concurrency_limit=1,
+            concurrency=Concurrency(messages=1),
         )
 
         await asyncio.sleep(0.1)
@@ -438,7 +429,11 @@ async def test_sqs_server_raises_when_not_connected_for_publish() -> None:
 async def test_sqs_server_raises_when_not_connected_for_subscribe() -> None:
     server = SqsServer()
     with pytest.raises(RuntimeError, match=r"SQS client is not connected\."):
-        await server.subscribe(channels_to_callbacks={})
+        await server.subscribe(
+            concurrency=Concurrency(),
+            channel_concurrency={},
+            channels_to_callbacks={},
+        )
 
 
 async def test_sqs_message_properties_parsing(sqs_connection: ServerT) -> None:
@@ -528,6 +523,8 @@ async def test_sqs_subscriber_active_state(sqs_connection: ServerT) -> None:
         sub = cast(
             SqsSubscriber,
             await server.subscribe(
+                concurrency=Concurrency(),
+                channel_concurrency={},
                 channels_to_callbacks={
                     "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
@@ -543,6 +540,8 @@ async def test_sqs_subscriber_task_property(sqs_connection: ServerT) -> None:
         sub = cast(
             SqsSubscriber,
             await server.subscribe(
+                concurrency=Concurrency(),
+                channel_concurrency={},
                 channels_to_callbacks={
                     "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
@@ -559,6 +558,8 @@ async def test_sqs_subscriber_start_consuming_when_already_active(sqs_connection
         sub = cast(
             SqsSubscriber,
             await server.subscribe(
+                concurrency=Concurrency(),
+                channel_concurrency={},
                 channels_to_callbacks={
                     "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
@@ -574,6 +575,8 @@ async def test_sqs_subscriber_resume_when_active(sqs_connection: ServerT) -> Non
         sub = cast(
             SqsSubscriber,
             await server.subscribe(
+                concurrency=Concurrency(),
+                channel_concurrency={},
                 channels_to_callbacks={
                     "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
@@ -589,6 +592,8 @@ async def test_sqs_subscriber_pause_and_resume(sqs_connection: ServerT) -> None:
         sub = cast(
             SqsSubscriber,
             await server.subscribe(
+                concurrency=Concurrency(),
+                channel_concurrency={},
                 channels_to_callbacks={
                     "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
@@ -607,6 +612,8 @@ async def test_sqs_subscriber_process_message_handles_callback_exception(
         sub = cast(
             SqsSubscriber,
             await server.subscribe(
+                concurrency=Concurrency(),
+                channel_concurrency={},
                 channels_to_callbacks={
                     "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
@@ -617,9 +624,12 @@ async def test_sqs_subscriber_process_message_handles_callback_exception(
             raise ValueError("err")
 
         await sub._process_message(
-            "default",
-            "http://default",
-            {"MessageId": "4", "Body": "eQ=="},
+            SqsReceivedMessage(
+                server,
+                "default",
+                "http://default",
+                {"MessageId": "4", "Body": "eQ=="},
+            ),
             err_cb,
         )
         await sub.close()
@@ -631,6 +641,8 @@ async def test_sqs_subscriber_task_raises_when_not_active(sqs_connection: Server
         sub = cast(
             SqsSubscriber,
             await server.subscribe(
+                concurrency=Concurrency(),
+                channel_concurrency={},
                 channels_to_callbacks={
                     "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
@@ -648,6 +660,8 @@ async def test_sqs_subscriber_handles_receive_exception(sqs_connection: ServerT)
         sub = cast(
             SqsSubscriber,
             await server.subscribe(
+                concurrency=Concurrency(),
+                channel_concurrency={},
                 channels_to_callbacks={
                     "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
@@ -672,6 +686,8 @@ async def test_sqs_subscriber_handles_consume_cancellation(sqs_connection: Serve
         sub = cast(
             SqsSubscriber,
             await server.subscribe(
+                concurrency=Concurrency(),
+                channel_concurrency={},
                 channels_to_callbacks={
                     "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
@@ -691,6 +707,8 @@ async def test_sqs_subscriber_handles_pause_cancellation(sqs_connection: ServerT
         sub = cast(
             SqsSubscriber,
             await server.subscribe(
+                concurrency=Concurrency(),
+                channel_concurrency={},
                 channels_to_callbacks={
                     "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
@@ -707,6 +725,8 @@ async def test_sqs_subscriber_raises_if_client_is_none(sqs_connection: ServerT) 
     server = cast(SqsServer, sqs_connection)
     async with server.connection():
         sub = await server.subscribe(
+            concurrency=Concurrency(),
+            channel_concurrency={},
             channels_to_callbacks={
                 "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
             },
@@ -745,7 +765,7 @@ async def test_sqs_subscriber_handles_process_message_exception(sqs_connection: 
         sub = MockSubscriberWithProcessException(
             server,
             {"other_channel": lambda _: asyncio.sleep(0)},
-            concurrency_limit=1,
+            channel_concurrency={"other_channel": Concurrency(messages=1)},
         )
         try:
             await sub._consume_channel("other_channel")
@@ -758,12 +778,12 @@ async def test_sqs_subscriber_handles_message_instantiation_error(sqs_connection
     server = cast(SqsServer, sqs_connection)
 
     async with server.connection():
-        sub = MockSubscriberWithMessageException(
+        sub = SqsSubscriber(
             server,
             {"test_subscriber_state_channel": lambda _: asyncio.sleep(0)},
-            concurrency_limit=1,
+            channel_concurrency={"test_subscriber_state_channel": Concurrency(messages=1)},
         )
-        await sub._process_message("default", "http://queue", {}, lambda _: asyncio.sleep(0))  # pyrefly: ignore[implicit-any-lambda]
+        assert sub._make_message("default", "http://queue", {"Body": None}) is None
         await sub.close()
 
 
@@ -828,6 +848,8 @@ async def test_subscriber_process_message_reject_exception(
         raise asyncio.CancelledError()
 
     class BadMessage:
+        channel = "channel"
+
         @property
         def is_acted_on(self) -> bool:
             return False
@@ -838,7 +860,7 @@ async def test_subscriber_process_message_reject_exception(
     mock_received_message.return_value = BadMessage()
 
     with contextlib.suppress(asyncio.CancelledError):
-        await subscriber._process_message("channel", "url", {}, failing_callback)
+        await subscriber._process_message(mock_received_message.return_value, failing_callback)  # pyrefly: ignore[bad-argument-type]
 
 
 @patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
@@ -855,6 +877,8 @@ async def test_subscriber_process_message_nack_exception_sync(
         pass
 
     class BadMessage:
+        channel = "channel"
+
         @property
         def is_acted_on(self) -> bool:
             return False
@@ -863,7 +887,7 @@ async def test_subscriber_process_message_nack_exception_sync(
             raise Exception("test exception")
 
     mock_received_message.return_value = BadMessage()
-    await subscriber._process_message("channel", "url", {}, failing_callback)
+    await subscriber._process_message(mock_received_message.return_value, failing_callback)  # pyrefly: ignore[bad-argument-type]
 
 
 @patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
@@ -871,27 +895,24 @@ async def test_subscriber_process_message_nack_exception_sync(
     "repid.connections.sqs.subscriber.SqsReceivedMessage",
     new=MagicMock(side_effect=Exception("creation error")),
 )
-async def test_subscriber_process_message_creation_exception() -> None:
-    server = make_mock_server()
-
-    subscriber = SqsSubscriber(server, {})
-    subscriber._active = True
-
-    async def failing_callback(msg: Any) -> None:
-        pass
-
-    await subscriber._process_message("channel", "url", {}, failing_callback)
+async def test_subscriber_make_message_handles_creation_exception() -> None:
+    subscriber = SqsSubscriber(make_mock_server(), {})
+    assert subscriber._make_message("channel", "url", {}) is None
 
 
 @patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
 @patch("repid.connections.sqs.subscriber.SqsReceivedMessage")
-async def test_subscriber_consume_channel_cancelled_unprocessed_exception(
+async def test_subscriber_consume_channel_shutdown_unprocessed_exception(
     mock_received_message: MagicMock,
 ) -> None:
-    client = AsyncMock(receive_message=AsyncMock(return_value={"Messages": [{"Body": "hi"}]}))
+    client = AsyncMock()
     server = make_mock_server(client=client, queue_url="url", receive_wait_time_seconds=0)
 
-    subscriber = SqsSubscriber(server, {"test": AsyncMock()}, concurrency_limit=1)
+    subscriber = SqsSubscriber(
+        server,
+        {"test": AsyncMock()},
+        channel_concurrency={"test": Concurrency(messages=1)},
+    )
     subscriber._active = True
 
     class RejectingMessage:
@@ -902,11 +923,13 @@ async def test_subscriber_consume_channel_cancelled_unprocessed_exception(
             raise Exception("Reject failed")
 
     mock_received_message.side_effect = RejectingMessage
-    subscriber._semaphore = AsyncMock()
-    subscriber._semaphore.acquire = AsyncMock(side_effect=asyncio.CancelledError())
 
-    with contextlib.suppress(asyncio.CancelledError):
-        await subscriber._consume_channel("test")
+    async def receive(**_: Any) -> dict[str, Any]:
+        subscriber._shutdown_event.set()
+        return {"Messages": [{"Body": "hi"}]}
+
+    client.receive_message.side_effect = receive
+    await subscriber._consume_channel("test")
 
 
 @patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
@@ -914,17 +937,23 @@ async def test_subscriber_consume_channel_cancelled_unprocessed_exception(
     "repid.connections.sqs.subscriber.SqsReceivedMessage",
     new=MagicMock(side_effect=Exception("Creation failed")),
 )
-async def test_subscriber_consume_channel_cancelled_unprocessed_creation_exception() -> None:
-    client = AsyncMock(receive_message=AsyncMock(return_value={"Messages": [{"Body": "hi"}]}))
+async def test_subscriber_consume_channel_shutdown_unprocessed_creation_exception() -> None:
+    client = AsyncMock()
     server = make_mock_server(client=client, queue_url="url", receive_wait_time_seconds=0)
 
-    subscriber = SqsSubscriber(server, {"test": AsyncMock()}, concurrency_limit=1)
+    subscriber = SqsSubscriber(
+        server,
+        {"test": AsyncMock()},
+        channel_concurrency={"test": Concurrency(messages=1)},
+    )
     subscriber._active = True
-    subscriber._semaphore = AsyncMock()
-    subscriber._semaphore.acquire = AsyncMock(side_effect=asyncio.CancelledError())
 
-    with contextlib.suppress(asyncio.CancelledError):
-        await subscriber._consume_channel("test")
+    async def receive(**_: Any) -> dict[str, Any]:
+        subscriber._shutdown_event.set()
+        return {"Messages": [{"Body": "hi"}]}
+
+    client.receive_message.side_effect = receive
+    await subscriber._consume_channel("test")
 
 
 @patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
@@ -941,6 +970,8 @@ async def test_subscriber_process_message_nack_cancelled_sync(
         raise Exception("callback exception")
 
     class BadMessage:
+        channel = "channel"
+
         @property
         def is_acted_on(self) -> bool:
             return False
@@ -949,7 +980,8 @@ async def test_subscriber_process_message_nack_cancelled_sync(
             raise asyncio.CancelledError()
 
     mock_received_message.return_value = BadMessage()
-    await subscriber._process_message("channel", "url", {}, failing_callback)
+    with pytest.raises(asyncio.CancelledError):
+        await subscriber._process_message(mock_received_message.return_value, failing_callback)  # pyrefly: ignore[bad-argument-type]
 
 
 @patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
@@ -966,6 +998,8 @@ async def test_subscriber_process_message_nack_error_sync(
         raise Exception("callback exception")
 
     class BadMessage:
+        channel = "channel"
+
         @property
         def is_acted_on(self) -> bool:
             return False
@@ -974,7 +1008,7 @@ async def test_subscriber_process_message_nack_error_sync(
             raise Exception("nack exception")
 
     mock_received_message.return_value = BadMessage()
-    await subscriber._process_message("channel", "url", {}, failing_callback)
+    await subscriber._process_message(mock_received_message.return_value, failing_callback)  # pyrefly: ignore[bad-argument-type]
 
 
 async def test_subscriber_pause_sets_pause_signals() -> None:
@@ -984,7 +1018,7 @@ async def test_subscriber_pause_sets_pause_signals() -> None:
     await subscriber.pause()
 
     assert subscriber._paused_event.is_set() is False
-    assert subscriber._pause_requested_event.is_set() is True
+    assert subscriber._pause_signal.done() is True
 
 
 @patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
@@ -1025,57 +1059,11 @@ async def test_subscriber_consume_channel_receive_preempted_by_pause() -> None:
         await asyncio.sleep(0.01)
         subscriber._active = False
         subscriber._paused_event.clear()
-        subscriber._pause_requested_event.set()
+        subscriber._pause_signal.set_result(None)
 
     pauser = asyncio.create_task(request_pause())
     await subscriber._consume_channel("test")
     await pauser
-
-
-@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
-async def test_subscriber_consume_channel_semaphore_preempted_by_pause() -> None:
-    client = AsyncMock(receive_message=AsyncMock(return_value={"Messages": [{"Body": "hi"}]}))
-    server = make_mock_server(client=client, queue_url="url", receive_wait_time_seconds=0)
-
-    subscriber = SqsSubscriber(server, {"test": AsyncMock()}, concurrency_limit=1)
-
-    subscriber._active = True
-    subscriber._semaphore = asyncio.Semaphore(0)
-    subscriber._paused_event.set()
-
-    async def request_pause() -> None:
-        await asyncio.sleep(0.01)
-        subscriber._active = False
-        subscriber._paused_event.clear()
-        subscriber._pause_requested_event.set()
-
-    pauser = asyncio.create_task(request_pause())
-    await subscriber._consume_channel("test")
-    await pauser
-
-
-@patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
-async def test_subscriber_consume_channel_breaks_on_semaphore_wait_when_paused() -> None:
-    server_client = AsyncMock()
-    server = make_mock_server(client=server_client, queue_url="url", receive_wait_time_seconds=0)
-
-    subscriber = SqsSubscriber(server, {"test": AsyncMock()}, concurrency_limit=1)
-
-    async def receive_message(*args: Any, **kwargs: Any) -> dict[str, list[dict[str, str]]]:  # noqa: ARG001
-        return {"Messages": [{"Body": "hi"}]}
-
-    server_client.receive_message = AsyncMock(side_effect=receive_message)
-
-    subscriber._active = True
-
-    class FlipSemaphore:
-        def __bool__(self) -> bool:
-            subscriber._paused_event.clear()
-            subscriber._active = False
-            return True
-
-    subscriber._semaphore = FlipSemaphore()  # pyrefly: ignore[bad-assignment]
-    await subscriber._consume_channel("test")
 
 
 @patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
@@ -1091,19 +1079,19 @@ async def test_subscriber_resume_returns_if_shutdown() -> None:
 
 
 @patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
-async def test_subscriber_resume_clears_done_pause_wait_task() -> None:
+async def test_subscriber_resume_replaces_completed_pause_signal() -> None:
     server = make_mock_server()
 
     subscriber = SqsSubscriber(server, {})
 
-    done_task: asyncio.Task[bool] = asyncio.create_task(asyncio.sleep(0, result=True))
-    await done_task
-    subscriber._pause_wait_task = done_task
+    previous_signal = subscriber._pause_signal
+    previous_signal.set_result(None)
     subscriber._active = True
 
     await subscriber.resume()
 
-    assert subscriber._pause_wait_task is None
+    assert subscriber._pause_signal is not previous_signal
+    assert not subscriber._pause_signal.done()
 
 
 @patch("repid.connections.sqs.subscriber.SqsSubscriber._start_consuming", new=MagicMock())
@@ -1134,7 +1122,11 @@ async def test_subscriber_consume_channel_breaks_message_loop_on_shutdown() -> N
     server_client = AsyncMock()
     server = make_mock_server(client=server_client, queue_url="url", receive_wait_time_seconds=0)
 
-    subscriber = SqsSubscriber(server, {"test": AsyncMock()}, concurrency_limit=1)
+    subscriber = SqsSubscriber(
+        server,
+        {"test": AsyncMock()},
+        channel_concurrency={"test": Concurrency(messages=1)},
+    )
 
     async def receive_message(*args: Any, **kwargs: Any) -> dict[str, list[dict[str, str]]]:  # noqa: ARG001
         subscriber._shutdown_event.set()
@@ -1165,7 +1157,11 @@ async def test_subscriber_consume_channel_uses_server_batch_size() -> None:
         receive_wait_time_seconds=0,
         batch_size=3,
     )
-    subscriber = SqsSubscriber(server, {"test": AsyncMock()}, concurrency_limit=1)
+    subscriber = SqsSubscriber(
+        server,
+        {"test": AsyncMock()},
+        channel_concurrency={"test": Concurrency(messages=5)},
+    )
     subscriber._active = True
 
     async def receive_message(**_kwargs: Any) -> dict[str, list[dict[str, str]]]:
@@ -1317,9 +1313,10 @@ async def test_sqs_process_message_cancelled() -> None:
         raise asyncio.CancelledError()
 
     with pytest.raises(asyncio.CancelledError):
-        await subscriber._process_message("test", "test_url", {}, failing_callback)
-
-    await asyncio.sleep(0.01)
+        await subscriber._process_message(
+            SqsReceivedMessage(mock_server, "test", "test_url", {}),
+            failing_callback,
+        )
 
 
 async def test_sqs_process_message_exception_nack_cancelled() -> None:
@@ -1334,8 +1331,11 @@ async def test_sqs_process_message_exception_nack_cancelled() -> None:
         setattr(sqs_msg, "nack", AsyncMock(side_effect=asyncio.CancelledError()))  # noqa: B010
         raise Exception("test")
 
-    # Will not raise, just log
-    await subscriber._process_message("test", "test_url", {}, failing_callback)
+    with pytest.raises(asyncio.CancelledError):
+        await subscriber._process_message(
+            SqsReceivedMessage(mock_server, "test", "test_url", {}),
+            failing_callback,
+        )
 
 
 async def test_sqs_reject_unprocessed_ignore_exception() -> None:
@@ -1343,15 +1343,11 @@ async def test_sqs_reject_unprocessed_ignore_exception() -> None:
     mock_server._visibility_timeout = 30
     subscriber = SqsSubscriber(mock_server, {})
 
-    # It tries to initialize a SqsReceivedMessage internally
-    # So we need to patch SqsReceivedMessage or provide correct msg
-    # let's provide msg dict
     await subscriber._reject_unprocessed(
         "test",
         "test_url",
         [{"MessageId": "123", "ReceiptHandle": "abc"}],
     )
-    await asyncio.sleep(0.01)  # let task resolve
 
 
 async def test_sqs_message_no_receipt_handle() -> None:

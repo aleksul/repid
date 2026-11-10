@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from typing import Any, ClassVar, cast
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from repid import Channel, Concurrency, Repid, Router
 from repid._utils._typing import override
 from repid.connections.abc import MessageAction, SentMessageT
 from repid.connections.amqp._uamqp.message import Properties
@@ -14,7 +15,7 @@ from repid.connections.amqp._uamqp.outcomes import Accepted, Rejected, Released
 from repid.connections.amqp._uamqp.performatives import DispositionFrame
 from repid.connections.amqp.helpers import AmqpReceivedMessage
 from repid.connections.amqp.message_broker import AmqpServer
-from repid.connections.amqp.protocol import ManagedSession
+from repid.connections.amqp.protocol import ManagedSession, ReceiverLink
 from repid.connections.amqp.protocol.connection import (
     AmqpConnection,
     ConnectionConfig,
@@ -74,7 +75,11 @@ async def test_message_broker_not_connected_subscribe() -> None:
     broker = AmqpServer("amqp://localhost:5672")
     broker._managed_session = None
     with pytest.raises(ConnectionError, match="Not connected"):
-        await broker.subscribe(channels_to_callbacks={"test": lambda _x: asyncio.sleep(0)})
+        await broker.subscribe(
+            concurrency=Concurrency(),
+            channel_concurrency={},
+            channels_to_callbacks={"test": lambda _x: asyncio.sleep(0)},
+        )
 
 
 async def test_amqp_server_publish_subscribe_and_disconnect(monkeypatch: Any) -> None:
@@ -141,7 +146,11 @@ async def test_amqp_server_publish_subscribe_and_disconnect(monkeypatch: Any) ->
     assert sender_calls[0]["address"].endswith("/queues/queue")
     assert sender_calls[1]["address"] == "/direct"
 
-    await server.subscribe(channels_to_callbacks={"queue": lambda _msg: asyncio.sleep(0)})
+    await server.subscribe(
+        concurrency=Concurrency(),
+        channel_concurrency={},
+        channels_to_callbacks={"queue": lambda _msg: asyncio.sleep(0)},
+    )
     await server.disconnect()
     assert server.is_connected is False
 
@@ -152,7 +161,7 @@ async def test_amqp_subscriber_create_pause_resume_and_close() -> None:
 
     class DummyReceiverPool:
         def __init__(self) -> None:
-            self.subscriptions: list[tuple[str, Any, str]] = []
+            self.subscriptions: list[tuple[str, Any, str, str]] = []
             self.unsubscribed: list[str] = []
 
         async def subscribe(
@@ -161,8 +170,10 @@ async def test_amqp_subscriber_create_pause_resume_and_close() -> None:
             callback: Any,
             name: str,
             prefetch: int = 100,  # noqa: ARG002
+            *,
+            subscription_key: str,
         ) -> FakeReceiverLink:
-            self.subscriptions.append((address, callback, name))
+            self.subscriptions.append((address, callback, name, subscription_key))
             return receiver_links[0]
 
         async def unsubscribe(self, address: str) -> None:
@@ -184,27 +195,33 @@ async def test_amqp_subscriber_create_pause_resume_and_close() -> None:
     subscriber = await AmqpSubscriber.create(
         managed_session=cast(ManagedSession, managed),
         queues_to_callbacks={"queue": callback},
+        prefetch_by_queue={"queue": 100},
         naming_strategy=lambda q: f"/queues/{q}",
         publish_fn=lambda **_kwargs: asyncio.sleep(0),  # pyrefly: ignore[implicit-any-lambda]
     )
 
-    address, wrapped_callback, _name = managed.receiver_pool.subscriptions[0]
+    address, wrapped_callback, _name, key = managed.receiver_pool.subscriptions[0]
     await subscriber.pause()
 
-    task = asyncio.create_task(
-        wrapped_callback(b"data", None, 1, b"tag", receiver_links[0]),
-    )
+    await wrapped_callback(b"data", None, 1, b"tag", receiver_links[0])
     await asyncio.sleep(0)
     assert received == []
 
     await subscriber.resume()
-    await task
+    await subscriber.pause()
+    await asyncio.sleep(0)
+    assert received == []
+
+    await subscriber.resume()
+    await asyncio.gather(*subscriber._submission_tasks)
 
     assert received == [b"data"]
     assert address == "/queues/queue"
 
     await subscriber.close()
-    assert managed.receiver_pool.unsubscribed == ["/queues/queue"]
+    await subscriber.resume()
+    assert not subscriber.is_active
+    assert managed.receiver_pool.unsubscribed == [key]
 
 
 async def test_amqp_received_message_headers_and_ack_nack_reply() -> None:
@@ -667,27 +684,21 @@ async def test_subscriber_pause_resume() -> None:
     connection = FakeManagedConnection(is_connected=True, session_factory=session_factory)
     managed = ManagedSession(cast(AmqpConnection, connection))
 
-    paused_event = asyncio.Event()
-    paused_event.set()
-
-    subscriber = AmqpSubscriber(
+    subscriber = await AmqpSubscriber.create(
         managed_session=managed,
-        links=[cast(Any, receiver_link)],
         queues_to_callbacks={"test": lambda _x: asyncio.sleep(0)},
-        concurrency_limit=None,
-        paused_event=paused_event,
         naming_strategy=lambda x: x,
+        publish_fn=AsyncMock(),
+        prefetch_by_queue={"test": 1},
     )
 
     assert subscriber.is_active is True
 
     await subscriber.pause()
     assert subscriber.is_active is False
-    assert not paused_event.is_set()
 
     await subscriber.resume()
     assert subscriber.is_active is True
-    assert paused_event.is_set()
 
     await subscriber.close()
 
@@ -795,17 +806,7 @@ async def test_subscriber_task_property() -> None:
     connection = FakeManagedConnection(is_connected=True, session_factory=session_factory)
     managed = ManagedSession(cast(AmqpConnection, connection))
 
-    paused_event = asyncio.Event()
-    paused_event.set()
-
-    subscriber = AmqpSubscriber(
-        managed_session=managed,
-        links=[],
-        queues_to_callbacks={},
-        concurrency_limit=None,
-        paused_event=paused_event,
-        naming_strategy=lambda x: x,
-    )
+    subscriber = AmqpSubscriber(managed)
 
     # Test task property
     assert subscriber.task is not None
@@ -1174,3 +1175,321 @@ async def test_amqp_received_message_reject_settle_failure_resets_action() -> No
 
     assert msg.action is None
     assert not msg.is_acted_on
+
+
+async def test_amqp_received_message_canceled_ack_waits_for_disposition_and_credit() -> None:
+    settling = asyncio.Event()
+    finish_settlement = asyncio.Event()
+
+    async def settle(_delivery_id: int, _state: ReceiverSettlementState) -> None:
+        settling.set()
+        await finish_settlement.wait()
+
+    link = MagicMock(spec=ReceiverLink)
+    link.settle_delivery = AsyncMock(side_effect=settle)
+    msg = AmqpReceivedMessage(
+        payload=b"data",
+        headers=None,
+        link=link,
+        delivery_id=1,
+        delivery_tag=b"one",
+        channel_name="a",
+        managed_session=MagicMock(spec=ManagedSession),
+        publish_fn=AsyncMock(),
+    )
+    ack = asyncio.create_task(msg.ack())
+    await asyncio.wait_for(settling.wait(), 1)
+    ack.cancel()
+    await asyncio.sleep(0)
+    assert not ack.done()
+    await msg.reject()
+
+    finish_settlement.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(ack, 1)
+    link.settle_delivery.assert_awaited_once_with(1, Accepted())
+
+
+async def test_amqp_cancelled_settlement_consumes_a_later_rpc_failure() -> None:
+    started = asyncio.Event()
+    finish = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    errors: list[dict[str, Any]] = []
+
+    async def fail_settlement(_delivery_id: int, _state: ReceiverSettlementState) -> None:
+        started.set()
+        await finish.wait()
+        raise ConnectionError("disposition failed")
+
+    link = MagicMock(spec=ReceiverLink)
+    link.settle_delivery = AsyncMock(side_effect=fail_settlement)
+    message = AmqpReceivedMessage(
+        payload=b"data",
+        headers=None,
+        link=link,
+        delivery_id=1,
+        delivery_tag=b"one",
+        channel_name="a",
+        managed_session=MagicMock(spec=ManagedSession),
+        publish_fn=AsyncMock(),
+    )
+    loop.set_exception_handler(lambda _, context: errors.append(context))
+    try:
+        settlement = asyncio.create_task(message.ack())
+        await started.wait()
+        settlement.cancel()
+        await asyncio.sleep(0)
+        finish.set()
+        with pytest.raises(asyncio.CancelledError):
+            await settlement
+        await asyncio.sleep(0)
+        assert message.action is None
+        assert not errors
+    finally:
+        finish.set()
+        loop.set_exception_handler(previous_handler)
+
+
+async def test_admission_does_not_block_protocol_and_close_drains_submissions() -> None:
+    link = MagicMock(spec=ReceiverLink)
+    link.settle_delivery = AsyncMock()
+    managed = MagicMock(spec=ManagedSession)
+    managed.receiver_pool = MagicMock(
+        subscribe=AsyncMock(return_value=link),
+        unsubscribe=AsyncMock(),
+    )
+    started = asyncio.Event()
+
+    async def blocked(_message: Any) -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    subscriber = await AmqpSubscriber.create(
+        managed_session=managed,
+        queues_to_callbacks={"a": blocked},
+        prefetch_by_queue={"a": 2},
+        naming_strategy=lambda channel: channel,
+        publish_fn=AsyncMock(),
+    )
+    receive = managed.receiver_pool.subscribe.call_args.args[1]
+    await receive(b"one", None, 1, b"one", link)
+    await asyncio.wait_for(started.wait(), 1)
+    await receive(b"two", None, 2, b"two", link)
+    assert len(subscriber._submission_tasks) == 2
+    await subscriber.close()
+    assert not subscriber._submission_tasks
+    link.settle_delivery.assert_awaited_once_with(1, Released())
+    managed.receiver_pool.unsubscribe.assert_awaited_once_with(
+        managed.receiver_pool.subscribe.call_args.kwargs["subscription_key"],
+    )
+
+
+@pytest.mark.parametrize("settlement_error", [None, RuntimeError("settlement failed")])
+async def test_amqp_failed_callback_requeues_delivery_before_returning_credit(
+    settlement_error: RuntimeError | None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    link = MagicMock(spec=ReceiverLink)
+    link.settle_delivery = AsyncMock(side_effect=settlement_error)
+    managed = MagicMock(spec=ManagedSession)
+    managed.receiver_pool = MagicMock(
+        subscribe=AsyncMock(return_value=link),
+        unsubscribe=AsyncMock(),
+    )
+    subscriber = await AmqpSubscriber.create(
+        managed_session=managed,
+        queues_to_callbacks={"a": AsyncMock(side_effect=RuntimeError("callback failed"))},
+        prefetch_by_queue={"a": 1},
+        naming_strategy=lambda channel: channel,
+        publish_fn=AsyncMock(),
+    )
+    try:
+        receive = managed.receiver_pool.subscribe.call_args.args[1]
+        await receive(b"one", None, 1, b"one", link)
+        await asyncio.gather(*subscriber._submission_tasks, return_exceptions=True)
+        link.settle_delivery.assert_awaited_once_with(1, Released())
+        link.release_delivery_credit.assert_not_awaited()
+        assert ("subscriber.callback.rejection_error" in caplog.messages) == (
+            settlement_error is not None
+        )
+    finally:
+        await subscriber.close()
+
+
+async def test_amqp_subscriber_startup_failure_detaches_earlier_links() -> None:
+    managed = MagicMock(spec=ManagedSession)
+    link = MagicMock(spec=ReceiverLink)
+    callback = AsyncMock()
+    subscribed_keys: list[str] = []
+
+    async def subscribe(
+        address: str,
+        receive: Any,
+        _name: str,
+        *,
+        prefetch: int,
+        subscription_key: str,
+    ) -> ReceiverLink:
+        assert prefetch == 1
+        if address == "b":
+            await asyncio.sleep(0)
+            raise RuntimeError("failed to subscribe")
+        subscribed_keys.append(subscription_key)
+        await receive(b"one", None, 1, b"one", link)
+        return link
+
+    managed.receiver_pool = MagicMock(
+        subscribe=AsyncMock(side_effect=subscribe),
+        unsubscribe=AsyncMock(),
+    )
+    with pytest.raises(RuntimeError, match="failed to subscribe"):
+        await AmqpSubscriber.create(
+            managed_session=managed,
+            queues_to_callbacks={"a": callback, "b": callback},
+            prefetch_by_queue={"a": 1, "b": 1},
+            naming_strategy=lambda channel: channel,
+            publish_fn=AsyncMock(),
+        )
+
+    callback.assert_not_awaited()
+    managed.receiver_pool.unsubscribe.assert_awaited_once_with(subscribed_keys[0])
+
+
+async def test_amqp_subscriber_can_close_from_its_own_callback() -> None:
+    session = FakeSession(connection=FakeConnection(), channel=1)
+    link = ReceiverLink(cast(Any, session), "receiver", "a", 0, lambda *_: None)
+    managed = MagicMock(spec=ManagedSession)
+
+    async def unsubscribe(_key: str) -> None:
+        await link.detach()
+
+    managed.receiver_pool = MagicMock(
+        subscribe=AsyncMock(return_value=link),
+        unsubscribe=AsyncMock(side_effect=unsubscribe),
+    )
+    closed = asyncio.Event()
+
+    async def callback(_msg: Any) -> None:
+        await subscriber.close()
+        closed.set()
+
+    subscriber = await AmqpSubscriber.create(
+        managed_session=managed,
+        queues_to_callbacks={"a": callback},
+        prefetch_by_queue={"a": 1},
+        naming_strategy=lambda channel: channel,
+        publish_fn=AsyncMock(),
+    )
+    receive = managed.receiver_pool.subscribe.call_args.args[1]
+    await receive(b"one", None, 1, b"one", link)
+    await asyncio.wait_for(closed.wait(), 1)
+    assert subscriber.task.done()
+
+
+async def test_close_stops_intake_before_cancellation_returns_credit() -> None:
+    link = MagicMock(spec=ReceiverLink)
+    managed = MagicMock(spec=ManagedSession)
+    subscribed = True
+    returned_credit = asyncio.Event()
+    replacement_delivered = asyncio.Event()
+
+    async def unsubscribe(_key: str) -> None:
+        nonlocal subscribed
+        subscribed = False
+
+    managed.receiver_pool = MagicMock(
+        subscribe=AsyncMock(return_value=link),
+        unsubscribe=AsyncMock(side_effect=unsubscribe),
+    )
+    subscriber = await AmqpSubscriber.create(
+        managed_session=managed,
+        queues_to_callbacks={"a": AsyncMock()},
+        prefetch_by_queue={"a": 100},
+        naming_strategy=lambda channel: channel,
+        publish_fn=AsyncMock(),
+    )
+    receive = managed.receiver_pool.subscribe.call_args.args[1]
+
+    async def settle(_delivery_id: int, _state: ReceiverSettlementState) -> None:
+        returned_credit.set()
+        if subscribed:
+            replacement_delivered.set()
+            await receive(b"replacement", None, 2, b"two", link)
+
+    link.settle_delivery = AsyncMock(side_effect=settle)
+    await subscriber.pause()
+    await receive(b"original", None, 1, b"one", link)
+    await asyncio.sleep(0)
+    closing = asyncio.create_task(subscriber.close())
+    try:
+        await asyncio.wait_for(asyncio.shield(closing), timeout=0.2)
+        assert returned_credit.is_set()
+        assert not replacement_delivered.is_set()
+        assert not subscriber._submission_tasks
+        managed.receiver_pool.unsubscribe.assert_awaited_once_with(
+            managed.receiver_pool.subscribe.call_args.kwargs["subscription_key"],
+        )
+    finally:
+        if not closing.done():
+            await subscriber.resume()
+            await asyncio.wait_for(closing, timeout=1)
+
+
+@pytest.mark.parametrize(
+    ("settings", "expected"),
+    [({"concurrency": Concurrency(messages=4)}, [4, 4]), ({}, [100, 100])],
+)
+async def test_subscribe_sets_amqp_prefetch(settings: dict[str, Any], expected: list[int]) -> None:
+    server = AmqpServer("amqp://localhost")
+    server._connection = MagicMock(spec=AmqpConnection, is_connected=True)
+    managed = MagicMock(spec=ManagedSession)
+    managed.receiver_pool = MagicMock(subscribe=AsyncMock(), unsubscribe=AsyncMock())
+    server._managed_session = managed
+
+    subscriber = await server.subscribe(
+        channels_to_callbacks={"a": AsyncMock(), "b": AsyncMock()},
+        **{"concurrency": Concurrency(), "channel_concurrency": {}, **settings},  # pyrefly: ignore[bad-argument-type]
+    )
+    try:
+        assert [
+            call.kwargs["prefetch"] for call in managed.receiver_pool.subscribe.await_args_list
+        ] == expected
+    finally:
+        await subscriber.close()
+
+
+async def test_worker_propagates_channel_prefetch_to_amqp() -> None:
+    server = AmqpServer("amqp://localhost")
+    server._connection = MagicMock(spec=AmqpConnection, is_connected=True)
+    managed = MagicMock(spec=ManagedSession)
+    managed.receiver_pool = MagicMock(subscribe=AsyncMock(), unsubscribe=AsyncMock())
+    server._managed_session = managed
+    app = Repid()
+    app.servers.register_server("default", server, is_default=True)
+    router = Router()
+
+    @router.actor(channel=Channel(address="images", concurrency=Concurrency(messages=3)))
+    async def image() -> None:
+        pass
+
+    @router.actor(channel=Channel(address="emails", concurrency=Concurrency(messages=2000)))
+    async def email() -> None:
+        pass
+
+    app.include_router(router)
+    worker = asyncio.create_task(
+        app.run_worker(concurrency=Concurrency(messages=1000), register_signals=[]),
+    )
+    try:
+        async with asyncio.timeout(1):
+            while managed.receiver_pool.subscribe.await_count < 2:
+                await asyncio.sleep(0)
+        assert {
+            call.args[2]: call.kwargs["prefetch"]
+            for call in managed.receiver_pool.subscribe.await_args_list
+        } == {"receiver-images": 3, "receiver-emails": 1000}
+    finally:
+        worker.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await worker

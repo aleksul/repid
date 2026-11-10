@@ -534,7 +534,15 @@ async def test_session_begin_uses_configured_incoming_window() -> None:
     assert begin.incoming_window == 12345
 
 
-async def test_session_receiver_prefetch_raises_incoming_window(monkeypatch: Any) -> None:
+@pytest.mark.parametrize(
+    ("prefetches", "incoming_window"),
+    [([10], 10), ([2**31, 2**31], 2**32 - 1)],
+)
+async def test_session_receiver_prefetch_raises_incoming_window(
+    monkeypatch: Any,
+    prefetches: list[int],
+    incoming_window: int,
+) -> None:
     @dataclass(slots=True)
     class MockReceiverLink:
         session: Session
@@ -572,14 +580,34 @@ async def test_session_receiver_prefetch_raises_incoming_window(monkeypatch: Any
 
     monkeypatch.setattr(links, "ReceiverLink", fake_receiver_link)
 
-    await session.create_receiver("test-address", lambda *_args: None, prefetch=10)
+    for index, prefetch in enumerate(prefetches):
+        await session.create_receiver(f"queue-{index}", lambda *_args: None, prefetch=prefetch)
 
-    assert session._incoming_window == 10
-    assert len(connection.sent) == 1
-    flow = connection.sent[0][1]
+    assert session._incoming_window == incoming_window
+    flow = connection.sent[-1][1]
     assert isinstance(flow, FlowFrame)
     assert flow.handle is None
-    assert flow.incoming_window == 10
+    assert flow.incoming_window == incoming_window
+
+
+@pytest.mark.parametrize("detach_error", [None, RuntimeError("detach failed")])
+async def test_session_receiver_startup_timeout_removes_link(
+    detach_error: RuntimeError | None,
+) -> None:
+    connection = FakeConnection()
+    session = Session(cast(AmqpConnection, connection), channel=1)
+    await session.begin()
+    session._state_machine.transition_sync("recv_begin")
+
+    with (
+        patch.object(ReceiverLink, "wait_ready", side_effect=TimeoutError),
+        patch.object(ReceiverLink, "detach", side_effect=detach_error),
+        pytest.raises(TimeoutError),
+    ):
+        await session.create_receiver("queue", lambda *_args: None)
+
+    assert not session._links
+    assert not session._links_by_handle
 
 
 async def test_session_handle_attach_detach_flow_disposition() -> None:

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, TypedDict
 from repid.data.message import MessageData
 
 if TYPE_CHECKING:
+    from repid._concurrency import Concurrency
     from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
     from repid.data import ExternalDocs, Tag
@@ -173,5 +174,6 @@ class ServerT(Protocol):
         self,
         *,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        concurrency: Concurrency,
+        channel_concurrency: dict[str, Concurrency],
     ) -> SubscriberT: ...

@@ -8,6 +8,10 @@ from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
 import nats
+from nats.errors import NotJSMessageError
+from nats.js.api import ConsumerConfig, ConsumerInfo
+from nats.js.errors import APIError, NotFoundError
+from nats.js.errors import Error as JetStreamError
 
 from repid.connections.abc import (
     CapabilitiesT,
@@ -24,11 +28,47 @@ if TYPE_CHECKING:
     from nats.aio.subscription import Subscription
     from nats.js.client import JetStreamContext
 
+    from repid._concurrency import Concurrency
     from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
     from repid.data import ExternalDocs, Tag
 
 logger = logging.getLogger("repid.connections.nats")
+
+# JetStream reports these if another worker creates or binds a durable first.
+_DURABLE_CREATE_CONFLICTS = {10013, 10105, 10148}
+
+
+def _delivery_ack_wait(config: ConsumerConfig, msg: Msg) -> float | None:
+    if config.backoff:
+        with suppress(NotJSMessageError):
+            retry = msg.metadata.num_delivered - 1
+            return config.backoff[min(retry, len(config.backoff) - 1)]
+    return config.ack_wait
+
+
+async def _get_push_consumer(
+    js: JetStreamContext,
+    nc: Client,
+    stream: str,
+    durable: str,
+    channel: str,
+) -> ConsumerInfo:
+    try:
+        return cast(ConsumerInfo, await js.consumer_info(stream, durable))
+    except NotFoundError:
+        config = ConsumerConfig(
+            durable_name=durable,
+            deliver_group=durable,
+            deliver_subject=nc.new_inbox(),
+            filter_subject=channel,
+        )
+        try:
+            return await js.add_consumer(stream, config=config)
+        except APIError as error:
+            if error.err_code not in _DURABLE_CREATE_CONFLICTS:
+                raise
+            return cast(ConsumerInfo, await js.consumer_info(stream, durable))
 
 
 class NatsReceivedMessage(ReceivedMessageT):
@@ -213,37 +253,27 @@ class NatsSubscriber(SubscriberT):
         self,
         server: NatsServer,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
     ) -> None:
         self._server = server
         self._channels_to_callbacks = channels_to_callbacks
-        self._concurrency_limit = concurrency_limit
         self._subs: dict[str, Subscription] = {}
+        self._submissions: dict[asyncio.Task[None], NatsReceivedMessage] = {}
         self._closed = False
-        self._active = False
+        self._generation: object | None = object()
 
-        self._semaphore = (
-            asyncio.Semaphore(concurrency_limit)
-            if concurrency_limit and concurrency_limit > 0
-            else None
-        )
-
-        self._task = asyncio.create_task(self._start())
+        self._task = asyncio.create_task(self._start(self._generation))
 
     @property
     def is_active(self) -> bool:
-        return self._active
+        return self._generation is not None
 
     @property
     def task(self) -> asyncio.Task[object]:
         return self._task
 
-    async def _start(self) -> None:
-        self._active = True
+    async def _start(self, generation: object) -> None:
         try:
-            for channel, callback in self._channels_to_callbacks.items():
-                await self._subscribe_channel(channel, callback)
-
+            await self._subscribe_channels(generation)
             while not self._closed:
                 await asyncio.sleep(1)
         except asyncio.CancelledError:
@@ -251,64 +281,145 @@ class NatsSubscriber(SubscriberT):
         finally:
             await self.close()
 
+    async def _subscribe_channels(self, generation: object) -> None:
+        for channel, callback in self._channels_to_callbacks.items():
+            if self._generation is not generation:
+                return
+            try:
+                await self._subscribe_channel(channel, callback, generation)
+            except Exception:
+                if self._generation is generation:
+                    await self.pause()
+                    raise
+                return
+
     async def _subscribe_channel(
         self,
         channel: str,
         callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+        generation: object,
     ) -> None:
-        ack_wait: float | None = None
-        if self._server._js is not None:
-            with suppress(Exception):
-                consumer_info = await self._server._js.consumer_info(channel, f"{channel}_group")
-                ack_wait = consumer_info.config.ack_wait
-
-        async def message_handler(msg: Msg) -> None:
-            wrapped = NatsReceivedMessage(msg, self._server, channel, ack_wait=ack_wait)
-            if self._semaphore:
-                async with self._semaphore:
-                    try:
-                        await callback(wrapped)
-                    except Exception:
-                        logger.exception("consumer.error.unexpected", extra={"channel": channel})
-                        if not wrapped.is_acted_on:
-                            await wrapped.nack()
-            else:
-                try:
-                    await callback(wrapped)
-                except Exception:
-                    logger.exception("consumer.error.unexpected", extra={"channel": channel})
-                    if not wrapped.is_acted_on:
-                        await wrapped.nack()
-
-        if self._server._js is not None:
-            sub = await self._server._js.subscribe(
-                channel,
-                queue=f"{channel}_group",
-                durable=f"{channel}_group",
-                cb=message_handler,
-                manual_ack=True,
-            )
-            self._subs[channel] = sub
-        else:  # pragma: no cover
-            # Shouldn't happen, as we check for jetstream context before creating subscriber
+        js = self._server._js
+        nc = self._server._nc
+        if js is None or nc is None:  # pragma: no cover
             raise ConnectionError("JetStream context is not initialized. Call connect() first.")
 
-    async def pause(self) -> None:
-        if not self._active:
+        durable = f"{channel}_group"
+        stream = await js.find_stream_name_by_subject(channel)
+        info = await _get_push_consumer(js, nc, stream, durable, channel)
+
+        # Push deliveries can arrive before the bind call returns, so the
+        # configuration must already be known when installing the callback.
+        while self._generation is generation:
+            config = info.config
+            if config.deliver_group != durable or config.deliver_subject is None:
+                raise JetStreamError(
+                    f"Consumer {durable!r} does not match the expected push queue.",
+                )
+            sub = await self._bind_channel(js, channel, callback, generation, stream, info=info)
+            if self._generation is not generation:
+                await sub.unsubscribe()
+                return
+            self._subs[channel] = sub
+            if info.push_bound:
+                return
+            # A concurrent first creation can replace an unbound durable's
+            # inbox. Confirm we bound the inbox that the broker actually kept.
+            info = await js.consumer_info(stream, durable)
+            if info.config.deliver_subject == config.deliver_subject:
+                return
+            if self._subs.get(channel) is sub:
+                del self._subs[channel]
+                await sub.unsubscribe()
+
+    async def _bind_channel(
+        self,
+        js: JetStreamContext,
+        channel: str,
+        callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+        generation: object,
+        stream: str,
+        *,
+        info: ConsumerInfo,
+    ) -> Subscription:
+        async def message_handler(msg: Msg) -> None:
+            message = NatsReceivedMessage(
+                msg,
+                self._server,
+                channel,
+                ack_wait=_delivery_ack_wait(info.config, msg),
+            )
+            if self._generation is not generation:
+                await message.reject()
+                return
+            # nats-py invokes this callback serially. Admission can wait, so
+            # run it separately and let the next delivery start lease renewal.
+            task = asyncio.create_task(self._submit(callback, message, generation))
+            self._submissions[task] = message
+            task.add_done_callback(self._submission_done)
+
+        binding = asyncio.create_task(
+            js.subscribe_bind(
+                stream=stream,
+                config=info.config,
+                consumer=info.name,
+                cb=message_handler,
+                manual_ack=True,
+            ),
+        )
+        try:
+            await asyncio.wait({binding})
+            return binding.result()
+        except asyncio.CancelledError:
+            # nats-py registers the local subscription before flushing SUB.
+            # Let binding return its handle so we can unsubscribe on cancellation.
+            await asyncio.wait({binding})
+            with suppress(Exception):
+                sub = binding.result()
+                await sub.unsubscribe()
+            raise
+
+    async def _submit(
+        self,
+        callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+        message: NatsReceivedMessage,
+        generation: object,
+    ) -> None:
+        if self._generation is not generation:
+            await message.reject()
             return
-        self._active = False
-        for _channel, sub in self._subs.items():
+        try:
+            await callback(message)
+        except asyncio.CancelledError:
+            if not message.is_acted_on:
+                await message.reject()
+            raise
+        except Exception:
+            logger.exception("consumer.error.unexpected", extra={"channel": message.channel})
+            if not message.is_acted_on:
+                await message.nack()
+
+    def _submission_done(self, task: asyncio.Task[None]) -> None:
+        self._submissions.pop(task)
+        if not task.cancelled() and (error := task.exception()) is not None:
+            logger.error("consumer.error.settlement", exc_info=error)
+
+    async def pause(self) -> None:
+        if not self.is_active:
+            return
+        self._generation = None
+        subs = tuple(self._subs.values())
+        self._subs.clear()
+        for sub in subs:
             with suppress(Exception):
                 await sub.unsubscribe()
-        self._subs.clear()
         logger.debug("subscriber.pause", extra={"channel": "all"})
 
     async def resume(self) -> None:
-        if self._closed or self._active:
+        if self._closed or self.is_active:
             return
-        self._active = True
-        for channel, callback in self._channels_to_callbacks.items():
-            await self._subscribe_channel(channel, callback)
+        generation = self._generation = object()
+        await self._subscribe_channels(generation)
         logger.debug("subscriber.resume", extra={"channel": "all"})
 
     async def close(self) -> None:
@@ -316,10 +427,24 @@ class NatsSubscriber(SubscriberT):
             return
         self._closed = True
         await self.pause()
-        if not self._task.done() and asyncio.current_task() != self._task:
+        current = asyncio.current_task()
+        submissions = {
+            task: message for task, message in self._submissions.items() if task is not current
+        }
+        for task in submissions:
+            if not task.cancelling():
+                task.cancel()
+        if not self._task.done() and current is not self._task:
             self._task.cancel()
             with suppress(asyncio.CancelledError):
                 await self._task
+        if submissions:
+            await asyncio.gather(*submissions, return_exceptions=True)
+            for task, message in submissions.items():
+                if task.cancelled() and not message.is_acted_on:
+                    # A submission cancelled before its first step cannot reject itself.
+                    with suppress(Exception):
+                        await message.reject()
         logger.debug("subscriber.close", extra={"channel": "all"})
 
 
@@ -491,15 +616,16 @@ class NatsServer(ServerT):
         self,
         *,
         channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        concurrency: Concurrency,  # noqa: ARG002
+        channel_concurrency: dict[str, Concurrency],  # noqa: ARG002
     ) -> SubscriberT:
+        # The durable's acknowledgment window is shared across workers.
         if not self.is_connected or self._js is None:
             raise ConnectionError("NATS connection is not initialized. Call connect() first.")
 
         subscriber = NatsSubscriber(
             server=self,
             channels_to_callbacks=channels_to_callbacks,
-            concurrency_limit=concurrency_limit,
         )
         self._active_subscribers.add(subscriber)
         subscriber.task.add_done_callback(lambda _: self._active_subscribers.discard(subscriber))

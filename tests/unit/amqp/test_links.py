@@ -621,6 +621,40 @@ async def test_receiver_link_settle_delivery_sends_disposition_and_releases_cred
     assert receiver.link_credit == 1
 
 
+@pytest.mark.parametrize("close_mode", ["detach", "remote_detach", "invalidate"])
+async def test_receiver_link_closure_cancels_submission_and_disables_late_frames(
+    receiver: ReceiverLink,
+    close_mode: str,
+) -> None:
+    receiver._state_machine.transition_sync("send_attach")
+    receiver._state_machine.transition_sync("recv_attach")
+    receiver._credit_pending_delivery_ids.add(42)
+    receiver._link_credit = 0
+    task = asyncio.create_task(asyncio.Event().wait())
+    receiver.track_delivery_task(cast(asyncio.Task[None], task))
+    await asyncio.sleep(0)
+
+    if close_mode == "detach":
+        await receiver.detach()
+    elif close_mode == "remote_detach":
+        await receiver._handle_detach(DetachFrame(handle=receiver.handle, closed=True))
+    else:
+        receiver.invalidate()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    sent = cast(Any, receiver.session.connection).sent
+    sent.clear()
+    await receiver.settle_delivery(42, Accepted())
+    assert receiver._credit_pending_delivery_ids == set()
+    assert sent == []
+
+    late_task = asyncio.create_task(asyncio.Event().wait())
+    receiver.track_delivery_task(cast(asyncio.Task[None], late_task))
+    with pytest.raises(asyncio.CancelledError):
+        await late_task
+
+
 async def test_receiver_link_multi_frame_uses_first_transfer_delivery_metadata(
     receiver: ReceiverLink,
 ) -> None:

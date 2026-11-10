@@ -213,6 +213,8 @@ class Session:
         return delivery_id
 
     async def _ensure_incoming_window(self, minimum: int) -> None:
+        # A session may combine credits from many links. FLOW encodes this as uint.
+        minimum = min(minimum, 0xFFFFFFFF)
         if minimum <= self._incoming_window:
             return
 
@@ -555,8 +557,17 @@ class Session:
         self._links[name] = link
         self._links_by_handle[handle] = link
 
-        await link.attach()
-        await link.wait_ready()  # Wait for ATTACH response
+        try:
+            await link.attach()
+            await link.wait_ready()  # Wait for ATTACH response
+        except BaseException:
+            try:
+                await link.detach()
+            except Exception:
+                logger.exception("session.receiver.detach_error", extra={"link": name})
+            finally:
+                self._remove_link(link)
+            raise
         return link
 
     # Backward-compatible aliases

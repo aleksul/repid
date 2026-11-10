@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
-from repid._keep_alive import _keep_message_alive
+from repid._concurrency import _ConcurrencyController, _Reservation
+from repid._keep_alive import _keep_message_alive, _RenewalTiming
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from repid._concurrency import Concurrency
     from repid.connections.abc import ReceivedMessageT
     from repid.data.actor import ActorData, ActorExecutionContext
 
@@ -83,18 +89,20 @@ async def _actor_execution_with_confirmation(
     return result
 
 
+def _processing_interval(actor: ActorData, message: ReceivedMessageT) -> float | None:
+    if actor.keep_alive is False:
+        return None
+    if isinstance(actor.keep_alive, (int, float)) and not isinstance(actor.keep_alive, bool):
+        return actor.keep_alive
+    return message.keep_alive_interval
+
+
 async def _actor_run(
     actor: ActorData,
     message: ReceivedMessageT,
     actor_context: ActorExecutionContext,
 ) -> ActorResultT | Exception:
-    interval = None
-    if actor.keep_alive is not False:
-        interval = (
-            actor.keep_alive
-            if isinstance(actor.keep_alive, (int, float)) and not isinstance(actor.keep_alive, bool)
-            else message.keep_alive_interval
-        )
+    interval = _processing_interval(actor, message)
     if interval is None:
         return await _run_actor_pipeline(actor, message, actor_context)
 
@@ -139,3 +147,253 @@ async def _run_actor_pipeline(
         logger.warning("actor.ack.manual.unacknowledged", extra=logger_extra)
 
     return exception if exception is not None else result
+
+
+@dataclass(slots=True)
+class _Delivery:
+    """Hold capacity until processing or rejection finishes."""
+
+    message: ReceivedMessageT
+    reservation: _Reservation | None = None
+    started: bool = False
+    shutdown_rejection: asyncio.Task[None] | None = None
+    renewal_timing: _RenewalTiming | None = None
+
+    def release(self) -> None:
+        if self.reservation is not None:
+            self.reservation.release()
+
+    async def reject(self) -> None:
+        if not self.message.is_acted_on:
+            await self.message.reject()
+
+
+class _MessageLifecycle:
+    """Own delivery admission, processing, and drain for a single runner."""
+
+    def __init__(
+        self,
+        *,
+        actor_context: ActorExecutionContext,
+        concurrency: Concurrency,
+        channel_concurrency: Mapping[str, Concurrency] | None,
+        max_tasks: int,
+        stop_consume_event: asyncio.Event,
+        cancel_event: asyncio.Event,
+    ) -> None:
+        self._actor_context = actor_context
+        self._capacity = _ConcurrencyController(concurrency, channel_concurrency)
+        self._max_tasks = max_tasks
+        self._committed = 0
+        self.processed = 0
+        self.quota_reached = asyncio.Event()
+        self._stop_consume_event = stop_consume_event
+        self._cancel_event = cancel_event
+        self._cancel_waiter: asyncio.Task[None] | None = None
+        self._measure_payload = concurrency.payload_bytes is not None or any(
+            limits.payload_bytes is not None for limits in (channel_concurrency or {}).values()
+        )
+        self._submissions: dict[asyncio.Future[None], asyncio.Task[object] | None] = {}
+        self._processing: dict[asyncio.Task[None], _Delivery] = {}
+        self._prestart_cleanup: set[asyncio.Task[None]] = set()
+
+    @property
+    def max_tasks_hit(self) -> bool:
+        return self._committed >= self._max_tasks
+
+    @property
+    def _accepting(self) -> bool:
+        return not self.max_tasks_hit and not self._stop_consume_event.is_set()
+
+    def stop(self) -> None:
+        self._stop_consume_event.set()
+        self._capacity.close()
+
+    async def submit(
+        self,
+        actors: list[ActorData],
+        message: ReceivedMessageT,
+        unrouted: Callable[[ReceivedMessageT], Awaitable[None]],
+    ) -> None:
+        delivery = _Delivery(message)
+        try:
+            if self._accepting:
+                for actor in actors:
+                    if actor.routing_strategy(message):
+                        break
+                else:
+                    await self._track_submission(unrouted(message))
+                    return
+
+                channel = message.channel
+                size = len(message.payload) if self._measure_payload else 0
+                delivery.reservation = self._capacity.try_acquire(channel, size)
+                if delivery.reservation is None:
+                    await self._track_submission(self._wait_for_capacity(delivery, channel, size))
+
+                if delivery.reservation is not None and self._accepting:
+                    self._start_processing(actor, delivery)
+                    return
+        except asyncio.CancelledError:
+            await self._track_submission(self._reject_and_release(delivery))
+            raise
+        except BaseException:
+            await self._track_submission(self._reject_and_release(delivery, renew=False))
+            raise
+        await self._track_submission(self._reject_and_release(delivery))
+
+    async def _reject_and_release(self, delivery: _Delivery, *, renew: bool = True) -> None:
+        try:
+            message = delivery.message
+            if not message.is_acted_on:
+                interval = self._broker_interval(message) if renew else None
+                async with _keep_message_alive(
+                    message,
+                    interval,
+                    self._actor_context.server,
+                    delivery.renewal_timing,
+                ):
+                    await delivery.reject()
+        finally:
+            delivery.release()
+
+    async def _track_submission(self, operation: Awaitable[None]) -> None:
+        # The adapter can run a submission inline in a long-lived reader task.
+        # Track the completion of the individual operation for shutdown.
+        completed = asyncio.get_running_loop().create_future()
+        self._submissions[completed] = asyncio.current_task()
+        try:
+            await operation
+        finally:
+            del self._submissions[completed]
+            completed.set_result(None)
+
+    def _broker_interval(self, message: ReceivedMessageT) -> float | None:
+        if not self._actor_context.server.capabilities["supports_keep_alive"]:
+            return None
+        interval = message.keep_alive_interval
+        return interval if interval is not None and interval > 0 else None
+
+    async def _wait_for_capacity(self, delivery: _Delivery, channel: str, size: int) -> None:
+        interval = self._broker_interval(delivery.message)
+        if interval is None:
+            delivery.reservation = await self._capacity.acquire(channel, size)
+            return
+        delivery.renewal_timing = _RenewalTiming()
+        async with _keep_message_alive(
+            delivery.message,
+            interval,
+            self._actor_context.server,
+            delivery.renewal_timing,
+        ):
+            delivery.reservation = await self._capacity.acquire(channel, size)
+
+    def start(self) -> None:
+        self._cancel_waiter = asyncio.create_task(self._cancel_processing())
+
+    async def _cancel_processing(self) -> None:
+        await self._cancel_event.wait()
+        self.stop()
+        for task, delivery in self._processing.items():
+            if not task.done():
+                # Return the delivery even if actor code suppresses cancellation.
+                if delivery.started and not delivery.message.is_acted_on:
+                    delivery.shutdown_rejection = asyncio.create_task(delivery.reject())
+                task.cancel()
+
+    async def _process(self, actor: ActorData, delivery: _Delivery) -> None:
+        delivery.started = True
+        message = delivery.message
+        try:
+            async with _keep_message_alive(
+                message,
+                _processing_interval(actor, message),
+                self._actor_context.server,
+                delivery.renewal_timing,
+            ):
+                try:
+                    await _run_actor_pipeline(actor, message, self._actor_context)
+                except asyncio.CancelledError:
+                    if delivery.shutdown_rejection is None:
+                        # A settlement reserved at cancellation may have failed
+                        # and released its action before propagating cancellation.
+                        await delivery.reject()
+                    raise
+                finally:
+                    if delivery.shutdown_rejection is not None:
+                        await delivery.shutdown_rejection
+        except Exception:
+            # Stop admitting messages before freeing the slot for a waiting delivery.
+            self.stop()
+            raise
+        finally:
+            delivery.release()
+            self.processed += 1
+
+    def _start_processing(self, actor: ActorData, delivery: _Delivery) -> None:
+        coroutine = self._process(actor, delivery)
+        try:
+            task = asyncio.create_task(coroutine)
+        except BaseException:
+            coroutine.close()
+            raise
+
+        # A scheduled delivery consumes the lifetime quota even if cancelled before start.
+        self._processing[task] = delivery
+        task.add_done_callback(self._processing_done)
+        self._committed += 1
+        if self.max_tasks_hit:
+            self._capacity.close()
+            self.quota_reached.set()
+
+    def _processing_done(self, task: asyncio.Task[None]) -> None:
+        delivery = self._processing.pop(task)
+        if not delivery.started:
+            cleanup = asyncio.create_task(self._reject_and_release(delivery))
+            self._prestart_cleanup.add(cleanup)
+            cleanup.add_done_callback(self._cleanup_done)
+        if not task.cancelled() and (exc := task.exception()) is not None:
+            logger.error("runner.processing.error", exc_info=exc)
+        if self.max_tasks_hit:
+            self._stop_consume_event.set()
+
+    def _cleanup_done(self, task: asyncio.Task[None]) -> None:
+        self._prestart_cleanup.discard(task)
+        if not task.cancelled() and (exc := task.exception()) is not None:
+            logger.error("runner.rejection.error", exc_info=exc)
+            self.stop()
+
+    async def _wait_until_idle(self, timeout: float) -> bool:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while (
+            pending_work := self._submissions.keys()
+            | self._processing.keys()
+            | self._prestart_cleanup
+        ):
+            _, pending = await asyncio.wait(pending_work, timeout=max(0, deadline - loop.time()))
+            if pending:
+                return False
+        return True
+
+    async def drain(self, grace: float, cancellation_timeout: float) -> bool:
+        """Return whether all message work drained within the two shutdown windows."""
+        try:
+            if not await self._wait_until_idle(grace):
+                logger.error("runner.shutdown.tasks_timeout")
+
+            self._cancel_event.set()
+            if await self._wait_until_idle(cancellation_timeout):
+                return True
+
+            logger.error("runner.shutdown.tasks_unfinished")
+            for task in self._submissions.values():
+                if task is not None:
+                    task.cancel()
+            for cleanup in self._prestart_cleanup:
+                cleanup.cancel()
+            return False
+        finally:
+            if self._cancel_waiter is not None:
+                self._cancel_waiter.cancel()
+                await asyncio.gather(self._cancel_waiter, return_exceptions=True)

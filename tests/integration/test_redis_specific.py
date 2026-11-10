@@ -1,13 +1,14 @@
 import asyncio
 import uuid
 from contextlib import suppress
-from typing import cast
+from typing import Any, cast
 from unittest.mock import patch
 from urllib.parse import urlsplit
 
 import pytest
 from redis.exceptions import ConnectionError as RedisConnectionError
 
+from repid import Concurrency
 from repid.connections.abc import ReceivedMessageT
 from repid.connections.redis import RedisServer
 from repid.connections.redis.message_broker import ChannelConfig, RedisSubscriber
@@ -50,7 +51,11 @@ async def test_close_interrupts_notifications_without_admin_permissions(
             async with server.connection():
                 subscriber = cast(
                     RedisSubscriber,
-                    await server.subscribe(channels_to_callbacks=dict.fromkeys(channels, callback)),
+                    await server.subscribe(
+                        concurrency=Concurrency(),
+                        channel_concurrency={},
+                        channels_to_callbacks=dict.fromkeys(channels, callback),
+                    ),
                 )
 
                 async def wait_for_blocked_notifications() -> None:
@@ -142,6 +147,8 @@ async def test_recover_assigned_messages_after_lost_read_reply(
                 subscriber = cast(
                     RedisSubscriber,
                     await server.subscribe(
+                        concurrency=Concurrency(),
+                        channel_concurrency={},
                         channels_to_callbacks={channel: callback},
                     ),
                 )
@@ -152,6 +159,8 @@ async def test_recover_assigned_messages_after_lost_read_reply(
                     subscriber = cast(
                         RedisSubscriber,
                         await server.subscribe(
+                            concurrency=Concurrency(),
+                            channel_concurrency={},
                             channels_to_callbacks={channel: callback},
                         ),
                     )
@@ -166,7 +175,74 @@ async def test_recover_assigned_messages_after_lost_read_reply(
             await client.delete(stream)
 
 
-async def test_recovery_does_not_redeliver_a_concurrently_acknowledged_claim(
+@pytest.mark.parametrize("closing", [False, True])
+async def test_recover_assigned_messages_after_lost_reclaim_reply(
+    redis_connection: RedisServer,
+    closing: bool,
+) -> None:
+    server = RedisServer(
+        redis_connection._dsn,
+        batch_size=1,
+        read_timeout=0.05,
+        retry_delay=0.001,
+        claim_interval=0.01,
+        min_idle_ms=0,
+        block_ms=0,
+    )
+    channel = f"lost-reclaim-{uuid.uuid4().hex}"
+    group = f"repid:{channel}:group"
+    assigned = asyncio.Event()
+    delivered: asyncio.Queue[bytes] = asyncio.Queue()
+
+    async def callback(message: ReceivedMessageT) -> None:
+        await message.ack()
+        delivered.put_nowait(message.payload)
+
+    async with server.connection():
+        client = server._redis
+        assert client is not None
+        stream = server.stream_name_for(channel)
+        await client.xgroup_create(stream, group, id="0", mkstream=True)
+        await client.xadd(stream, {b"payload": b"stale"})
+        await client.xreadgroup(group, "abandoned-consumer", {stream: ">"}, count=1)
+        original = client.xautoclaim
+
+        async def reclaim(*args: Any, **kwargs: Any) -> object:
+            if assigned.is_set():
+                # Only pending recovery may recover the lost response.
+                return [b"0-0", [], []]  # pyrefly: ignore[implicit-any-empty-container]
+            result = await original(*args, **kwargs)
+            assert result[1]
+            assigned.set()
+            await asyncio.Future[None]()
+            raise AssertionError("The simulated lost reply must time out")
+
+        try:
+            with patch.object(client, "xautoclaim", side_effect=reclaim):
+                subscriber = await server.subscribe(
+                    concurrency=Concurrency(messages=1),
+                    channel_concurrency={},
+                    channels_to_callbacks={channel: callback},
+                )
+                await asyncio.wait_for(assigned.wait(), 1)
+                if closing:
+                    await asyncio.wait_for(subscriber.close(), 1)
+                    assert delivered.empty()
+                    subscriber = await server.subscribe(
+                        concurrency=Concurrency(messages=1),
+                        channel_concurrency={},
+                        channels_to_callbacks={channel: callback},
+                    )
+                try:
+                    assert await asyncio.wait_for(delivered.get(), 1) == b"stale"
+                    assert (await client.xpending(stream, group))["pending"] == 0
+                finally:
+                    await subscriber.close()
+        finally:
+            await client.delete(stream)
+
+
+async def test_pending_recovery_excludes_a_concurrent_claim_on_the_same_stream(
     redis_connection: RedisServer,
 ) -> None:
     server = RedisServer(redis_connection._dsn)
@@ -187,7 +263,6 @@ async def test_recovery_does_not_redeliver_a_concurrently_acknowledged_claim(
             channels={channel: cfg},
             callbacks={channel: callback},
             consumer_name="recovery-race",
-            concurrency_limit=None,
             server=server,
             min_idle_ms=0,
         )
@@ -204,17 +279,16 @@ async def test_recovery_does_not_redeliver_a_concurrently_acknowledged_claim(
                     max=cast("bytes | str", kwargs["max"]),
                     count=1,
                 )
-                # The payload is already on its way when stale reclaim settles it.
+                # The pending-recovery request already owns this stream's slots.
                 await subscriber._reclaim_pending(cfg, channel, callback)
-                await asyncio.gather(*subscriber._callback_tasks)
-                assert (await client.xpending(stream, cfg.group))["pending"] == 0
+                assert not delivered
                 return cast("object", result)
 
             with patch.object(client, "xrange", side_effect=range_then_claim):
                 await subscriber._recover_pending(cfg.group, subscriber._channels)
                 await asyncio.gather(*subscriber._callback_tasks)
             assert delivered == [message_id.decode()]
-            assert not subscriber._recovery_deliveries
+            assert (await client.xpending(stream, cfg.group))["pending"] == 0
         finally:
             await subscriber.close()
             await client.delete(stream)
@@ -294,6 +368,8 @@ async def test_stale_reclaim_retries_completed_unsettled_delivery(
                 subscriber = cast(
                     RedisSubscriber,
                     await server.subscribe(
+                        concurrency=Concurrency(),
+                        channel_concurrency={},
                         channels_to_callbacks={channel: callback},
                     ),
                 )

@@ -205,6 +205,9 @@ class FakeReceiverLink:
     def defer_delivery_credit(self, delivery_id: int) -> None:
         self.deferred_delivery_ids.add(delivery_id)
 
+    def track_delivery_task(self, _task: asyncio.Task[None]) -> None:
+        pass
+
     def is_delivery_settled(self, delivery_id: int) -> bool:
         return delivery_id in self.settled_delivery_ids
 

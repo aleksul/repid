@@ -113,7 +113,21 @@ jobs:
       if: matrix.target != 'asyncapi'
       run: uv run --no-sync python -m tests.integration.brokers "$TEST_TARGET" --env-file "$GITHUB_ENV"
 
+    - name: Set up Node.js for AsyncAPI validation
+      if: matrix.target == 'asyncapi'
+      uses: actions/setup-node@v7.1.0
+      with:
+        node-version: 26.13.1
+        package-manager-cache: false
+
+    - name: Install locked AsyncAPI dependencies
+      if: matrix.target == 'asyncapi'
+      working-directory: tests/integration/asyncapi
+      run: npm ci --ignore-scripts --no-audit --no-fund
+
     - name: Run integration tests
+      env:
+        REPID_TEST_ASYNCAPI_PREPARED: ${{ matrix.target == 'asyncapi' }}
       run: |
         uv run --no-sync coverage run -m pytest --color=yes tests/integration \
           -m "integration_target(name='$TEST_TARGET')"

@@ -30,7 +30,8 @@ class BrokerConfig:
 
 BROKERS = {
     "rabbitmq": BrokerConfig(
-        "rabbitmq:4.2-alpine",
+        "docker.io/library/rabbitmq:4.4.0-alpine"
+        "@sha256:7b77c3d3a996c7fcca1ca8bf53ce1557ff43c13b8ca2c132df6031781b209ef2",
         5672,
         "Server startup complete",
         options=(
@@ -39,7 +40,8 @@ BROKERS = {
         ),
     ),
     "activemq": BrokerConfig(
-        "apache/artemis:2.54.0-alpine",
+        "docker.io/apache/artemis:2.57.0-alpine"
+        "@sha256:69feac4bc8f736f2fefeb58312858f97cd8eb6b483aa69952529cb20b78da9d3",
         61616,
         "AMQ221007",
         options=(
@@ -52,15 +54,22 @@ BROKERS = {
             "/var/lib/artemis-instance/data:rw,size=256m,mode=1777",
         ),
     ),
-    "pubsub": BrokerConfig("ghcr.io/jeffijoe/deltio:0.7.0", 8085, "listening on"),
+    "pubsub": BrokerConfig(
+        "ghcr.io/jeffijoe/deltio:0.7.0"
+        "@sha256:25b9b21209f74851e8704bfb16aa4c55fa07377e0c014c57c02ba8b2b1b0846a",
+        8085,
+        "listening on",
+    ),
     "redis": BrokerConfig(
-        "redis:8.4-alpine",
+        "docker.io/library/redis:8.10.3-alpine"
+        "@sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3",
         6379,
         "Ready to accept connections tcp",
         command=("redis-server", "--requirepass", "test"),
     ),
     "kafka": BrokerConfig(
-        "redpandadata/redpanda:v26.1.4",
+        "docker.io/redpandadata/redpanda:v26.2.2"
+        "@sha256:468bd13a9f2bd24794cb7fddc867c767fb1008b9a07b297b89fde48c564d7d96",
         29092,
         "Started Kafka API server",
         options=("--entrypoint", "/bin/sh"),
@@ -74,8 +83,19 @@ BROKERS = {
             ),
         ),
     ),
-    "nats": BrokerConfig("nats:2.12.6", 4222, "Server is ready", command=("-js",)),
-    "sqs": BrokerConfig("softwaremill/elasticmq-native:1.7.1", 9324, "Started SQS rest server"),
+    "nats": BrokerConfig(
+        "docker.io/library/nats:2.15.3"
+        "@sha256:9d85d87039bfba33baf48de4da32a2ee572bcd6c94f6365d05733a672de49253",
+        4222,
+        "Server is ready",
+        command=("-js",),
+    ),
+    "sqs": BrokerConfig(
+        "docker.io/softwaremill/elasticmq-native:1.7.1"
+        "@sha256:e4580ab9ad1bd5cd37b4ba04911bc5ccc8cd2d9ab4de56ece65acee71c24e05c",
+        9324,
+        "Started SQS rest server",
+    ),
 }
 INTEGRATION_TARGETS = (*BROKERS, "asyncapi")
 

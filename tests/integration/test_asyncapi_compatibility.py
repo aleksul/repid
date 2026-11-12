@@ -1,7 +1,7 @@
 import json
+import os
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import Annotated
 
@@ -25,12 +25,43 @@ from repid.data.message_schema import CorrelationId, MessageExample, MessageSche
 pytestmark = pytest.mark.integration_target(name="asyncapi")
 
 
-def is_npm_installed() -> bool:
-    return shutil.which("npm") is not None
+@pytest.fixture
+def asyncapi_validator(tmp_path: Path) -> tuple[str, Path]:
+    project = Path(__file__).with_name("asyncapi")
+    node = shutil.which("node")
+    if os.environ.get("REPID_TEST_ASYNCAPI_PREPARED") == "true":
+        if node is None:
+            pytest.fail("Node.js is required for the prepared AsyncAPI validator")
+    else:
+        npm = shutil.which("npm")
+        if node is None or npm is None:
+            pytest.skip("Node.js and npm are required for AsyncAPI validation")
+
+        for filename in ("package.json", "package-lock.json"):
+            shutil.copyfile(project / filename, tmp_path / filename)
+        project = tmp_path
+        result = subprocess.run(
+            [npm, "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
+            cwd=project,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            pytest.fail(
+                f"AsyncAPI validator installation failed:\n{result.stdout}\n{result.stderr}",
+            )
+
+    cli = project / "node_modules" / "@asyncapi" / "cli" / "bin" / "run_bin"
+    if not cli.is_file():
+        pytest.fail(f"The locked AsyncAPI validator is missing at {cli}")
+    return node, cli
 
 
-@pytest.mark.skipif(not is_npm_installed(), reason="npm is not installed")
-def test_generated_schema_validity_with_official_parser() -> None:
+def test_generated_schema_validity_with_official_parser(
+    tmp_path: Path,
+    asyncapi_validator: tuple[str, Path],
+) -> None:
     # 1. Construct a complex Repid app
     app = Repid(
         title="Complex API",
@@ -172,26 +203,18 @@ def test_generated_schema_validity_with_official_parser() -> None:
         ],
     )
 
-    # 2. Generate Schema
-    schema = app.generate_asyncapi_schema()
+    schema_path = tmp_path / "asyncapi.json"
+    schema_path.write_text(json.dumps(app.generate_asyncapi_schema()), encoding="utf-8")
+    metrics_config = tmp_path / "analytics.json"
+    metrics_config.write_text('{"analyticsEnabled":"false"}', encoding="utf-8")
 
-    # 3. Validate with @asyncapi/cli
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
-        json.dump(schema, tmp)
-        tmp_path = tmp.name
-
-    try:
-        # We use npx to run the CLI without installing it globally
-        # -y flag confirms installation if needed
-        result = subprocess.run(
-            ["npx", "-y", "@asyncapi/cli", "validate", tmp_path],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-        if result.returncode != 0:
-            pytest.fail(f"AsyncAPI validation failed:\n{result.stdout}\n{result.stderr}")
-
-    finally:
-        Path(tmp_path).unlink()
+    node, cli = asyncapi_validator
+    result = subprocess.run(
+        [node, str(cli), "validate", str(schema_path)],
+        env={**os.environ, "ASYNCAPI_METRICS_CONFIG_PATH": str(metrics_config)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.fail(f"AsyncAPI validation failed:\n{result.stdout}\n{result.stderr}")

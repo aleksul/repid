@@ -26,6 +26,7 @@ workflows:
     '.github/workflows/tests.yaml':
         - 'actions/checkout@v7.0.1'
         - 'actions/download-artifact@v8.0.2'
+        - 'actions/setup-node@v7.1.0'
         - 'actions/upload-artifact@v7.0.2'
         - 'astral-sh/setup-uv@v7.6.0'
         - 'peaceiris/actions-gh-pages@v4.1.0'
@@ -48,6 +49,11 @@ dependencies:
         commit: 'sha1-9000827ccba6bdab643e8b6fd33ac0654aef8333'
         owner_id: 44036562
         repo_id: 192626254
+    'actions/setup-node@v7.1.0':
+        ref: 'v7.1.0'
+        commit: 'sha1-949feb2413d6458794dcd2491c4babbbce0c15c1'
+        owner_id: 44036562
+        repo_id: 189476904
     'actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405':
         ref: 'v6.2.0'
         commit: 'sha1-a309ff8b426b58ec0e2a45f0f869d46889d02405'

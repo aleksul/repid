@@ -9,6 +9,15 @@ Only the latest major version of Repid is currently supported for security updat
 | 2.x.x   | :white_check_mark: |
 | < 2.x.x | :x:                |
 
+## PyPI Release Provenance
+
+The [release workflow](.github/workflows/release.yaml) uses PyPI Trusted Publishing to upload the
+wheel and source distribution with a signed publish attestation for each file. To check a release,
+open its Security tab on [PyPI](https://pypi.org/project/repid/) and confirm that both files have an
+attestation from `aleksul/repid` and `.github/workflows/release.yaml`. See
+[PyPI's verification guide](https://docs.pypi.org/attestations/consuming-attestations/) to verify a
+file cryptographically.
+
 ## Reporting a Vulnerability
 
 If you discover a potential security vulnerability, please report it immediately by emailing

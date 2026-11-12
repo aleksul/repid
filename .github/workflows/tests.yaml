@@ -39,8 +39,8 @@ jobs:
         uv run --isolated --no-project --python 3.11 --with dist/*.whl -- \
           python -I -c 'from repid import Repid; Repid()'
 
-  tests:
-    name: Tests (Python ${{ matrix.python-version }})
+  unit-tests:
+    name: Unit tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -66,8 +66,8 @@ jobs:
     - name: Install test dependencies
       run: uv sync --frozen --all-extras --group tests --python ${{ matrix.python-version }}
 
-    - name: Run tests
-      run: uv run --no-sync coverage run -m pytest --color=yes tests/
+    - name: Run unit tests
+      run: uv run --no-sync coverage run -m pytest --color=yes tests/unit
 
     - name: Display coverage
       run: uv run --no-sync coverage report --no-skip-covered --show-missing --fail-under=0
@@ -75,18 +75,72 @@ jobs:
     - name: Rename .coverage file
       run: |
         mkdir coverage
-        mv .coverage ./coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}
+        mv .coverage coverage/.coverage.unit-py${{ matrix.python-version }}
 
     - name: Store coverage files
       uses: actions/upload-artifact@v7.0.2
       with:
-        name: coverage-${{ runner.os }}-py${{ matrix.python-version }}
+        name: coverage-unit-py${{ matrix.python-version }}
+        path: coverage
+        include-hidden-files: true
+        if-no-files-found: error
+
+  integration-tests:
+    name: Integration tests (${{ matrix.target }}, Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12', '3.13', '3.14', '3.15']
+        target: [rabbitmq, activemq, pubsub, redis, kafka, nats, sqs, asyncapi]
+    env:
+      TEST_TARGET: ${{ matrix.target }}
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v7.0.1
+      with:
+        persist-credentials: false
+
+    - name: Setup uv
+      uses: astral-sh/setup-uv@v7.6.0
+
+    - name: Install test dependencies
+      run: uv sync --frozen --all-extras --group tests --python ${{ matrix.python-version }}
+
+    - name: Start and prepare broker
+      if: matrix.target != 'asyncapi'
+      run: uv run --no-sync python -m tests.integration.brokers "$TEST_TARGET" --env-file "$GITHUB_ENV"
+
+    - name: Run integration tests
+      run: |
+        uv run --no-sync coverage run -m pytest --color=yes tests/integration \
+          -m "integration_target(name='$TEST_TARGET')"
+
+    - name: Show broker logs
+      if: failure() && env.REPID_TEST_CONTAINER != ''
+      run: docker logs --tail 100 "$REPID_TEST_CONTAINER"
+
+    - name: Stop broker
+      if: always() && env.REPID_TEST_CONTAINER != ''
+      run: docker rm --force --volumes "$REPID_TEST_CONTAINER"
+
+    - name: Rename .coverage file
+      run: |
+        mkdir coverage
+        mv .coverage "coverage/.coverage.integration-${TEST_TARGET}-py${{ matrix.python-version }}"
+
+    - name: Store coverage files
+      uses: actions/upload-artifact@v7.0.2
+      with:
+        name: coverage-${{ matrix.target }}-py${{ matrix.python-version }}
         path: coverage
         include-hidden-files: true
         if-no-files-found: error
 
   coverage-combine:
-    needs: [tests]
+    needs: [unit-tests, integration-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:

@@ -11,6 +11,8 @@ from repid import Repid
 from repid.connections.abc import ReceivedMessageT, SentMessageT
 from repid.connections.kafka.subscriber import KafkaSubscriber
 
+pytestmark = pytest.mark.integration_target(name="kafka")
+
 if TYPE_CHECKING:
     from repid.connections.abc import ServerT
 

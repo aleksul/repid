@@ -1,443 +1,101 @@
-import asyncio
-import contextlib
+import os
+from collections.abc import Callable, Iterator
+from contextlib import ExitStack
 from pathlib import Path
-from time import sleep
-from typing import Any
 
-import aiobotocore.session
-import grpc
-import nats
 import pytest
-from aiokafka.admin import AIOKafkaAdminClient, NewTopic
-from aiokafka.errors import KafkaConnectionError
-from pytest_docker_tools import container, wrappers
-from pytest_lazy_fixtures import lf as lazy_fixture
 
 from repid import Repid
-from repid.connections.abc import ServerT
 from repid.connections.amqp import AmqpServer
 from repid.connections.kafka import KafkaServer
 from repid.connections.nats import NatsServer
 from repid.connections.pubsub import PubsubServer
 from repid.connections.redis import RedisServer
 from repid.connections.sqs import SqsServer
-from tests.integration.pubsub_proto_helpers import Subscription, Topic
+from tests.integration.brokers import BROKERS, INTEGRATION_TARGETS, BrokerContainer, start_broker
 
-RABBITMQ_DEFINITIONS_JSON = Path(__file__).parent / "rabbitmq_definitions.json"
-
-
-redis_container = container(
-    image="redis:8.4-alpine",
-    ports={"6379/tcp": None},
-    command="redis-server --requirepass test",
-    scope="session",
-)
-
-rabbitmq_container = container(
-    image="rabbitmq:4.2-alpine",
-    ports={"5672/tcp": None},
-    volumes={
-        str(RABBITMQ_DEFINITIONS_JSON): {
-            "bind": "/etc/rabbitmq/definitions.json",
-            "mode": "ro",
-        },
-    },
-    scope="session",
-)
+BrokerFor = Callable[[str], BrokerContainer]
 
 
-class ActiveMQContainer(wrappers.Container):
-    def ready(self) -> bool:
-        self._container.reload()
-        return bool(self.status == "running" and "AMQ221007" in self.logs())
-
-
-activemq_container = container(
-    image="apache/artemis:2.54.0-alpine",
-    ports={"61616/tcp": None},
-    environment={
-        "ARTEMIS_USER": "user",
-        "ARTEMIS_PASSWORD": "testtest",
-    },
-    scope="session",
-    wrapper_class=ActiveMQContainer,
-)
-
-
-class DeltioContainer(wrappers.Container):
-    def ready(self) -> bool:
-        return "listening on" in self.logs()
-
-
-pubsub_container = container(
-    image="ghcr.io/jeffijoe/deltio:0.7.0",
-    ports={"8085/tcp": None},
-    scope="session",
-    wrapper_class=DeltioContainer,
-)
-
-
-class KafkaContainer(wrappers.Container):
-    def ready(self) -> bool:
-        self._container.reload()
-        return bool(self.status == "running")
-
-
-kafka_container = container(
-    image="redpandadata/redpanda:v26.1.4",
-    entrypoint="/bin/sh",
-    command=[
-        "-c",
-        (
-            "while [ ! -f /tmp/port ]; do sleep 0.1; done && "
-            "PORT=$(cat /tmp/port) && "
-            "exec /usr/bin/rpk redpanda start --smp 1 --reserve-memory 0M --overprovisioned --node-id 0 "
-            "--kafka-addr PLAINTEXT://0.0.0.0:29092 "
-            "--advertise-kafka-addr PLAINTEXT://127.0.0.1:$PORT"
-        ),
-    ],
-    ports={"29092/tcp": None},
-    scope="session",
-    wrapper_class=KafkaContainer,
-)
-
-
-class NatsContainer(wrappers.Container):
-    def ready(self) -> bool:
-        return "Server is ready" in self.logs()
-
-
-nats_container = container(
-    image="nats:2.12.6",
-    command="-js",
-    ports={"4222/tcp": None},
-    scope="session",
-    wrapper_class=NatsContainer,
-)
-
-elasticmq_container = container(
-    image="softwaremill/elasticmq-native:1.7.1",
-    ports={"9324/tcp": None},
-    scope="session",
-)
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    integration_dir = Path(__file__).parent
+    for item in items:
+        if item.path.is_relative_to(integration_dir):
+            targets = [mark.kwargs.get("name") for mark in item.iter_markers("integration_target")]
+            if len(targets) != 1 or targets[0] not in INTEGRATION_TARGETS:
+                raise pytest.UsageError(f"{item.nodeid} must specify one valid integration target")
+            item.add_marker(pytest.mark.integration)
 
 
 @pytest.fixture(scope="session")
-def rabbitmq_connection(rabbitmq_container: "wrappers.Container") -> ServerT:
-    while "Server startup complete" not in rabbitmq_container.logs():
-        sleep(0.1)
+def broker_for() -> Iterator[BrokerFor]:
+    prepared_target = os.environ.get("REPID_TEST_BROKER")
+    containers: dict[str, BrokerContainer] = {}
+    with ExitStack() as stack:
 
-    import_definitions_result = rabbitmq_container.exec_run(
-        "rabbitmqctl import_definitions /etc/rabbitmq/definitions.json",
-    )
-    assert import_definitions_result.exit_code == 0, (
-        f"Failed to import definitions: {import_definitions_result.output.decode()}"
-    )
+        def get_broker(target: str) -> BrokerContainer:
+            if prepared_target is not None:
+                if prepared_target != target:
+                    raise pytest.UsageError(
+                        f"Prepared {prepared_target!r} but the test requested {target!r}",
+                    )
+                return BrokerContainer(
+                    os.environ["REPID_TEST_CONTAINER"],
+                    int(os.environ["REPID_TEST_PORT"]),
+                )
+            if target not in containers:
+                broker = start_broker(target)
+                stack.callback(broker.stop)
+                containers[target] = broker
+            return containers[target]
 
-    while "Successfully set permissions for user 'user'" not in rabbitmq_container.logs():
-        sleep(0.1)
-
-    return AmqpServer(
-        dsn=f"amqp://user:testtest@localhost:{rabbitmq_container.ports['5672/tcp'][0]}",
-    )
+        yield get_broker
 
 
 @pytest.fixture(scope="session")
-def activemq_connection(activemq_container: "wrappers.Container") -> ServerT:
-    for queue in ("default", "another", "my_queue"):
-        create_result = activemq_container.exec_run(
-            "/var/lib/artemis-instance/bin/artemis queue create "
-            f"--name {queue} --address {queue} --anycast --durable "
-            "--auto-create-address --silent --user user --password testtest "
-            "--url tcp://localhost:61616",
-        )
-        assert create_result.exit_code == 0, (
-            f"Failed to create ActiveMQ queue {queue}: {create_result.output.decode()}"
-        )
+def rabbitmq_container(broker_for: BrokerFor) -> BrokerContainer:
+    return broker_for("rabbitmq")
 
+
+@pytest.fixture(scope="session")
+def rabbitmq_connection(rabbitmq_container: BrokerContainer) -> AmqpServer:
+    return AmqpServer(f"amqp://user:testtest@{rabbitmq_container.address}")
+
+
+@pytest.fixture(scope="session")
+def activemq_connection(broker_for: BrokerFor) -> AmqpServer:
     return AmqpServer(
-        dsn=f"amqp://user:testtest@localhost:{activemq_container.ports['61616/tcp'][0]}",
+        dsn=f"amqp://user:testtest@{broker_for('activemq').address}",
         publish_naming_strategy=lambda channel, _: channel,
         subscribe_naming_strategy=lambda channel: channel,
     )
 
 
 @pytest.fixture(scope="session")
-def pubsub_connection(pubsub_container: "wrappers.Container") -> ServerT:
-    # Wait for container ports to be assigned
-    port = None
-    for _ in range(100):
-        try:
-            pubsub_container._container.reload()
-            port = pubsub_container.ports["8085/tcp"][0]
-            break
-        except (KeyError, AttributeError):
-            sleep(0.1)
-
-    if port is None:
-        raise RuntimeError("Could not get port from deltio container")
-
-    target = f"localhost:{port}"
-
-    # Wait for readiness
-    for _ in range(100):
-        try:
-            with grpc.insecure_channel(target) as channel:
-                grpc.channel_ready_future(channel).result(timeout=0.1)
-            break
-        except Exception:
-            sleep(0.1)
-    else:
-        raise TimeoutError("Deltio container failed to start")
-
-    # Create topics and subscriptions
-    with grpc.insecure_channel(target) as channel:
-        create_topic = channel.unary_unary(
-            "/google.pubsub.v1.Publisher/CreateTopic",
-            request_serializer=Topic.serialize,
-            response_deserializer=lambda x: x,
-        )
-        create_subscription = channel.unary_unary(
-            "/google.pubsub.v1.Subscriber/CreateSubscription",
-            request_serializer=Subscription.serialize,
-            response_deserializer=lambda x: x,
-        )
-
-        create_topic(Topic(name="projects/my-project/topics/default"))
-        create_subscription(
-            Subscription(
-                name="projects/my-project/subscriptions/default",
-                topic="projects/my-project/topics/default",
-                ack_deadline_seconds=10,
-            ),
-        )
-
-        create_topic(Topic(name="projects/my-project/topics/another"))
-        create_subscription(
-            Subscription(
-                name="projects/my-project/subscriptions/another",
-                topic="projects/my-project/topics/another",
-                ack_deadline_seconds=10,
-            ),
-        )
-
-    return PubsubServer(
-        dsn=f"http://{target}",
-        default_project="my-project",
-    )
+def pubsub_connection(broker_for: BrokerFor) -> PubsubServer:
+    return PubsubServer(f"http://{broker_for('pubsub').address}", default_project="my-project")
 
 
 @pytest.fixture(scope="session")
-def redis_connection(redis_container: "wrappers.Container") -> ServerT:
-    while "Ready to accept connections tcp" not in redis_container.logs():
-        sleep(0.1)
-
-    sleep(3)
-
-    return RedisServer(f"redis://:test@localhost:{redis_container.ports['6379/tcp'][0]}/0")
+def redis_connection(broker_for: BrokerFor) -> RedisServer:
+    return RedisServer(f"redis://:test@{broker_for('redis').address}/0")
 
 
 @pytest.fixture(scope="session")
-async def kafka_connection(kafka_container: "wrappers.Container") -> ServerT:  # noqa: C901, PLR0912
-    # Wait for container ports to be assigned
-    port = None
-    for _ in range(100):
-        try:
-            kafka_container._container.reload()
-            port = kafka_container.ports["29092/tcp"][0]
-            break
-        except (KeyError, AttributeError):
-            sleep(0.1)
-
-    if port is None:
-        raise RuntimeError("Could not get port from kafka container")
-
-    kafka_container.exec_run(f"sh -c 'echo {port} > /tmp/port'")
-
-    while "Started Kafka API server" not in kafka_container.logs():
-        await asyncio.sleep(0.1)
-
-    dsn = f"127.0.0.1:{port}"
-    server = KafkaServer(dsn, client_id="repid-test-client")
-
-    # Retry connection until redpanda is fully up
-    for _ in range(100):
-        try:
-            await server.connect()
-            await server.disconnect()
-            break
-        except (KafkaConnectionError, ConnectionRefusedError):
-            await asyncio.sleep(0.1)
-    else:
-        raise Exception("Kafka did not start in time")
-
-    # Connect admin client and list existing topics
-    admin_client = AIOKafkaAdminClient(bootstrap_servers=dsn)
-    for _ in range(10):
-        try:
-            await admin_client.start()
-            existing_topics = await admin_client.list_topics()
-            break
-        except Exception:
-            await asyncio.sleep(0.5)
-    else:
-        raise Exception("Failed to start admin client")
-
-    # Create necessary topics
-    try:
-        topics_to_create = []
-        for topic in [
-            "default",
-            "repid_default_dlq",
-            "another",
-            "test_reject_channel",
-            "repid_test_reject_channel_dlq",
-            "test_nack_channel",
-            "repid_test_nack_channel_dlq",
-            "test_reply_channel",
-            "test_reply_dest_channel",
-            "test_close_channel",
-        ]:
-            if topic not in existing_topics:
-                topics_to_create.append(NewTopic(topic, num_partitions=1, replication_factor=1))
-
-        if topics_to_create:
-            await admin_client.create_topics(topics_to_create)
-    finally:
-        await admin_client.close()
-
-    return server
+def kafka_connection(broker_for: BrokerFor) -> KafkaServer:
+    return KafkaServer(broker_for("kafka").address, client_id="repid-test-client")
 
 
 @pytest.fixture
-async def nats_connection(nats_container: "wrappers.Container") -> ServerT:
-
-    port = None
-    for _ in range(100):
-        try:
-            nats_container._container.reload()
-            port = nats_container.ports["4222/tcp"][0]
-            break
-        except (KeyError, AttributeError):
-            await asyncio.sleep(0.1)
-
-    if port is None:
-        raise RuntimeError("Could not get port from nats container")
-
-    dsn = f"nats://127.0.0.1:{port}"
-    server = NatsServer(dsn)
-
-    for _ in range(100):
-        nc = None
-        try:
-            nc = await nats.connect(dsn)
-            js = nc.jetstream()
-
-            async def ensure_stream(js_context: Any, name: str, subjects: list[str]) -> None:
-                try:
-                    await js_context.add_stream(name=name, subjects=subjects)
-                except Exception as e:
-                    if (
-                        "stream name already in use" not in str(e).lower()
-                        and "already exists" not in str(e).lower()
-                    ):
-                        raise
-
-            await ensure_stream(
-                js_context=js,
-                name="repid_default",
-                subjects=["default", "another", "another_edge_case"],
-            )
-            await ensure_stream(
-                js_context=js,
-                name="test_reject_channel_stream",
-                subjects=["test_reject_channel"],
-            )
-            await ensure_stream(
-                js_context=js,
-                name="test_reply_channel_stream",
-                subjects=["test_reply_channel"],
-            )
-            await ensure_stream(
-                js_context=js,
-                name="test_exc_channel_stream",
-                subjects=["test_exc_channel"],
-            )
-            await ensure_stream(
-                js_context=js,
-                name="repid_test_exc_channel_dlq_stream",
-                subjects=["repid_test_exc_channel_dlq"],
-            )
-            await ensure_stream(
-                js_context=js,
-                name="repid_default_dlq",
-                subjects=["repid_default_dlq"],
-            )
-            await ensure_stream(
-                js_context=js,
-                name="test_nack_channel_stream",
-                subjects=["test_nack_channel"],
-            )
-            await ensure_stream(
-                js_context=js,
-                name="test_nack_channel_stream_2",
-                subjects=["test_nack_channel_2"],
-            )
-            await ensure_stream(
-                js_context=js,
-                name="repid_test_nack_channel_dlq_stream",
-                subjects=["repid_test_nack_channel_dlq"],
-            )
-            break
-        except Exception:
-            await asyncio.sleep(0.1)
-        finally:
-            if nc is not None:
-                with contextlib.suppress(Exception):
-                    await nc.close()
-    else:
-        raise Exception("NATS did not start in time")
-
-    return server
+def nats_connection(broker_for: BrokerFor) -> NatsServer:
+    return NatsServer(f"nats://{broker_for('nats').address}")
 
 
 @pytest.fixture(scope="session")
-async def sqs_connection(elasticmq_container: "wrappers.Container") -> ServerT:
-    while "Started SQS rest server" not in elasticmq_container.logs():
-        await asyncio.sleep(0.1)
-
-    port = elasticmq_container.ports["9324/tcp"][0]
-    endpoint_url = f"http://127.0.0.1:{port}"
-
-    session = aiobotocore.session.get_session()
-    async with session.create_client(
-        "sqs",
-        region_name="elasticmq",
-        endpoint_url=endpoint_url,
-        aws_access_key_id="x",
-        aws_secret_access_key="x",
-        aws_session_token="x",
-    ) as client:
-        # Create necessary queues for tests
-        queues_to_create = [
-            "default",
-            "test_subscriber_state_channel",
-            "test_nack_channel",
-            "repid_test_nack_channel_dlq",
-            "test_reply_channel",
-            "test_reply_dest_channel",
-            "test_double_actions_channel",
-            "test_exception_channel",
-            "test_close_channel",
-            "another",
-            "other_channel",
-            "wrong",
-        ]
-        for q in queues_to_create:
-            await client.create_queue(QueueName=q)
-
+def sqs_connection(broker_for: BrokerFor) -> SqsServer:
     return SqsServer(
-        endpoint_url=endpoint_url,
+        endpoint_url=f"http://{broker_for('sqs').address}",
         region_name="elasticmq",
         aws_access_key_id="x",
         aws_secret_access_key="x",
@@ -448,16 +106,12 @@ async def sqs_connection(elasticmq_container: "wrappers.Container") -> ServerT:
 
 @pytest.fixture(
     params=[
-        lazy_fixture("rabbitmq_connection"),
-        lazy_fixture("activemq_connection"),
-        lazy_fixture("pubsub_connection"),
-        lazy_fixture("redis_connection"),
-        lazy_fixture("kafka_connection"),
-        lazy_fixture("nats_connection"),
-        lazy_fixture("sqs_connection"),
+        pytest.param(target, marks=pytest.mark.integration_target(name=target))
+        for target in BROKERS
     ],
 )
 def autoconn(request: pytest.FixtureRequest) -> Repid:
     app = Repid()
-    app.servers.register_server("default", request.param, is_default=True)
+    server = request.getfixturevalue(f"{request.param}_connection")
+    app.servers.register_server("default", server, is_default=True)
     return app

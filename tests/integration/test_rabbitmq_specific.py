@@ -4,18 +4,22 @@ import asyncio
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+import pytest
+
 from repid import Repid
 from repid.connections.abc import ReceivedMessageT
 from repid.connections.amqp import AmqpServer
 from repid.connections.amqp._uamqp.message import Properties
 
 if TYPE_CHECKING:
-    from pytest_docker_tools import wrappers
+    from tests.integration.brokers import BrokerContainer
+
+pytestmark = pytest.mark.integration_target(name="rabbitmq")
 
 
 async def test_server_side_cancel(
     rabbitmq_connection: AmqpServer,
-    rabbitmq_container: wrappers.Container,
+    rabbitmq_container: BrokerContainer,
 ) -> None:
     callback_event = asyncio.Event()
 
@@ -30,24 +34,15 @@ async def test_server_side_cancel(
 
         subscriber = await conn.subscribe(channels_to_callbacks={"default": dummy_callback})
 
-        rabbit_list_result = rabbitmq_container.exec_run("rabbitmqctl list_consumers")
-        assert rabbit_list_result.exit_code == 0, (
-            f"Failed to list consumers: {rabbit_list_result.output.decode()}"
-        )
+        consumers = rabbitmq_container.exec("rabbitmqctl", "list_consumers")
         pid: str = (
-            rabbit_list_result.output.decode()
-            .removeprefix("Listing consumers ...\n")
+            consumers.removeprefix("Listing consumers ...\n")
             .removeprefix("Listing consumers in vhost / ...\n")
             .splitlines()[1]
             .split("\t")[1]
         )
 
-        rabbit_close_result = rabbitmq_container.exec_run(
-            f'rabbitmqctl close_connection "{pid}" "Server side cancel test"',
-        )
-        assert rabbit_close_result.exit_code == 0, (
-            f"Failed to close connection: {rabbit_close_result.output.decode()}"
-        )
+        rabbitmq_container.exec("rabbitmqctl", "close_connection", pid, "Server side cancel test")
 
         assert not callback_event.is_set()
 

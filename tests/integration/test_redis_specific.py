@@ -12,6 +12,8 @@ from repid.connections.abc import ReceivedMessageT
 from repid.connections.redis import RedisServer
 from repid.connections.redis.message_broker import ChannelConfig, RedisSubscriber
 
+pytestmark = pytest.mark.integration_target(name="redis")
+
 
 @pytest.mark.parametrize("block_ms", [0, 30000])
 async def test_close_interrupts_notifications_without_admin_permissions(

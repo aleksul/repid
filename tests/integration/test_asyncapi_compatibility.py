@@ -22,6 +22,8 @@ from repid.connections.amqp import AmqpServer
 from repid.connections.in_memory import InMemoryServer
 from repid.data.message_schema import CorrelationId, MessageExample, MessageSchema
 
+pytestmark = pytest.mark.integration_target(name="asyncapi")
+
 
 def is_npm_installed() -> bool:
     return shutil.which("npm") is not None

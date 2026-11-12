@@ -4,13 +4,13 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, PropertyMock, patch
 from urllib.parse import urlparse
 
-import nats
 import pytest
-from pytest_docker_tools import wrappers
 
 from repid.connections.abc import MessageAction
 from repid.connections.nats import NatsServer
 from repid.connections.nats.message_broker import NatsReceivedMessage, NatsSubscriber
+
+pytestmark = pytest.mark.integration_target(name="nats")
 
 
 class MockSentMsgNoHeaders:
@@ -27,17 +27,6 @@ class MockSentMsg:
 
     def __init__(self) -> None:
         self.headers = {"x": "y"}
-
-
-async def _get_nats_dsn(nats_container: wrappers.Container) -> str:
-    for _ in range(100):
-        try:
-            nats_container._container.reload()
-            port = nats_container.ports["4222/tcp"][0]
-            return f"nats://127.0.0.1:{port}"
-        except (KeyError, AttributeError):
-            await asyncio.sleep(0.1)
-    raise RuntimeError("Timed out waiting for NATS container port mapping")
 
 
 async def test_nats_basic_attributes(nats_connection: NatsServer) -> None:
@@ -179,18 +168,16 @@ async def test_nats_exception(nats_connection: NatsServer) -> None:
         await sub_exc.close()
 
 
-async def test_nats_connect_already_connected(nats_container: wrappers.Container) -> None:
-    dsn = await _get_nats_dsn(nats_container)
-    server = NatsServer(dsn, dlq_topic_strategy=None)
+async def test_nats_connect_already_connected(nats_connection: NatsServer) -> None:
+    server = NatsServer(nats_connection.dsn, dlq_topic_strategy=None)
 
     await server.connect()
     await server.connect()
     await server.disconnect()
 
 
-async def test_nats_subscribe_already_connected(nats_container: wrappers.Container) -> None:
-    dsn = await _get_nats_dsn(nats_container)
-    server = NatsServer(dsn, dlq_topic_strategy=None)
+async def test_nats_subscribe_already_connected(nats_connection: NatsServer) -> None:
+    server = NatsServer(nats_connection.dsn, dlq_topic_strategy=None)
 
     await server.connect()
 
@@ -202,9 +189,8 @@ async def test_nats_subscribe_already_connected(nats_container: wrappers.Contain
     await server.disconnect()
 
 
-async def test_nats_connection_context_manager(nats_container: wrappers.Container) -> None:
-    dsn = await _get_nats_dsn(nats_container)
-    server = NatsServer(dsn, dlq_topic_strategy=None)
+async def test_nats_connection_context_manager(nats_connection: NatsServer) -> None:
+    server = NatsServer(nats_connection.dsn, dlq_topic_strategy=None)
 
     async with server.connection() as srv:
         assert srv.is_connected
@@ -212,20 +198,10 @@ async def test_nats_connection_context_manager(nats_container: wrappers.Containe
 
 
 async def test_nats_message_without_headers_and_content_type(
-    nats_container: wrappers.Container,
+    nats_connection: NatsServer,
 ) -> None:
-    dsn = await _get_nats_dsn(nats_container)
-    server = NatsServer(dsn, dlq_topic_strategy=None)
+    server = NatsServer(nats_connection.dsn, dlq_topic_strategy=None)
     await server.connect()
-
-    nc = await nats.connect(dsn)
-    js = nc.jetstream()
-    try:
-        await js.add_stream(name="test_nack_channel_stream_2", subjects=["test_nack_channel_2"])
-    except Exception as e:
-        if "already" not in str(e).lower():
-            raise
-    await nc.close()
 
     hit = []
     event = asyncio.Event()

@@ -1,0 +1,41 @@
+name: Workflow lint
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v7.0.1
+      with:
+        persist-credentials: false
+
+    - name: Check workflow syntax
+      run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+    - name: Verify action lockfile
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh extension install github/gh-actions-lock --pin v0.4.1
+        gh actions-lock --verify
+
+    - name: Audit workflows with zizmor
+      uses: zizmorcore/zizmor-action@v0.8.1
+      with:
+        advanced-security: false
+        annotations: true
+        online-audits: false

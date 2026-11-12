@@ -9,10 +9,40 @@ on:
     - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
+  package:
+    name: Build and smoke-test package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v7.0.1
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+
+    - name: Setup uv
+      uses: astral-sh/setup-uv@v7.6.0
+
+    - name: Build wheel and source distribution
+      run: uv build --python 3.11
+
+    - name: Install and import the wheel
+      run: |
+        uv run --isolated --no-project --python 3.11 --with dist/*.whl -- \
+          python -I -c 'from repid import Repid; Repid()'
+
   tests:
     name: Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     strategy:
       fail-fast: false
@@ -26,113 +56,103 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v7
+      uses: actions/checkout@v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Setup uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v7.6.0
 
-    - name: Install or update dependencies
-      run: uv sync --frozen --all-extras --all-groups --python ${{ matrix.python-version }}
+    - name: Install test dependencies
+      run: uv sync --frozen --all-extras --group tests --python ${{ matrix.python-version }}
 
     - name: Run tests
-      run: uv run coverage run -m pytest --color=yes tests/
+      run: uv run --no-sync coverage run -m pytest --color=yes tests/
 
     - name: Display coverage
-      run: uv run coverage report --no-skip-covered --show-missing --fail-under=0
+      run: uv run --no-sync coverage report --no-skip-covered --show-missing --fail-under=0
 
     - name: Rename .coverage file
       run: |
-        mkdir coverage && \
+        mkdir coverage
         mv .coverage ./coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}
 
     - name: Store coverage files
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@v7.0.2
       with:
         name: coverage-${{ runner.os }}-py${{ matrix.python-version }}
         path: coverage
         include-hidden-files: true
+        if-no-files-found: error
 
   coverage-combine:
     needs: [tests]
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-      contents: write
+    timeout-minutes: 10
+    outputs:
+      percentage: ${{ steps.coverage.outputs.percentage }}
 
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Setup uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v7.6.0
 
     - name: Get coverage files
-      uses: actions/download-artifact@v8
+      uses: actions/download-artifact@v8.0.2
       with:
         path: coverage
         pattern: coverage-*
         merge-multiple: true
 
-    - name: Install dependencies
-      run: uv sync --frozen --all-extras --all-groups
+    - name: Install coverage dependencies
+      run: uv sync --frozen --only-group tests --python 3.11
 
-    - run: ls -la coverage
-    - run: uv run coverage combine coverage
-    - run: uv run coverage report --skip-covered --show-missing
-    - run: uv run coverage json  # json for coverage badge
+    - name: Combine coverage and enforce the threshold
+      run: |
+        uv run --no-sync coverage combine coverage
+        uv run --no-sync coverage report --format=markdown --skip-covered --show-missing \
+          >> "$GITHUB_STEP_SUMMARY"
 
-    - name: Generate Coverage Badge
+    - name: Get coverage percentage for badge
+      id: coverage
       if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
       run: |
-        COV=$(uv run python -c 'import json; print(json.load(open("coverage.json"))["totals"]["percent_covered_display"])')
-        if [ "$COV" -ge 95 ]; then COLOR="brightgreen"; elif [ "$COV" -ge 80 ]; then COLOR="yellowgreen"; elif [ "$COV" -ge 60 ]; then COLOR="yellow"; else COLOR="red"; fi
+        uv run --no-sync coverage json
+        percentage=$(uv run --no-sync python -c \
+          'import json; print(json.load(open("coverage.json"))["totals"]["percent_covered_display"])')
+        echo "percentage=$percentage" >> "$GITHUB_OUTPUT"
+
+  coverage-badge:
+    needs: coverage-combine
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+    - name: Generate Coverage Badge
+      env:
+        COVERAGE: ${{ needs.coverage-combine.outputs.percentage }}
+      run: |
+        if [ "$COVERAGE" -ge 95 ]; then
+          color=brightgreen
+        elif [ "$COVERAGE" -ge 80 ]; then
+          color=yellowgreen
+        else
+          color=red
+        fi
         mkdir -p badges
-        curl -s "https://img.shields.io/badge/coverage-${COV}%25-${COLOR}" > badges/coverage.svg
+        curl --fail --silent --show-error --retry 3 \
+          "https://img.shields.io/badge/coverage-${COVERAGE}%25-${color}" -o badges/coverage.svg
 
     - name: Publish Coverage Badge
-      if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-      uses: peaceiris/actions-gh-pages@v4
+      uses: peaceiris/actions-gh-pages@v4.1.0
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         publish_dir: ./badges
         publish_branch: gh-pages
         destination_dir: badges
         keep_files: true
-
-    - name: Coverage summary report
-      id: coverage_report
-      if: always()
-      run: |
-        {
-          echo "COVERAGE_REPORT<<EOF"
-          uv run coverage report --format=markdown --show-missing --skip-covered
-          echo "EOF"
-        } >> "$GITHUB_OUTPUT"
-
-    - name: Post coverage PR comment
-      if: always() && github.event_name == 'pull_request'
-      uses: actions/github-script@v9
-      with:
-        script: |
-          const marker = '<!-- coverage-report -->';
-          const body = `${marker}\n## Coverage Report\n\n${{ steps.coverage_report.outputs.COVERAGE_REPORT }}`;
-          const { data: comments } = await github.rest.issues.listComments({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            issue_number: context.issue.number,
-          });
-          const previous = comments.find(c => c.body.includes(marker));
-          if (previous) {
-            await github.rest.issues.updateComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: previous.id,
-              body,
-            });
-          } else {
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body,
-            });
-          }

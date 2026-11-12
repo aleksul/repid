@@ -1,10 +1,11 @@
 from typing import Any
 
+from repid import LeaseRenewal
 from repid.connections.pubsub.protocol import _helpers
 
 
 def test_channel_config() -> None:
-    async def cb(msg: Any) -> None:
+    async def cb(msg: Any, _renewal: LeaseRenewal | None = None) -> None:
         pass
 
     config = _helpers.ChannelConfig(
@@ -18,7 +19,7 @@ def test_channel_config() -> None:
 
 
 def test_queued_delivery() -> None:
-    async def cb(msg: Any) -> None:
+    async def cb(msg: Any, _renewal: LeaseRenewal | None = None) -> None:
         pass
 
     msg: Any = "msg"

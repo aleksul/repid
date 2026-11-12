@@ -1,4 +1,3 @@
-from ._concurrency import Concurrency as Concurrency
 from .asyncapi import AsyncAPIGenerator as AsyncAPIGenerator
 from .asyncapi_server import AsyncAPIServer as AsyncAPIServer
 from .asyncapi_server import AsyncAPIServerSettings as AsyncAPIServerSettings

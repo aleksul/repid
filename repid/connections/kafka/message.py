@@ -91,19 +91,7 @@ class KafkaReceivedMessage(ReceivedMessageT):
     ) -> None:
         self._action = action
 
-        async def settle() -> None:
-            try:
-                if publish is not None:
-                    if not self._is_owned():
-                        publish.close()
-                        return
-                    await publish
-                await self._mark_complete_callback()
-            except Exception:
-                self._action = None
-                raise
-
-        settlement = asyncio.create_task(settle())
+        settlement = asyncio.create_task(self._perform_settlement(publish))
         try:
             await asyncio.wait({settlement})
         except asyncio.CancelledError:
@@ -112,6 +100,18 @@ class KafkaReceivedMessage(ReceivedMessageT):
             await asyncio.gather(settlement, return_exceptions=True)
             raise
         settlement.result()
+
+    async def _perform_settlement(self, publish: Coroutine[Any, Any, Any] | None) -> None:
+        try:
+            if publish is not None:
+                if not self._is_owned():
+                    publish.close()
+                    return
+                await publish
+            await self._mark_complete_callback()
+        except Exception:
+            self._action = None
+            raise
 
     async def nack(self) -> None:
         if self._action is not None or not self._is_owned():

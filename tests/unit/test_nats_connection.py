@@ -11,7 +11,7 @@ from nats.js.api import ConsumerConfig
 from nats.js.errors import APIError, NotFoundError
 from nats.js.errors import Error as JetStreamError
 
-from repid import Concurrency, Repid, Router
+from repid import Concurrency, LeaseRenewal, Repid, Router
 from repid.connections.nats.message_broker import (
     NatsReceivedMessage,
     NatsServer,
@@ -451,7 +451,7 @@ async def test_nats_pause_stops_intake_and_close_returns_unfinished_submissions(
         opened.set()
         return sub
 
-    async def blocked(_message: Any) -> None:
+    async def blocked(_message: Any, _renewal: LeaseRenewal | None = None) -> None:
         submitting.set()
         await asyncio.Event().wait()
 

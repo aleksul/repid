@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Callable, Coroutine, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
@@ -16,6 +16,7 @@ from nats.js.errors import Error as JetStreamError
 from repid.connections.abc import (
     CapabilitiesT,
     MessageAction,
+    MessageCallbackT,
     ReceivedMessageT,
     SentMessageT,
     ServerT,
@@ -28,10 +29,10 @@ if TYPE_CHECKING:
     from nats.aio.subscription import Subscription
     from nats.js.client import JetStreamContext
 
-    from repid._concurrency import Concurrency
     from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
     from repid.data import ExternalDocs, Tag
+    from repid.data.concurrency import Concurrency
 
 logger = logging.getLogger("repid.connections.nats")
 
@@ -252,7 +253,7 @@ class NatsSubscriber(SubscriberT):
     def __init__(
         self,
         server: NatsServer,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
+        channels_to_callbacks: dict[str, MessageCallbackT],
     ) -> None:
         self._server = server
         self._channels_to_callbacks = channels_to_callbacks
@@ -296,7 +297,7 @@ class NatsSubscriber(SubscriberT):
     async def _subscribe_channel(
         self,
         channel: str,
-        callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+        callback: MessageCallbackT,
         generation: object,
     ) -> None:
         js = self._server._js
@@ -336,7 +337,7 @@ class NatsSubscriber(SubscriberT):
         self,
         js: JetStreamContext,
         channel: str,
-        callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+        callback: MessageCallbackT,
         generation: object,
         stream: str,
         *,
@@ -381,7 +382,7 @@ class NatsSubscriber(SubscriberT):
 
     async def _submit(
         self,
-        callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+        callback: MessageCallbackT,
         message: NatsReceivedMessage,
         generation: object,
     ) -> None:
@@ -615,7 +616,7 @@ class NatsServer(ServerT):
     async def subscribe(
         self,
         *,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
+        channels_to_callbacks: dict[str, MessageCallbackT],
         concurrency: Concurrency,  # noqa: ARG002
         channel_concurrency: dict[str, Concurrency],  # noqa: ARG002
     ) -> SubscriberT:

@@ -24,11 +24,11 @@ from repid.middlewares import ActorMiddlewareT, _compile_actor_middleware_pipeli
 if TYPE_CHECKING:
     from concurrent.futures import Executor
 
-    from repid._concurrency import Concurrency
     from repid.asyncapi.models import OperationBindingsObject
     from repid.connections.abc import BaseMessageT, ReceivedMessageT
     from repid.converter import ConverterT
     from repid.data import Channel, ExternalDocs, Tag
+    from repid.data.concurrency import Concurrency
     from repid.data.message_schema import ActorMessageMetadata
 
 
@@ -284,7 +284,10 @@ class Router:
             ),
         ):
             existing = channel
-        channels[channel.address] = replace(existing, concurrency=concurrency)
+        # The selected channel metadata and budget can come from different declarations.
+        if existing.concurrency != concurrency:
+            existing = replace(existing, concurrency=concurrency)
+        channels[channel.address] = existing
 
     def _materialize_actor(
         self,

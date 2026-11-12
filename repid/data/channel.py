@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from repid._concurrency import Concurrency
+from repid.data.concurrency import Concurrency
 
 if TYPE_CHECKING:
     from repid.asyncapi.models import ChannelBindingsObject

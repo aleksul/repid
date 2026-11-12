@@ -7,7 +7,7 @@ import logging
 import math
 import uuid
 from collections import Counter
-from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from functools import partial
@@ -22,16 +22,18 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import ResponseError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
-from repid._concurrency import Concurrency, _channel_hints
-from repid._keep_alive import _keep_message_alive
+from repid._concurrency import _channel_hints
+from repid._keep_alive import LeaseRenewal
 from repid.connections.abc import (
     CapabilitiesT,
     MessageAction,
+    MessageCallbackT,
     ReceivedMessageT,
     SentMessageT,
     ServerT,
     SubscriberT,
 )
+from repid.data.concurrency import Concurrency
 
 logger = logging.getLogger("repid.connections.redis")
 
@@ -367,7 +369,7 @@ class RedisSubscriber(SubscriberT):
         *,
         redis_client: Redis,
         channels: dict[str, ChannelConfig],
-        callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
+        callbacks: dict[str, MessageCallbackT],
         consumer_name: str,
         channel_concurrency: Mapping[str, Concurrency] | None = None,
         server: RedisServer,
@@ -404,6 +406,7 @@ class RedisSubscriber(SubscriberT):
             for channel in channels
         }
         self._reclaim_cursors: dict[str, str] = {}
+        self._reclaim_due: set[str] = set()
         self._callback_counts: Counter[str] = Counter()
         self._intake_requests: set[str] = set()
         self._intake_changed = {cfg.group: asyncio.Event() for cfg in channels.values()}
@@ -447,6 +450,8 @@ class RedisSubscriber(SubscriberT):
     async def resume(self) -> None:
         """Resume message consumption."""
         self._paused_event.set()
+        for channel in self._reclaim_due:
+            self._signal_intake_changed(self._channels[channel].group)
 
     async def close(self) -> None:
         """Close after the outstanding read and in-flight callbacks finish."""
@@ -553,7 +558,11 @@ class RedisSubscriber(SubscriberT):
 
     def _available_channels(self, channels: dict[str, ChannelConfig]) -> dict[str, ChannelConfig]:
         # A saturated stream should not prevent other streams from reaching admission.
-        return {ch: cfg for ch, cfg in channels.items() if self._available_slots(ch)}
+        return {
+            ch: cfg
+            for ch, cfg in channels.items()
+            if ch not in self._reclaim_due and self._available_slots(ch)
+        }
 
     async def _read_group(self, group_name: str, channels: dict[str, ChannelConfig]) -> bool:
         if self._closed or not self._paused_event.is_set():
@@ -566,7 +575,7 @@ class RedisSubscriber(SubscriberT):
         stream_to_channel = {cfg.stream: ch for ch, cfg in available.items()}
         # Redis uses one COUNT for the read, applied to each included stream.
         count = min(self._available_slots(ch) for ch in available)
-        with self._reserve_intake(available):
+        with self._reserve_intake(available, group_name):
             result = cast(
                 "_StreamReadResultT",
                 await self._read_assignments(
@@ -703,9 +712,9 @@ class RedisSubscriber(SubscriberT):
         scanned = 0
         for channel, cfg in channels.items():
             count = self._available_slots(channel)
-            if not count:
+            if not count or channel in self._reclaim_due:
                 continue
-            with self._reserve_intake((channel,)):
+            with self._reserve_intake((channel,), group_name):
                 last_id = await self._recover_stream(channel, cfg, cursors[cfg.stream], count)
             scanned += 1
             if last_id is not None:
@@ -768,7 +777,7 @@ class RedisSubscriber(SubscriberT):
         messages: list[tuple[bytes | str, dict[bytes | str, bytes | str] | None]],
         channel: str,
         stream_name: str,
-        callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+        callback: MessageCallbackT,
     ) -> None:
         """Process messages from a single stream."""
         cfg = self._channels[channel]
@@ -827,8 +836,9 @@ class RedisSubscriber(SubscriberT):
     def _reserve_intake(
         self,
         channels: Collection[str],
+        group: str,
         *,
-        wake_readers: str | None = None,
+        wake_readers: bool = False,
     ) -> Generator[None, None, None]:
         # Each stream has one intake request at a time. Hold the reservation
         # until the response has been turned into tracked callback tasks.
@@ -837,8 +847,8 @@ class RedisSubscriber(SubscriberT):
             yield
         finally:
             self._intake_requests.difference_update(channels)
-            if wake_readers is not None:
-                self._signal_intake_changed(wake_readers)
+            if wake_readers or self._reclaim_due.intersection(channels):
+                self._signal_intake_changed(group)
 
     def _signal_intake_changed(self, group: str) -> None:
         changed = self._intake_changed[group]
@@ -852,26 +862,30 @@ class RedisSubscriber(SubscriberT):
 
     async def _run_callback(
         self,
-        callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+        callback: MessageCallbackT,
         message: RedisReceivedMessage,
         message_id: str,
     ) -> None:
         """Run a callback and handle cleanup."""
+        renewal = None
         try:
             # A read can finish after pause(). Keep its lease alive while the
             # subscriber owns the delivery and the worker has not seen it yet.
-            while self._closed or not self._paused_event.is_set():
-                async with _keep_message_alive(
-                    message,
-                    message.keep_alive_interval,
-                    self._server,
-                ):
-                    while not self._paused_event.is_set():
-                        await self._paused_event.wait()
-                    if self._closed:
-                        await message.reject()
-                        return
-            await callback(message)
+            if self._closed or not self._paused_event.is_set():
+                if (interval := message.keep_alive_interval) is not None:
+                    renewal = LeaseRenewal(message)
+                    renewal.set_interval(interval)
+                while not self._paused_event.is_set():
+                    await self._paused_event.wait()
+                if self._closed:
+                    await message.reject()
+                    return
+
+            if renewal is None:
+                await callback(message)
+            else:
+                with renewal.handoff():
+                    await callback(message)
         except Exception as exc:
             logger.exception(
                 "message.callback.error",
@@ -881,37 +895,66 @@ class RedisSubscriber(SubscriberT):
             if not message.is_acted_on:
                 await message.nack()
         finally:
-            self._in_flight_messages.discard((message.channel, message_id))
+            try:
+                if renewal is not None:
+                    await renewal.close_if_unclaimed()
+            finally:
+                self._in_flight_messages.discard((message.channel, message_id))
 
     async def _claim_loop(self) -> None:
         """Periodically reclaim stale pending messages using XAUTOCLAIM."""
+        await asyncio.gather(
+            *(
+                self._claim_channel_loop(cfg, channel, self._callbacks[channel])
+                for channel, cfg in self._channels.items()
+                if channel in self._callbacks
+            ),
+        )
+
+    async def _claim_channel_loop(
+        self,
+        cfg: ChannelConfig,
+        channel: str,
+        callback: MessageCallbackT,
+    ) -> None:
         while not self._closed:
             await self._wait_for_close(self._claim_interval)
-            if self._closed:
-                break
-            for channel, cfg in self._channels.items():
-                callback = self._callbacks.get(channel)
-                if callback is None:
-                    continue
-                try:
+            if not self._closed:
+                await self._reclaim_when_available(cfg, channel, callback)
+
+    async def _reclaim_when_available(
+        self,
+        cfg: ChannelConfig,
+        channel: str,
+        callback: MessageCallbackT,
+    ) -> None:
+        # Reserve the next available slot for a due reclaim. Fresh reads in
+        # other channels can proceed while this channel waits for capacity.
+        self._reclaim_due.add(channel)
+        try:
+            while not self._closed:
+                if self._paused_event.is_set() and self._available_slots(channel):
+                    self._reclaim_due.discard(channel)
                     await self._reclaim_pending(cfg, channel, callback)
-                except (
-                    ConnectionError,
-                    TimeoutError,
-                    RedisConnectionError,
-                    RedisTimeoutError,
-                    ResponseError,
-                ) as exc:
-                    logger.exception(
-                        "consumer.reclaim.error",
-                        exc_info=exc,
-                    )
+                    return
+                await self._intake_changed[cfg.group].wait()
+        except (
+            ConnectionError,
+            TimeoutError,
+            RedisConnectionError,
+            RedisTimeoutError,
+            ResponseError,
+        ) as exc:
+            logger.exception("consumer.reclaim.error", exc_info=exc)
+        finally:
+            self._reclaim_due.discard(channel)
+            self._signal_intake_changed(cfg.group)
 
     async def _reclaim_pending(
         self,
         cfg: ChannelConfig,
         channel: str,
-        callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+        callback: MessageCallbackT,
     ) -> None:
         """Reclaim stale pending messages for one channel using XAUTOCLAIM.
 
@@ -925,7 +968,7 @@ class RedisSubscriber(SubscriberT):
             and self._paused_event.is_set()
             and (count := self._available_slots(channel))
         ):
-            with self._reserve_intake((channel,), wake_readers=cfg.group):
+            with self._reserve_intake((channel,), cfg.group, wake_readers=True):
                 result = await self._read_assignments(
                     cfg.group,
                     self._redis.xautoclaim(
@@ -1209,7 +1252,7 @@ class RedisServer(ServerT):
     async def subscribe(
         self,
         *,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
+        channels_to_callbacks: dict[str, MessageCallbackT],
         concurrency: Concurrency,
         channel_concurrency: dict[str, Concurrency],
     ) -> SubscriberT:

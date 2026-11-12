@@ -1,12 +1,11 @@
 import asyncio
 import contextlib
-from collections.abc import Callable, Coroutine
 from typing import cast
 
 import pytest
 
-from repid import Concurrency
-from repid.connections.abc import MessageAction, ReceivedMessageT
+from repid import Concurrency, LeaseRenewal
+from repid.connections.abc import MessageAction, MessageCallbackT, ReceivedMessageT
 from repid.connections.in_memory.message_broker import (
     _SUBMISSION_BATCH_SIZE,
     InMemoryReceivedMessage,
@@ -37,7 +36,7 @@ async def test_in_memory_subscriber_acks_duplicate_ids_after_header_mutation() -
     received = 0
     completed = asyncio.Event()
 
-    async def callback(message: ReceivedMessageT) -> None:
+    async def callback(message: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
         nonlocal received
         received += 1
         assert message.headers is not None
@@ -265,7 +264,7 @@ async def test_server_subscribe_and_consume() -> None:
             channel_concurrency={},
             channels_to_callbacks={
                 "chan1": cast(
-                    Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+                    MessageCallbackT,
                     callback,
                 ),
             },
@@ -306,7 +305,7 @@ async def test_server_subscribe_callback_exception_releases_semaphore(ack_first:
             channel_concurrency={},
             channels_to_callbacks={
                 "chan1": cast(
-                    Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+                    MessageCallbackT,
                     failing_callback,
                 ),
             },
@@ -342,7 +341,7 @@ async def test_server_subscribe_concurrency_limit() -> None:
             channel_concurrency={},
             channels_to_callbacks={
                 "chan1": cast(
-                    Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+                    MessageCallbackT,
                     callback,
                 ),
             },
@@ -371,7 +370,7 @@ async def test_server_subscribe_no_concurrency_limit() -> None:
             channel_concurrency={},
             channels_to_callbacks={
                 "chan1": cast(
-                    Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+                    MessageCallbackT,
                     callback,
                 ),
             },
@@ -387,7 +386,7 @@ async def test_subscriber_pause_resume() -> None:
 
     received: asyncio.Queue[bytes] = asyncio.Queue()
 
-    async def callback(msg: ReceivedMessageT) -> None:
+    async def callback(msg: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
         await msg.ack()
         received.put_nowait(msg.payload)
 
@@ -440,7 +439,7 @@ async def test_closing_saturated_consumer_leaves_pending_deliveries_in_order() -
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def callback(msg: ReceivedMessageT) -> None:
+    async def callback(msg: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
         assert msg.payload == first.payload
         started.set()
         await release.wait()
@@ -471,7 +470,7 @@ async def test_cancelled_callback_requeues_message_and_releases_slot(
     received: asyncio.Queue[ReceivedMessageT] = asyncio.Queue()
     cancelled: ReceivedMessageT | None = None
 
-    async def callback(message: ReceivedMessageT) -> None:
+    async def callback(message: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
         nonlocal cancelled
         if not cancel_before_start and cancelled is None:
             cancelled = message
@@ -517,12 +516,18 @@ async def test_saturated_consumer_leaves_work_for_a_competing_subscriber() -> No
     release = asyncio.Event()
     other_received: asyncio.Queue[bytes] = asyncio.Queue()
 
-    async def slow_callback(message: ReceivedMessageT) -> None:
+    async def slow_callback(
+        message: ReceivedMessageT,
+        _renewal: LeaseRenewal | None = None,
+    ) -> None:
         started.set()
         await release.wait()
         await message.ack()
 
-    async def other_callback(message: ReceivedMessageT) -> None:
+    async def other_callback(
+        message: ReceivedMessageT,
+        _renewal: LeaseRenewal | None = None,
+    ) -> None:
         await message.ack()
         other_received.put_nowait(message.payload)
 
@@ -570,11 +575,11 @@ async def test_supervisor_cancellation() -> None:
             channel_concurrency={},
             channels_to_callbacks={
                 "chan1": cast(
-                    Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+                    MessageCallbackT,
                     callback,
                 ),
                 "chan2": cast(
-                    Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+                    MessageCallbackT,
                     callback,
                 ),
             },
@@ -604,12 +609,12 @@ async def test_batching_yields_to_other_channels_with_a_backlog() -> None:
     other_channel_seen: asyncio.Queue[int] = asyncio.Queue()
     message_count = 2 * _SUBMISSION_BATCH_SIZE
 
-    async def first(message: ReceivedMessageT) -> None:
+    async def first(message: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
         nonlocal first_channel_count
         first_channel_count += 1
         await message.ack()
 
-    async def other(message: ReceivedMessageT) -> None:
+    async def other(message: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
         other_channel_seen.put_nowait(first_channel_count)
         await message.ack()
 
@@ -635,7 +640,7 @@ async def test_channel_intake_limits_pending_callbacks() -> None:
     saturated = asyncio.Event()
     release = asyncio.Event()
 
-    async def callback(message: ReceivedMessageT) -> None:
+    async def callback(message: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
         nonlocal callbacks
         callbacks += 1
         if callbacks == 3:

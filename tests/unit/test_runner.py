@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import suppress
 from typing import Literal
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from repid import Concurrency, Repid, Router, ServerT
-from repid._keep_alive import _keep_alive_loop
+from repid import Concurrency, LeaseRenewal, Repid, Router, ServerT
 from repid._message_lifecycle import _actor_run
 from repid._runner import _Runner
 from repid.connections.in_memory import InMemoryServer
@@ -892,43 +890,73 @@ async def test_runner_unrouted_message_no_id_always_reject() -> None:
 
 
 async def test_keep_alive_loop_calls_keep_alive() -> None:
-    message = Mock()
-    message.is_acted_on = False
-    message.keep_alive = AsyncMock()
-    message.message_id = "test-msg"
+    renewed = asyncio.Event()
+    message = Mock(keep_alive=AsyncMock(side_effect=renewed.set))
 
-    task = asyncio.create_task(_keep_alive_loop(message, interval=0))
-    await asyncio.sleep(0.05)
-    task.cancel()
-    with suppress(asyncio.CancelledError):
-        await task
+    renewal = LeaseRenewal(message)
+    renewal.set_interval(0)
+    await asyncio.wait_for(renewed.wait(), 1)
+    await renewal.close()
 
-    assert message.keep_alive.call_count >= 1
+    message.keep_alive.assert_awaited()
+
+
+async def test_keep_alive_interval_can_change_and_pause_without_restarting() -> None:
+    renewed = asyncio.Event()
+    message = Mock(keep_alive=AsyncMock(side_effect=renewed.set))
+    renewal = LeaseRenewal(message)
+    renewal.set_interval(3600)
+    task = renewal._task
+    assert task is not None
+    try:
+        await asyncio.sleep(0)
+        renewal.set_interval(0)
+        await asyncio.wait_for(renewed.wait(), 1)
+
+        renewal.set_interval(None)
+        calls = message.keep_alive.await_count
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert message.keep_alive.await_count == calls
+        assert not task.done()
+
+        renewed.clear()
+        renewal.set_interval(0)
+        await asyncio.wait_for(renewed.wait(), 1)
+        assert renewal._task is task
+    finally:
+        await renewal.close()
+    assert task.done()
 
 
 async def test_keep_alive_loop_exits_when_adapter_stops_renewal() -> None:
     message = Mock(keep_alive=AsyncMock(return_value=False))
 
-    await asyncio.wait_for(_keep_alive_loop(message, interval=0), timeout=1)
+    renewal = LeaseRenewal(message)
+    renewal.set_interval(0)
+    task = renewal._task
+    assert task is not None
+    await asyncio.wait_for(task, 1)
+    renewal.set_interval(1)
+    await renewal.close()
 
     message.keep_alive.assert_awaited_once()
+    assert renewal._task is task
 
 
 async def test_keep_alive_loop_logs_error_and_continues(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    message = Mock()
-    message.is_acted_on = False
-    message.keep_alive = AsyncMock(side_effect=RuntimeError("broker error"))
-    message.message_id = "test-msg"
+    message = Mock(
+        keep_alive=AsyncMock(side_effect=[RuntimeError("broker error"), False]),
+        message_id="test-msg",
+    )
+    renewal = LeaseRenewal(message)
+    renewal.set_interval(0)
+    assert renewal._task is not None
+    await asyncio.wait_for(renewal._task, 1)
 
-    task = asyncio.create_task(_keep_alive_loop(message, interval=0))
-    await asyncio.sleep(0.05)
-    task.cancel()
-    with suppress(asyncio.CancelledError):
-        await task
-
-    assert message.keep_alive.call_count >= 1
+    assert message.keep_alive.await_count == 2
     warning = next(
         (r for r in caplog.records if r.message == "message.keep_alive.error"),
         None,

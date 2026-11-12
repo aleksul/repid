@@ -8,14 +8,14 @@ from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from repid._concurrency import _ConcurrencyController, _Reservation
-from repid._keep_alive import _keep_message_alive, _RenewalTiming
+from repid._keep_alive import LeaseRenewal
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from repid._concurrency import Concurrency
     from repid.connections.abc import ReceivedMessageT
     from repid.data.actor import ActorData, ActorExecutionContext
+    from repid.data.concurrency import Concurrency
 
 logger = logging.getLogger("repid")
 
@@ -89,12 +89,21 @@ async def _actor_execution_with_confirmation(
     return result
 
 
-def _processing_interval(actor: ActorData, message: ReceivedMessageT) -> float | None:
+def _processing_interval(
+    actor: ActorData,
+    message: ReceivedMessageT,
+    actor_context: ActorExecutionContext,
+) -> float | None:
     if actor.keep_alive is False:
         return None
+    interval: float | None
     if isinstance(actor.keep_alive, (int, float)) and not isinstance(actor.keep_alive, bool):
-        return actor.keep_alive
-    return message.keep_alive_interval
+        interval = actor.keep_alive
+    else:
+        interval = message.keep_alive_interval
+    if interval is not None and actor_context.server.capabilities["supports_keep_alive"]:
+        return interval
+    return None
 
 
 async def _actor_run(
@@ -102,12 +111,12 @@ async def _actor_run(
     message: ReceivedMessageT,
     actor_context: ActorExecutionContext,
 ) -> ActorResultT | Exception:
-    interval = _processing_interval(actor, message)
-    if interval is None:
+    delivery = _Delivery(message)
+    try:
+        delivery.renew_at(_processing_interval(actor, message, actor_context))
         return await _run_actor_pipeline(actor, message, actor_context)
-
-    async with _keep_message_alive(message, interval, actor_context.server):
-        return await _run_actor_pipeline(actor, message, actor_context)
+    finally:
+        await delivery.finish()
 
 
 async def _run_actor_pipeline(
@@ -154,10 +163,24 @@ class _Delivery:
     """Hold capacity until processing or rejection finishes."""
 
     message: ReceivedMessageT
+    renewal: LeaseRenewal | None = None
     reservation: _Reservation | None = None
     started: bool = False
     shutdown_rejection: asyncio.Task[None] | None = None
-    renewal_timing: _RenewalTiming | None = None
+
+    def renew_at(self, interval: float | None) -> None:
+        if self.renewal is None:
+            if interval is None:
+                return
+            self.renewal = LeaseRenewal(self.message)
+        self.renewal.set_interval(interval)
+
+    async def finish(self) -> None:
+        try:
+            if self.renewal is not None:
+                await self.renewal.close()
+        finally:
+            self.release()
 
     def release(self) -> None:
         if self.reservation is not None:
@@ -170,6 +193,22 @@ class _Delivery:
 
 class _MessageLifecycle:
     """Own delivery admission, processing, and drain for a single runner."""
+
+    __slots__ = (
+        "_actor_context",
+        "_cancel_event",
+        "_cancel_waiter",
+        "_capacity",
+        "_committed",
+        "_max_tasks",
+        "_measure_payload",
+        "_prestart_cleanup",
+        "_processing",
+        "_stop_consume_event",
+        "_submissions",
+        "processed",
+        "quota_reached",
+    )
 
     def __init__(
         self,
@@ -215,14 +254,14 @@ class _MessageLifecycle:
         message: ReceivedMessageT,
         unrouted: Callable[[ReceivedMessageT], Awaitable[None]],
     ) -> None:
-        delivery = _Delivery(message)
+        delivery = _Delivery(message, renewal=LeaseRenewal.claim_for(message))
         try:
             if self._accepting:
                 for actor in actors:
                     if actor.routing_strategy(message):
                         break
                 else:
-                    await self._track_submission(unrouted(message))
+                    await self._track_submission(self._settle_unrouted(delivery, unrouted))
                     return
 
                 channel = message.channel
@@ -242,20 +281,22 @@ class _MessageLifecycle:
             raise
         await self._track_submission(self._reject_and_release(delivery))
 
+    @staticmethod
+    async def _settle_unrouted(
+        delivery: _Delivery,
+        unrouted: Callable[[ReceivedMessageT], Awaitable[None]],
+    ) -> None:
+        await unrouted(delivery.message)
+        await delivery.finish()
+
     async def _reject_and_release(self, delivery: _Delivery, *, renew: bool = True) -> None:
         try:
             message = delivery.message
             if not message.is_acted_on:
-                interval = self._broker_interval(message) if renew else None
-                async with _keep_message_alive(
-                    message,
-                    interval,
-                    self._actor_context.server,
-                    delivery.renewal_timing,
-                ):
-                    await delivery.reject()
+                delivery.renew_at(self._broker_interval(message) if renew else None)
+                await delivery.reject()
         finally:
-            delivery.release()
+            await delivery.finish()
 
     async def _track_submission(self, operation: Awaitable[None]) -> None:
         # The adapter can run a submission inline in a long-lived reader task.
@@ -275,18 +316,8 @@ class _MessageLifecycle:
         return interval if interval is not None and interval > 0 else None
 
     async def _wait_for_capacity(self, delivery: _Delivery, channel: str, size: int) -> None:
-        interval = self._broker_interval(delivery.message)
-        if interval is None:
-            delivery.reservation = await self._capacity.acquire(channel, size)
-            return
-        delivery.renewal_timing = _RenewalTiming()
-        async with _keep_message_alive(
-            delivery.message,
-            interval,
-            self._actor_context.server,
-            delivery.renewal_timing,
-        ):
-            delivery.reservation = await self._capacity.acquire(channel, size)
+        delivery.renew_at(self._broker_interval(delivery.message))
+        delivery.reservation = await self._capacity.acquire(channel, size)
 
     def start(self) -> None:
         self._cancel_waiter = asyncio.create_task(self._cancel_processing())
@@ -305,30 +336,27 @@ class _MessageLifecycle:
         delivery.started = True
         message = delivery.message
         try:
-            async with _keep_message_alive(
-                message,
-                _processing_interval(actor, message),
-                self._actor_context.server,
-                delivery.renewal_timing,
-            ):
-                try:
-                    await _run_actor_pipeline(actor, message, self._actor_context)
-                except asyncio.CancelledError:
-                    if delivery.shutdown_rejection is None:
-                        # A settlement reserved at cancellation may have failed
-                        # and released its action before propagating cancellation.
-                        await delivery.reject()
-                    raise
-                finally:
-                    if delivery.shutdown_rejection is not None:
-                        await delivery.shutdown_rejection
+            delivery.renew_at(_processing_interval(actor, message, self._actor_context))
+            try:
+                await _run_actor_pipeline(actor, message, self._actor_context)
+            except asyncio.CancelledError:
+                if delivery.shutdown_rejection is None:
+                    # A settlement reserved at cancellation may have failed
+                    # and released its action before propagating cancellation.
+                    await delivery.reject()
+                raise
+            finally:
+                if delivery.shutdown_rejection is not None:
+                    await delivery.shutdown_rejection
         except Exception:
             # Stop admitting messages before freeing the slot for a waiting delivery.
             self.stop()
             raise
         finally:
-            delivery.release()
-            self.processed += 1
+            try:
+                await delivery.finish()
+            finally:
+                self.processed += 1
 
     def _start_processing(self, actor: ActorData, delivery: _Delivery) -> None:
         coroutine = self._process(actor, delivery)
@@ -351,15 +379,20 @@ class _MessageLifecycle:
         if not delivery.started:
             cleanup = asyncio.create_task(self._reject_and_release(delivery))
             self._prestart_cleanup.add(cleanup)
-            cleanup.add_done_callback(self._cleanup_done)
+            cleanup.add_done_callback(partial(self._cleanup_done, delivery))
         if not task.cancelled() and (exc := task.exception()) is not None:
             logger.error("runner.processing.error", exc_info=exc)
         if self.max_tasks_hit:
             self._stop_consume_event.set()
 
-    def _cleanup_done(self, task: asyncio.Task[None]) -> None:
+    def _cleanup_done(self, delivery: _Delivery, task: asyncio.Task[None]) -> None:
         self._prestart_cleanup.discard(task)
-        if not task.cancelled() and (exc := task.exception()) is not None:
+        if task.cancelled():
+            # The cleanup may have been cancelled before it could run its finally block.
+            if delivery.renewal is not None:
+                delivery.renewal.cancel()
+            delivery.release()
+        elif (exc := task.exception()) is not None:
             logger.error("runner.rejection.error", exc_info=exc)
             self.stop()
 

@@ -3,22 +3,24 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from functools import partial
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from repid._concurrency import Concurrency, _channel_hints
+from repid._concurrency import _channel_hints
 from repid.connections.abc import (
     CapabilitiesT,
     MessageAction,
+    MessageCallbackT,
     ReceivedMessageT,
     SentMessageT,
     ServerT,
     SubscriberT,
 )
 from repid.connections.in_memory.utils import DummyQueue
+from repid.data.concurrency import Concurrency
 
 logger = logging.getLogger("repid.connections.in_memory")
 
@@ -184,7 +186,7 @@ class InMemorySubscriber(SubscriberT):
     def __init__(
         self,
         *,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
+        channels_to_callbacks: dict[str, MessageCallbackT],
         queues: dict[str, DummyQueue],
         channel_concurrency: Mapping[str, Concurrency] | None = None,
     ) -> None:
@@ -248,26 +250,11 @@ class InMemorySubscriber(SubscriberT):
         *,
         channel: str,
         queue: DummyQueue,
-        callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+        callback: MessageCallbackT,
     ) -> None:
         hint = self._channel_concurrency.get(channel)
         limit = hint.messages if hint is not None else None
         semaphore = asyncio.Semaphore(limit) if limit is not None else None
-
-        async def _run_callback(message: InMemoryReceivedMessage) -> None:
-            try:
-                await callback(message)
-            except Exception:
-                logger.exception("message.callback.error", extra={"channel": channel})
-                await message.nack()
-
-        def _callback_done(message: InMemoryReceivedMessage, task: asyncio.Task[None]) -> None:
-            self._callback_tasks.discard(task)
-            if semaphore is not None:
-                semaphore.release()
-            # The callback may be cancelled before its coroutine starts.
-            if task.cancelled():
-                message._requeue()
 
         submitted = 0
         while True:
@@ -278,14 +265,38 @@ class InMemorySubscriber(SubscriberT):
             msg = await queue.queue.get_when_resumed(self._paused_event)
             received_msg = InMemoryReceivedMessage(msg, queue, channel, self._queues)
             queue.processing.add(msg)
-            task = asyncio.create_task(_run_callback(received_msg))
+            task = asyncio.create_task(self._run_callback(callback, received_msg))
             self._callback_tasks.add(task)
-            task.add_done_callback(partial(_callback_done, received_msg))
+            task.add_done_callback(partial(self._callback_done, received_msg, semaphore))
             submitted += 1
             if submitted == _SUBMISSION_BATCH_SIZE:
                 # A full queue or a synchronous requeue may never suspend the reader.
                 submitted = 0
                 await asyncio.sleep(0)
+
+    @staticmethod
+    async def _run_callback(
+        callback: MessageCallbackT,
+        message: InMemoryReceivedMessage,
+    ) -> None:
+        try:
+            await callback(message)
+        except Exception:
+            logger.exception("message.callback.error", extra={"channel": message.channel})
+            await message.nack()
+
+    def _callback_done(
+        self,
+        message: InMemoryReceivedMessage,
+        semaphore: asyncio.Semaphore | None,
+        task: asyncio.Task[None],
+    ) -> None:
+        self._callback_tasks.discard(task)
+        if semaphore is not None:
+            semaphore.release()
+        # The callback may be cancelled before its coroutine starts.
+        if task.cancelled():
+            message._requeue()
 
 
 class InMemoryServer(ServerT):
@@ -422,7 +433,7 @@ class InMemoryServer(ServerT):
     async def subscribe(
         self,
         *,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
+        channels_to_callbacks: dict[str, MessageCallbackT],
         concurrency: Concurrency,
         channel_concurrency: dict[str, Concurrency],
     ) -> SubscriberT:

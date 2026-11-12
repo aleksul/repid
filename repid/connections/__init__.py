@@ -1,8 +1,10 @@
+from repid._keep_alive import LeaseRenewal
 from repid._utils import is_installed
 from repid.connections.abc import (
     BaseMessageT,
     CapabilitiesT,
     MessageAction,
+    MessageCallbackT,
     ReceivedMessageT,
     SentMessageT,
     ServerT,
@@ -16,7 +18,9 @@ __all__ = [
     "BaseMessageT",
     "CapabilitiesT",
     "InMemoryServer",
+    "LeaseRenewal",
     "MessageAction",
+    "MessageCallbackT",
     "ReceivedMessageT",
     "SentMessageT",
     "ServerT",

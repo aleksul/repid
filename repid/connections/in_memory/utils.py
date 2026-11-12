@@ -10,6 +10,8 @@ _Item = TypeVar("_Item")
 
 
 class _DeliveryQueue(asyncio.Queue[_Item]):
+    __slots__ = ("_readable",)
+
     def __init__(self) -> None:
         super().__init__()
         self._readable = asyncio.Event()

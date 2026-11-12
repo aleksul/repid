@@ -2,20 +2,22 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator, Callable, Coroutine
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import FrozenInstanceError
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from repid import Channel, Concurrency, Repid, Router
-from repid._concurrency import (
-    _channel_hints,
-    _ConcurrencyController,
-)
+from repid import Channel, Concurrency, LeaseRenewal, Repid, Router
+from repid._concurrency import _channel_hints, _ConcurrencyController
 from repid._runner import _Runner
-from repid.connections.abc import ReceivedMessageT, ServerT, SubscriberT
+from repid.connections.abc import (
+    MessageCallbackT,
+    ReceivedMessageT,
+    ServerT,
+    SubscriberT,
+)
 from repid.connections.in_memory import InMemoryServer
 from repid.data import ActorData, ActorExecutionContext, MessageData
 
@@ -127,7 +129,9 @@ def test_channel_merge_and_schema() -> None:
     async def first() -> None:
         pass
 
-    @router.actor(channel=Channel(address="a", title="Title"))
+    titled_channel = Channel(address="a", title="Title")
+
+    @router.actor(channel=titled_channel)
     async def second() -> None:
         pass
 
@@ -135,6 +139,7 @@ def test_channel_merge_and_schema() -> None:
     channel = router.channels[0]
     assert channel.concurrency == limits
     assert channel.title == "Title"
+    assert titled_channel.concurrency is None
     assert "concurrency" not in str(app.generate_asyncapi_schema())
     assert channel == Channel(address="a", concurrency=Concurrency(messages=5))
 
@@ -234,9 +239,7 @@ async def run_messages(
     *,
     grace: float = 0.1,
     cancellation_timeout: float = 1.0,
-) -> AsyncGenerator[
-    tuple[Callable[[ReceivedMessageT], Coroutine[None, None, None]], asyncio.Task[None]], None
-]:
+) -> AsyncGenerator[tuple[MessageCallbackT, asyncio.Task[None]], None]:
     subscribed = asyncio.Event()
     subscriber = Mock(
         task=asyncio.get_running_loop().create_future(),
@@ -345,15 +348,51 @@ async def test_prestart_cancellation_consumes_quota_and_shutdown_waits_for_rejec
         assert runner.processed == 0
 
 
-@pytest.mark.parametrize("keep_alive_interval", [None, 1])
-async def test_task_creation_failure_rejects_and_releases_capacity(
-    keep_alive_interval: int | None,
-) -> None:
+async def test_prestart_rejection_cancelled_before_running_cancels_renewal() -> None:
     server = Mock(spec=ServerT, capabilities={"supports_keep_alive": True})
     runner, actor = make_runner(AsyncMock(), max_tasks=1, server=server)
     message = make_message()
-    message.keep_alive_interval = keep_alive_interval
-    held = runner._messages._capacity.try_acquire("a", 0) if keep_alive_interval else None
+    message.keep_alive_interval = 0.001
+    renewed: asyncio.Future[asyncio.Task[object] | None] = (
+        asyncio.get_running_loop().create_future()
+    )
+    capacity = runner._messages._capacity
+    held = capacity.try_acquire("a", 0)
+    assert held is not None
+
+    def record_renewal() -> None:
+        if not renewed.done():
+            renewed.set_result(asyncio.current_task())
+
+    message.keep_alive.side_effect = record_renewal
+    create_task = asyncio.create_task
+
+    def cancel_before_start(coroutine: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
+        task = create_task(coroutine)
+        if getattr(coroutine, "__qualname__", "") in (
+            "_MessageLifecycle._process",
+            "_MessageLifecycle._reject_and_release",
+        ):
+            task.cancel()
+        return task
+
+    async with run_messages(runner, actor) as (submit, running):
+        with patch("repid._message_lifecycle.asyncio.create_task", side_effect=cancel_before_start):
+            submission = asyncio.create_task(submit(message))
+            renewal = await asyncio.wait_for(renewed, 1)
+            held.release()
+            await asyncio.wait_for(submission, 1)
+            await asyncio.wait_for(asyncio.shield(running), 1)
+
+    assert renewal is not None
+    assert renewal.cancelled()
+    assert capacity.worker.messages == 0
+    message.reject.assert_not_awaited()
+
+
+async def test_processing_task_creation_failure_rejects_and_releases_capacity() -> None:
+    runner, actor = make_runner(AsyncMock(), max_tasks=1)
+    message = make_message()
     async with run_messages(runner, actor) as (submit, running):
         with (
             patch(
@@ -365,8 +404,6 @@ async def test_task_creation_failure_rejects_and_releases_capacity(
             await submit(message)
         message.reject.assert_awaited_once()
         assert not runner.max_tasks_hit
-        if held is not None:
-            held.release()
         await asyncio.wait_for(submit(make_message()), 1)
         await asyncio.wait_for(asyncio.shield(running), 1)
         assert runner.processed == 1
@@ -433,8 +470,10 @@ async def test_waiter_uses_broker_interval_until_refused_during_shutdown(
     keep_alive_called = asyncio.Event()
     rejecting = asyncio.Event()
     renewed_during_reject = asyncio.Event()
+    renewal_tasks: set[asyncio.Task[object] | None] = set()
 
     def keep_alive() -> None:
+        renewal_tasks.add(asyncio.current_task())
         keep_alive_called.set()
         if rejecting.is_set():
             renewed_during_reject.set()
@@ -456,6 +495,8 @@ async def test_waiter_uses_broker_interval_until_refused_during_shutdown(
         release.set()
         await asyncio.wait_for(asyncio.shield(running), 1)
         assert runner.processed == 1
+    assert len(renewal_tasks) == 1
+    assert all(task is not None and task.done() for task in renewal_tasks)
 
 
 async def test_actor_renews_during_shutdown_rejection() -> None:
@@ -520,45 +561,58 @@ async def test_shutdown_rejects_if_a_reserved_settlement_fails_on_cancellation()
     actor.fn.assert_not_awaited()
 
 
-async def test_first_actor_renewal_preserves_waiting_deadline() -> None:
+async def test_processing_reuses_waiting_renewal_task_and_deadline() -> None:
     release = asyncio.Event()
+    waiting = asyncio.Event()
+    processing = asyncio.Event()
     server = Mock(spec=ServerT, capabilities={"supports_keep_alive": True})
     runner, actor = make_runner(release.wait, server=server)
     actor.keep_alive = 3600.0
     message = make_message()
     message.keep_alive_interval = 20.0
-    delays: asyncio.Queue[float] = asyncio.Queue()
+    schedules: list[tuple[asyncio.Task[None] | None, float | None]] = []
     capacity = runner._messages._capacity
     held = capacity.try_acquire("a", 1)
     assert held is not None
 
-    async def record_delay(delay: float) -> None:
-        delays.put_nowait(delay)
-        await asyncio.Future()
+    set_interval = LeaseRenewal.set_interval
+
+    def record_schedule(renewal: LeaseRenewal, interval: float | None) -> None:
+        set_interval(renewal, interval)
+        schedules.append((renewal._task, renewal._deadline))
+        if len(schedules) == 1:
+            waiting.set()
+        else:
+            processing.set()
 
     async with run_messages(runner, actor) as (submit, running):
-        with patch("repid._keep_alive.asyncio", wraps=asyncio) as keep_alive_asyncio:
-            keep_alive_asyncio.sleep = record_delay
-            waiting = asyncio.create_task(submit(message))
-            assert await asyncio.wait_for(delays.get(), 1) == 20.0
+        with patch.object(LeaseRenewal, "set_interval", record_schedule):
+            submission = asyncio.create_task(submit(message))
+            await asyncio.wait_for(waiting.wait(), 1)
             held.release()
-            await asyncio.wait_for(waiting, 1)
-            assert 0.0 <= await asyncio.wait_for(delays.get(), 1) <= 20.0
+            await asyncio.wait_for(submission, 1)
+            await asyncio.wait_for(processing.wait(), 1)
             release.set()
             runner.stop_consume_event.set()
             await asyncio.wait_for(asyncio.shield(running), 1)
 
+    first, second = schedules
+    assert first == second
+    task, deadline = first
+    assert task is not None
+    assert task.done()
+    assert deadline is not None
 
-async def test_cancellation_during_keep_alive_cleanup_releases_acquired_capacity() -> None:
+
+async def test_cancellation_during_keep_alive_cleanup_releases_capacity() -> None:
     server = Mock(spec=ServerT, capabilities={"supports_keep_alive": True})
-    runner, actor = make_runner(AsyncMock(), max_tasks=1, server=server)
+    finish_actor = asyncio.Event()
+    runner, actor = make_runner(finish_actor.wait, max_tasks=2, server=server)
+    actor.keep_alive = True
     message = make_message()
     message.keep_alive_interval = 0.001
     keep_alive_started = asyncio.Event()
     cleaning = asyncio.Event()
-    capacity = runner._messages._capacity
-    held = capacity.try_acquire("a", 1)
-    assert held is not None
 
     async def keep_alive() -> None:
         keep_alive_started.set()
@@ -570,17 +624,17 @@ async def test_cancellation_during_keep_alive_cleanup_releases_acquired_capacity
 
     message.keep_alive = AsyncMock(side_effect=keep_alive)
     async with run_messages(runner, actor) as (submit, running):
-        waiting = asyncio.create_task(submit(message))
+        await submit(message)
         await asyncio.wait_for(keep_alive_started.wait(), 1)
-        held.release()
+        finish_actor.set()
         await asyncio.wait_for(cleaning.wait(), 1)
-        waiting.cancel()
+        processing = next(iter(runner._messages._processing))
+        processing.cancel()
         with pytest.raises(asyncio.CancelledError):
-            await waiting
-        message.reject.assert_awaited_once()
+            await processing
         await asyncio.wait_for(submit(make_message()), 1)
         await asyncio.wait_for(asyncio.shield(running), 1)
-        assert runner.processed == 1
+        assert runner.processed == 2
 
 
 async def test_zero_lifetime_quota_skips_subscription() -> None:
@@ -1003,7 +1057,7 @@ async def test_worker_passes_channel_concurrency_on_every_subscription(
 
     async def capture_subscribe(
         *,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
+        channels_to_callbacks: dict[str, MessageCallbackT],
         concurrency: Concurrency,
         channel_concurrency: dict[str, Concurrency],
     ) -> SubscriberT:
@@ -1020,11 +1074,14 @@ async def test_worker_passes_channel_concurrency_on_every_subscription(
             channel="a",
             message=MessageData(payload=b"{}", headers={"topic": "job"}),
         )
-        with patch.object(server, "subscribe", capture_subscribe):
-            result = await asyncio.wait_for(
-                app.run_worker(messages_limit=1, register_signals=[], **options),
-                1,
-            )
+        warning = (
+            pytest.warns(DeprecationWarning, match="tasks_limit is deprecated")
+            if "tasks_limit" in options
+            else nullcontext()
+        )
+        with patch.object(server, "subscribe", capture_subscribe), warning:
+            async with asyncio.timeout(1):
+                result = await app.run_worker(messages_limit=1, register_signals=[], **options)
     assert result.processed == 1
 
 
@@ -1105,3 +1162,23 @@ def test_intake_hints_combine_count_and_bytes_independently() -> None:
         "emails": Concurrency(messages=8, payload_bytes=20 * 1024),
         "other": Concurrency(payload_bytes=20 * 1024),
     }
+
+
+async def test_lease_renewal_handoff_is_scoped_to_its_delivery() -> None:
+    message = make_message()
+    other = make_message()
+    renewal = LeaseRenewal(message)
+    closed = LeaseRenewal(message)
+    await closed.close()
+
+    with closed.handoff():
+        assert LeaseRenewal.claim_for(message) is None
+    with renewal.handoff():
+        assert LeaseRenewal.claim_for(other) is None
+    assert LeaseRenewal.claim_for(message) is None
+    with renewal.handoff():
+        assert LeaseRenewal.claim_for(message) is renewal
+        assert LeaseRenewal.claim_for(message) is None
+
+    await renewal.close_if_unclaimed()
+    await renewal.close()

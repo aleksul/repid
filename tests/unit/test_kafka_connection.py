@@ -8,7 +8,7 @@ import pytest
 from aiokafka import OffsetAndMetadata
 from aiokafka.structs import TopicPartition
 
-from repid import Concurrency, Repid, Router
+from repid import Concurrency, LeaseRenewal, Repid, Router
 from repid.connections.abc import MessageAction, ReceivedMessageT
 from repid.connections.kafka import message_broker
 from repid.connections.kafka.message import KafkaReceivedMessage
@@ -363,7 +363,7 @@ async def test_kafka_rebalance_fences_stale_delivery_and_cancels_pending_callbac
         await asyncio.Future()
         return {}
 
-    async def on_message(message: ReceivedMessageT) -> None:
+    async def on_message(message: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
         deliveries.put_nowait(message)
         if not reassigned.is_set():
             try:
@@ -523,7 +523,7 @@ async def test_kafka_saturated_topic_does_not_block_other_topics(mock_consumer: 
         if first in partitions:
             resumed.set()
 
-    async def blocked(_message: Any) -> None:
+    async def blocked(_message: Any, _renewal: LeaseRenewal | None = None) -> None:
         await release.wait()
 
     consumer = MagicMock(
@@ -613,3 +613,46 @@ async def test_kafka_republishes_unadmitted_record_without_committed_offset(
     producer.send_and_wait.assert_awaited_once()
     consumer.commit.assert_any_await({admitted: OffsetAndMetadata(1, "")})
     consumer.commit.assert_any_await({refused: OffsetAndMetadata(1, "")})
+
+
+@patch.object(message_broker, "AIOKafkaConsumer")
+async def test_kafka_keeps_polling_paused_partitions(mock_consumer: MagicMock) -> None:
+    partition = TopicPartition("jobs", 0)
+    first_poll = asyncio.Event()
+    finish_poll = asyncio.Event()
+    paused_poll = asyncio.Event()
+    paused: set[TopicPartition] = set()
+
+    async def poll(**_: object) -> dict[TopicPartition, list[MagicMock]]:
+        if not first_poll.is_set():
+            first_poll.set()
+            await finish_poll.wait()
+            return {}
+        assert paused == {partition}
+        paused_poll.set()
+        return await asyncio.Future()
+
+    consumer = MagicMock(
+        start=AsyncMock(),
+        stop=AsyncMock(),
+        getmany=AsyncMock(side_effect=poll),
+        assignment=Mock(return_value={partition}),
+        paused=Mock(side_effect=paused.copy),
+        pause=Mock(side_effect=lambda *partitions: paused.update(partitions)),  # pyrefly: ignore[implicit-any-lambda]
+    )
+    mock_consumer.return_value = consumer
+    server = KafkaServer("localhost:9092")
+    server._producer = MagicMock()
+    subscriber = await server.subscribe(
+        channels_to_callbacks={"jobs": AsyncMock()},
+        concurrency=Concurrency(messages=1),
+        channel_concurrency={},
+    )
+    try:
+        async with asyncio.timeout(1):
+            await first_poll.wait()
+            await subscriber.pause()
+            finish_poll.set()
+            await paused_poll.wait()
+    finally:
+        await subscriber.close()

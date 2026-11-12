@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from repid import Channel, Concurrency, Repid, Router
+from repid import Channel, Concurrency, LeaseRenewal, Repid, Router
 from repid.connections.abc import ServerT, SubscriberT
 
 
@@ -121,7 +121,7 @@ async def test_forced_worker_stop(autoconn: Repid) -> None:
 async def test_another_channel_is_not_consumed(seed_conn: ServerT) -> None:
     queue: asyncio.Queue[Any] = asyncio.Queue()
 
-    async def wrong_callback(msg: Any) -> None:
+    async def wrong_callback(msg: Any, _renewal: LeaseRenewal | None = None) -> None:
         await queue.put(msg)
 
     consumer = await seed_conn.subscribe(
@@ -137,7 +137,7 @@ async def test_another_channel_is_not_consumed(seed_conn: ServerT) -> None:
 
     queue2: asyncio.Queue[Any] = asyncio.Queue()
 
-    async def right_callback(msg: Any) -> None:
+    async def right_callback(msg: Any, _renewal: LeaseRenewal | None = None) -> None:
         await queue2.put(msg)
 
     consumer = await seed_conn.subscribe(

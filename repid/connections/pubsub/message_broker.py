@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import grpc.aio
 
-from repid._concurrency import Concurrency, _channel_hints
-from repid.connections.abc import CapabilitiesT, ReceivedMessageT, SentMessageT, SubscriberT
+from repid._concurrency import _channel_hints
+from repid.connections.abc import (
+    CapabilitiesT,
+    MessageCallbackT,
+    SentMessageT,
+    SubscriberT,
+)
+from repid.data.concurrency import Concurrency
 
 from .helpers import ChannelOverride
 from .protocol import (
@@ -371,7 +377,7 @@ class PubsubServer:
     async def subscribe(
         self,
         *,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
+        channels_to_callbacks: dict[str, MessageCallbackT],
         concurrency: Concurrency,
         channel_concurrency: dict[str, Concurrency],
     ) -> SubscriberT:

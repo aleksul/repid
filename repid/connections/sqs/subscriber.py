@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Coroutine, Mapping
+from collections.abc import Mapping
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
-from repid._concurrency import Concurrency
-from repid.connections.abc import ReceivedMessageT, SubscriberT
+from repid.connections.abc import MessageCallbackT, SubscriberT
 from repid.connections.sqs.message import SqsReceivedMessage
+from repid.data.concurrency import Concurrency
 
 if TYPE_CHECKING:
     from types_aiobotocore_sqs.client import SQSClient
@@ -23,7 +23,7 @@ class SqsSubscriber(SubscriberT):
     def __init__(
         self,
         server: SqsServer,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
+        channels_to_callbacks: dict[str, MessageCallbackT],
         channel_concurrency: Mapping[str, Concurrency] | None = None,
     ) -> None:
         self._server = server
@@ -277,7 +277,7 @@ class SqsSubscriber(SubscriberT):
     async def _process_message(
         self,
         message: SqsReceivedMessage,
-        callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+        callback: MessageCallbackT,
     ) -> None:
         try:
             await callback(message)

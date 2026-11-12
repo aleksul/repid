@@ -192,16 +192,16 @@ class SqsReceivedMessage(ReceivedMessageT):
         self._action = action
         self._keep_alive_during_settlement = action is not MessageAction.rejected
 
-        async def settle() -> None:
-            try:
-                await operation()
-            except Exception:
-                self._action = None
-                raise
-            finally:
-                self._keep_alive_during_settlement = False
+        await _finish_operation(self._perform_settlement(operation))
 
-        await _finish_operation(settle())
+    async def _perform_settlement(self, operation: Callable[[], Coroutine[Any, Any, None]]) -> None:
+        try:
+            await operation()
+        except Exception:
+            self._action = None
+            raise
+        finally:
+            self._keep_alive_during_settlement = False
 
     async def ack(self) -> None:
         if self._can_settle():

@@ -2,27 +2,33 @@ from __future__ import annotations
 
 import base64
 import logging
-from collections.abc import AsyncIterator, Callable, Coroutine, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 from aiobotocore.session import get_session
 
-from repid._concurrency import Concurrency, _channel_hints
-from repid.connections.abc import CapabilitiesT, SentMessageT, ServerT, SubscriberT
+from repid._concurrency import _channel_hints
+from repid.connections.abc import (
+    CapabilitiesT,
+    MessageCallbackT,
+    SentMessageT,
+    ServerT,
+    SubscriberT,
+)
 from repid.connections.sqs.constants import (
     EMPTY_PAYLOAD_ATTRIBUTE,
     EMPTY_PAYLOAD_ATTRIBUTE_VALUE,
     EMPTY_PAYLOAD_BODY_PLACEHOLDER,
 )
 from repid.connections.sqs.subscriber import SqsSubscriber
+from repid.data.concurrency import Concurrency
 
 if TYPE_CHECKING:
     from types_aiobotocore_sqs.client import SQSClient
 
     from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
-    from repid.connections.abc import ReceivedMessageT
     from repid.data import ExternalDocs, Tag
 
 logger = logging.getLogger("repid.connections.sqs")
@@ -237,7 +243,7 @@ class SqsServer(ServerT):
     async def subscribe(
         self,
         *,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
+        channels_to_callbacks: dict[str, MessageCallbackT],
         concurrency: Concurrency,
         channel_concurrency: dict[str, Concurrency],
     ) -> SubscriberT:

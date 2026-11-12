@@ -115,16 +115,7 @@ class AmqpReceivedMessage:
         # and credit update even if the actor is canceled during the operation.
         self._action = action
 
-        async def settle() -> None:
-            try:
-                if publish is not None:
-                    await publish
-                await self._link.settle_delivery(self._delivery_id, state)
-            except Exception:
-                self._action = None
-                raise
-
-        settlement = asyncio.create_task(settle())
+        settlement = asyncio.create_task(self._perform_settlement(state, publish))
         try:
             # Unlike shield, wait does not report a later RPC failure to the
             # event loop if the caller is canceled while settlement continues.
@@ -133,6 +124,19 @@ class AmqpReceivedMessage:
             await asyncio.gather(settlement, return_exceptions=True)
             raise
         settlement.result()
+
+    async def _perform_settlement(
+        self,
+        state: Accepted | Rejected | Released,
+        publish: Coroutine[Any, Any, None] | None,
+    ) -> None:
+        try:
+            if publish is not None:
+                await publish
+            await self._link.settle_delivery(self._delivery_id, state)
+        except Exception:
+            self._action = None
+            raise
 
     async def ack(self) -> None:
         if self._action is None:

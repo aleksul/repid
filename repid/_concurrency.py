@@ -4,36 +4,20 @@ import asyncio
 from collections import OrderedDict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from math import inf
 
-
-@dataclass(frozen=True, kw_only=True, slots=True)
-class Concurrency:
-    """Message count and serialized payload byte budgets.
-
-    Each field accepts a positive integer or None for unlimited. A delivery
-    larger than a byte budget waits for that scope to empty, then runs alone
-    within it. Worker and channel budgets both apply when configured.
-    """
-
-    messages: int | None = None
-    payload_bytes: int | None = None
-
-    def __post_init__(self) -> None:
-        if self.messages is not None and (
-            isinstance(self.messages, bool)
-            or not isinstance(self.messages, int)
-            or self.messages <= 0
-        ):
-            raise ValueError("messages must be a positive integer or None")
-        if self.payload_bytes is not None and (
-            isinstance(self.payload_bytes, bool)
-            or not isinstance(self.payload_bytes, int)
-            or self.payload_bytes <= 0
-        ):
-            raise ValueError("payload_bytes must be a positive integer or None")
-
+from repid._utils._typing import override
+from repid.data.concurrency import Concurrency
 
 _DEFAULT_WORKER_CONCURRENCY = Concurrency(messages=1000)
+
+
+def _tighter_limit(worker_limit: int | None, channel_limit: int | None) -> int | None:
+    if worker_limit is None:
+        return channel_limit
+    if channel_limit is None:
+        return worker_limit
+    return min(worker_limit, channel_limit)
 
 
 def _channel_hints(
@@ -41,18 +25,11 @@ def _channel_hints(
     worker: Concurrency,
     limits: Mapping[str, Concurrency],
 ) -> dict[str, Concurrency]:
-    def tighter(worker_limit: int | None, channel_limit: int | None) -> int | None:
-        if worker_limit is None:
-            return channel_limit
-        if channel_limit is None:
-            return worker_limit
-        return min(worker_limit, channel_limit)
-
     return {
         channel: (
             Concurrency(
-                messages=tighter(worker.messages, limit.messages),
-                payload_bytes=tighter(worker.payload_bytes, limit.payload_bytes),
+                messages=_tighter_limit(worker.messages, limit.messages),
+                payload_bytes=_tighter_limit(worker.payload_bytes, limit.payload_bytes),
             )
             if (limit := limits.get(channel)) is not None
             else worker
@@ -61,28 +38,77 @@ def _channel_hints(
     }
 
 
-@dataclass(slots=True)
 class _Usage:
-    message_limit: int | None
-    byte_limit: int | None
-    messages: int = 0
-    payload_bytes: int = 0
-    address: str = ""
+    __slots__ = ("byte_limit", "message_limit", "messages", "payload_bytes")
+
+    def __init__(self, limits: Concurrency) -> None:
+        self.message_limit = inf if limits.messages is None else limits.messages
+        self.byte_limit = inf if limits.payload_bytes is None else limits.payload_bytes
+        self.messages = 0
+        self.payload_bytes = 0
 
     def fits(self, size: int) -> bool:
-        limit = self.message_limit
-        if limit is not None and self.messages >= limit:
+        return self.messages < self.message_limit and (
+            self.messages == 0 or self.payload_bytes + size <= self.byte_limit
+        )
+
+    def try_reserve(self, size: int) -> bool:
+        messages = self.messages
+        if messages >= self.message_limit:
             return False
-        cap = self.byte_limit
-        if cap is None or self.payload_bytes + size <= cap:
-            return True
-        return size > cap and self.messages == 0
+        payload_bytes = self.payload_bytes + size
+        # An empty scope can admit a single oversized delivery.
+        if messages and payload_bytes > self.byte_limit:
+            return False
+        self.messages = messages + 1
+        self.payload_bytes = payload_bytes
+        return True
+
+    def release(self, size: int) -> None:
+        self.messages -= 1
+        self.payload_bytes -= size
+
+
+class _ChannelUsage(_Usage):
+    __slots__ = ("worker",)
+
+    def __init__(self, limits: Concurrency, worker: _Usage) -> None:
+        super().__init__(limits)
+        self.worker = worker
+
+    @override
+    def try_reserve(self, size: int) -> bool:
+        worker = self.worker
+        messages = self.messages
+        worker_messages = worker.messages
+        if worker_messages >= worker.message_limit or messages >= self.message_limit:
+            return False
+        payload_bytes = self.payload_bytes + size
+        worker_payload_bytes = worker.payload_bytes + size
+        if (worker_messages and worker_payload_bytes > worker.byte_limit) or (
+            messages and payload_bytes > self.byte_limit
+        ):
+            return False
+        self.messages = messages + 1
+        self.payload_bytes = payload_bytes
+        worker.messages = worker_messages + 1
+        worker.payload_bytes = worker_payload_bytes
+        return True
+
+    @override
+    def release(self, size: int) -> None:
+        worker = self.worker
+        self.messages -= 1
+        self.payload_bytes -= size
+        worker.messages -= 1
+        worker.payload_bytes -= size
 
 
 @dataclass(slots=True)
 class _Reservation:
     controller: _ConcurrencyController
-    channel: _Usage | None
+    channel: str
+    usage: _Usage
     size: int
     released: bool = False
 
@@ -90,18 +116,9 @@ class _Reservation:
         if self.released:
             return
         self.released = True
-        worker = self.controller.worker
-        size = self.size
-        worker.messages -= 1
-        if size:
-            worker.payload_bytes -= size
-        channel = self.channel
-        if channel is not None:
-            channel.messages -= 1
-            if size:
-                channel.payload_bytes -= size
+        self.usage.release(self.size)
         if self.controller._waiters:
-            self.controller._capacity_changed(channel)
+            self.controller._capacity_changed(self.channel)
 
 
 _Waiter = asyncio.Future[_Reservation | None]
@@ -111,14 +128,16 @@ _WaitQueue = OrderedDict[_Waiter, int]
 class _ConcurrencyController:
     """Atomically check and charge both budgets on the worker's event loop."""
 
+    __slots__ = ("_candidates", "_waiters", "channels", "closed", "worker")
+
     def __init__(
         self,
         worker: Concurrency,
         channels: Mapping[str, Concurrency] | None = None,
     ) -> None:
-        self.worker = _Usage(worker.messages, worker.payload_bytes)
-        self.channels = {
-            name: _Usage(limits.messages, limits.payload_bytes, address=name)
+        self.worker = _Usage(worker)
+        self.channels: dict[str, _Usage] = {
+            name: _ChannelUsage(limits, self.worker)
             for name, limits in (channels or {}).items()
             if limits.messages is not None or limits.payload_bytes is not None
         }
@@ -137,23 +156,12 @@ class _ConcurrencyController:
         self._waiters.clear()
         self._candidates.clear()
 
-    def _reserve(self, usage: _Usage | None, size: int) -> _Reservation:
-        worker = self.worker
-        worker.messages += 1
-        if size:
-            worker.payload_bytes += size
-        if usage is not None:
-            usage.messages += 1
-            if size:
-                usage.payload_bytes += size
-        return _Reservation(self, usage, size)
-
     def try_acquire(self, channel: str, size: int) -> _Reservation | None:
         if self.closed or (self._waiters and (self._candidates or channel in self._waiters)):
             return None
-        usage = self.channels.get(channel)
-        if self.worker.fits(size) and (usage is None or usage.fits(size)):
-            return self._reserve(usage, size)
+        usage = self.channels.get(channel, self.worker)
+        if usage.try_reserve(size):
+            return _Reservation(self, channel, usage, size)
         return None
 
     async def acquire(self, channel: str, size: int) -> _Reservation | None:
@@ -187,9 +195,9 @@ class _ConcurrencyController:
             return None
         return reservation
 
-    def _capacity_changed(self, usage: _Usage | None) -> None:
-        if usage is not None and (queue := self._waiters.get(usage.address)) is not None:
-            self._candidates[usage.address] = queue
+    def _capacity_changed(self, channel: str) -> None:
+        if (queue := self._waiters.get(channel)) is not None:
+            self._candidates[channel] = queue
         self._admit_waiters()
 
     def _head_changed(self, channel: str, queue: _WaitQueue) -> None:
@@ -210,12 +218,12 @@ class _ConcurrencyController:
                 self._head_changed(channel, queue)
                 continue
 
-            usage = self.channels.get(channel)
-            if usage is not None and not usage.fits(size):
+            usage = self.channels.get(channel, worker)
+            if usage is not worker and not usage.fits(size):
                 # A local limit can only change when this channel releases capacity.
                 del candidates[channel]
                 continue
-            if not worker.fits(size):
+            if not usage.try_reserve(size):
                 # Let the shared budget drain for the next eligible channel.
                 return
 
@@ -225,4 +233,4 @@ class _ConcurrencyController:
             else:
                 del self._waiters[channel]
                 del candidates[channel]
-            waiter.set_result(self._reserve(usage, size))
+            waiter.set_result(_Reservation(self, channel, usage, size))

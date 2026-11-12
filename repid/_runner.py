@@ -2,20 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Coroutine, Mapping
+from collections.abc import Mapping
 from functools import partial
 from typing import TYPE_CHECKING
 
-from repid._concurrency import _DEFAULT_WORKER_CONCURRENCY, Concurrency
+from repid._concurrency import _DEFAULT_WORKER_CONCURRENCY
 from repid._message_lifecycle import _MessageLifecycle
 from repid.connections.abc import SubscriberT
 from repid.data.actor import ActorExecutionContext
+from repid.data.concurrency import Concurrency
 from repid.health_check_server import HealthCheckStatus
 
 logger = logging.getLogger("repid")
 
 if TYPE_CHECKING:
-    from repid.connections.abc import ReceivedMessageT
+    from repid.connections.abc import MessageCallbackT, ReceivedMessageT
     from repid.data.actor import ActorData
     from repid.health_check_server import HealthCheckServer
 
@@ -78,11 +79,15 @@ class _Runner:
             self._unrouted_seen_counts[key] = count
         await message.reject()
 
-    async def _message_handler(self, actors: list[ActorData], message: ReceivedMessageT) -> None:
+    async def _message_handler(
+        self,
+        actors: list[ActorData],
+        message: ReceivedMessageT,
+    ) -> None:
         await self._messages.submit(actors, message, self._settle_unrouted)
 
     async def _subscribe(self, channels_to_actors: dict[str, list[ActorData]]) -> SubscriberT:
-        callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]] = {
+        callbacks: dict[str, MessageCallbackT] = {
             channel: partial(self._message_handler, actors)
             for channel, actors in channels_to_actors.items()
         }

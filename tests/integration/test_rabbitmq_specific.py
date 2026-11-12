@@ -6,7 +6,7 @@ from uuid import UUID
 
 import pytest
 
-from repid import Concurrency, Repid
+from repid import Concurrency, LeaseRenewal, Repid
 from repid.connections.abc import ReceivedMessageT
 from repid.connections.amqp import AmqpServer
 from repid.connections.amqp._uamqp.message import Properties
@@ -28,7 +28,10 @@ async def test_server_side_cancel(
 
     async with repid_app.servers.default.connection() as conn:
 
-        async def dummy_callback(msg: ReceivedMessageT) -> None:
+        async def dummy_callback(
+            msg: ReceivedMessageT,
+            _renewal: LeaseRenewal | None = None,
+        ) -> None:
             await msg.ack()
             callback_event.set()
 
@@ -69,7 +72,10 @@ async def test_message_id_is_set_to_uuid4(rabbitmq_connection: AmqpServer) -> No
 
     async with repid_app.servers.default.connection() as conn:
 
-        async def capture_callback(msg: ReceivedMessageT) -> None:
+        async def capture_callback(
+            msg: ReceivedMessageT,
+            _renewal: LeaseRenewal | None = None,
+        ) -> None:
             nonlocal received_message_id
             received_message_id = msg.message_id
             await msg.ack()
@@ -99,7 +105,10 @@ async def test_message_id_is_preserved_when_set_by_user(rabbitmq_connection: Amq
 
     async with repid_app.servers.default.connection() as conn:
 
-        async def capture_callback(msg: ReceivedMessageT) -> None:
+        async def capture_callback(
+            msg: ReceivedMessageT,
+            _renewal: LeaseRenewal | None = None,
+        ) -> None:
             nonlocal received_message_id
             received_message_id = msg.message_id
             await msg.ack()

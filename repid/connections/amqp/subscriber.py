@@ -4,20 +4,15 @@ import asyncio
 import logging
 from collections.abc import Callable, Coroutine, Mapping
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import uuid4
 
+from repid.connections.abc import MessageCallbackT
 from repid.connections.amqp._uamqp.message import Properties
 from repid.connections.amqp.helpers import AmqpReceivedMessage
 from repid.connections.amqp.protocol import ManagedSession, ReceiverLink
 
-if TYPE_CHECKING:
-    from repid.connections.abc import ReceivedMessageT
-
-
 logger = logging.getLogger("repid.connections.amqp")
-
-_MessageCallback = Callable[["ReceivedMessageT"], Coroutine[None, None, None]]
 
 
 class AmqpSubscriber:
@@ -26,6 +21,16 @@ class AmqpSubscriber:
     Link credit bounds outstanding deliveries per queue. The runner controls
     actor execution through its admission controller.
     """
+
+    __slots__ = (
+        "_close_lock",
+        "_managed_session",
+        "_resumed",
+        "_stop_event",
+        "_submission_tasks",
+        "_subscription_keys",
+        "_task",
+    )
 
     def __init__(self, managed_session: ManagedSession) -> None:
         self._managed_session = managed_session
@@ -56,7 +61,7 @@ class AmqpSubscriber:
         cls,
         *,
         managed_session: ManagedSession,
-        queues_to_callbacks: dict[str, _MessageCallback],
+        queues_to_callbacks: dict[str, MessageCallbackT],
         naming_strategy: Callable[[str], str],
         publish_fn: Callable[..., Coroutine[Any, Any, None]],
         prefetch_by_queue: Mapping[str, int],
@@ -86,7 +91,7 @@ class AmqpSubscriber:
 
     async def _receive(  # noqa: PLR0917
         self,
-        callback: _MessageCallback,
+        callback: MessageCallbackT,
         queue: str,
         publish_fn: Callable[..., Coroutine[Any, Any, None]],
         payload: bytes,
@@ -116,7 +121,7 @@ class AmqpSubscriber:
         task.add_done_callback(self._submission_done)
         link.track_delivery_task(task)
 
-    async def _submit(self, callback: _MessageCallback, message: AmqpReceivedMessage) -> None:
+    async def _submit(self, callback: MessageCallbackT, message: AmqpReceivedMessage) -> None:
         try:
             while not self._resumed.is_set():
                 await self._resumed.wait()

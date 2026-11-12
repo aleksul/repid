@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from repid import Channel, Concurrency, Repid, Router
+from repid import Channel, Concurrency, LeaseRenewal, Repid, Router
 from repid._utils._typing import override
 from repid.connections.abc import MessageAction, SentMessageT
 from repid.connections.amqp._uamqp.message import Properties
@@ -78,7 +78,7 @@ async def test_message_broker_not_connected_subscribe() -> None:
         await broker.subscribe(
             concurrency=Concurrency(),
             channel_concurrency={},
-            channels_to_callbacks={"test": lambda _x: asyncio.sleep(0)},
+            channels_to_callbacks={"test": lambda _x, _renewal=None: asyncio.sleep(0)},
         )
 
 
@@ -149,7 +149,7 @@ async def test_amqp_server_publish_subscribe_and_disconnect(monkeypatch: Any) ->
     await server.subscribe(
         concurrency=Concurrency(),
         channel_concurrency={},
-        channels_to_callbacks={"queue": lambda _msg: asyncio.sleep(0)},
+        channels_to_callbacks={"queue": lambda _msg, _renewal=None: asyncio.sleep(0)},
     )
     await server.disconnect()
     assert server.is_connected is False
@@ -187,7 +187,7 @@ async def test_amqp_subscriber_create_pause_resume_and_close() -> None:
         async def get_session(self) -> FakeSession:
             return FakeSession(connection=self.connection, channel=4)
 
-    async def callback(msg: Any) -> None:
+    async def callback(msg: Any, _renewal: LeaseRenewal | None = None) -> None:
         received.append(msg.payload)
 
     managed = DummyManagedSession()
@@ -686,7 +686,7 @@ async def test_subscriber_pause_resume() -> None:
 
     subscriber = await AmqpSubscriber.create(
         managed_session=managed,
-        queues_to_callbacks={"test": lambda _x: asyncio.sleep(0)},
+        queues_to_callbacks={"test": lambda _x, _renewal=None: asyncio.sleep(0)},
         naming_strategy=lambda x: x,
         publish_fn=AsyncMock(),
         prefetch_by_queue={"test": 1},
@@ -1261,7 +1261,7 @@ async def test_admission_does_not_block_protocol_and_close_drains_submissions() 
     )
     started = asyncio.Event()
 
-    async def blocked(_message: Any) -> None:
+    async def blocked(_message: Any, _renewal: LeaseRenewal | None = None) -> None:
         started.set()
         await asyncio.Event().wait()
 
@@ -1370,7 +1370,7 @@ async def test_amqp_subscriber_can_close_from_its_own_callback() -> None:
     )
     closed = asyncio.Event()
 
-    async def callback(_msg: Any) -> None:
+    async def callback(_msg: Any, _renewal: LeaseRenewal | None = None) -> None:
         await subscriber.close()
         closed.set()
 

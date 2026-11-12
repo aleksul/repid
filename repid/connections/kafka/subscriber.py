@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING
@@ -11,11 +10,10 @@ from aiokafka import OffsetAndMetadata
 from aiokafka.abc import ConsumerRebalanceListener
 from aiokafka.structs import TopicPartition
 
-from repid.connections.abc import SubscriberT
+from repid.connections.abc import MessageCallbackT, SubscriberT
 from repid.connections.kafka.message import KafkaReceivedMessage
 
 if TYPE_CHECKING:
-    from repid.connections.abc import ReceivedMessageT
     from repid.connections.kafka.message_broker import KafkaServer
     from repid.connections.kafka.protocols import AIOKafkaConsumerProtocol, ConsumerRecordProtocol
 
@@ -36,7 +34,7 @@ class KafkaSubscriber(ConsumerRebalanceListener, SubscriberT):
         self,
         server: KafkaServer,
         consumer: AIOKafkaConsumerProtocol,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
+        channels_to_callbacks: dict[str, MessageCallbackT],
         max_records: int | None = None,
     ) -> None:
         self._server = server
@@ -113,8 +111,7 @@ class KafkaSubscriber(ConsumerRebalanceListener, SubscriberT):
     async def _consume_loop(self) -> None:
         try:
             while not self._closed:
-                await self._paused_event.wait()
-
+                # Poll even while paused so admitted work keeps its assignment.
                 self._update_intake()
                 result = await self._consumer.getmany(
                     timeout_ms=1000,

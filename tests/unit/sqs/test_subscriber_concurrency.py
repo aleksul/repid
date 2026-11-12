@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from repid import Concurrency
+from repid import Concurrency, LeaseRenewal
 from repid.connections.sqs import SqsServer
 from repid.connections.sqs.subscriber import SqsSubscriber
 
@@ -89,7 +89,7 @@ async def test_saturated_sqs_queue_does_not_block_other_queues() -> None:
         next_receipt += 1
         return {"Messages": [{"ReceiptHandle": str(next_receipt)}]}
 
-    async def blocked(_message: Any) -> None:
+    async def blocked(_message: Any, _renewal: LeaseRenewal | None = None) -> None:
         first_started.set()
         await release.wait()
 
@@ -130,7 +130,7 @@ async def test_sqs_receives_only_as_many_messages_as_it_can_submit(
         await asyncio.Event().wait()
         return {}
 
-    async def callback(message: Any) -> None:
+    async def callback(message: Any, _renewal: LeaseRenewal | None = None) -> None:
         started.put_nowait(message.message_id)
         await release.wait()
 
@@ -419,7 +419,7 @@ async def test_callback_can_close_its_subscriber() -> None:
         await asyncio.Future()
         return {}
 
-    async def callback(message: Any) -> None:
+    async def callback(message: Any, _renewal: LeaseRenewal | None = None) -> None:
         await subscriber.close()
         closed.set()
         await message.ack()

@@ -13,14 +13,14 @@ Here is a simplified overview of what you need to implement:
 
 ```python
 import asyncio
-from typing import Mapping, Sequence, Callable, Coroutine, Any
+from typing import Mapping, Sequence, Any
 from collections.abc import AbstractAsyncContextManager
 from repid import Concurrency
 from repid.connections.abc import (
     ServerT,
     SubscriberT,
     SentMessageT,
-    ReceivedMessageT,
+    MessageCallbackT,
     CapabilitiesT,
 )
 
@@ -79,7 +79,7 @@ class MyCustomServer:
     async def subscribe(
         self,
         *,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
+        channels_to_callbacks: dict[str, MessageCallbackT],
         concurrency: Concurrency,
         channel_concurrency: dict[str, Concurrency],
     ) -> SubscriberT:
@@ -98,8 +98,14 @@ acknowledged or rejected it. It may wait for room in the worker, so keep reading
 and handling other channels while it waits. Once the callback starts, Repid takes care of
 acknowledgments and rejections.
 
+If the subscriber started a `repid.LeaseRenewal`, wrap `await callback(message)` in
+`with renewal.handoff():` and call `await renewal.close_if_unclaimed()` in a `finally` block.
+The worker claims the renewal for that delivery and closes it when processing finishes.
+
 If your broker supports keep-alive, use `keep_alive()` to renew the message's lease.
-Return `False` when renewal is no longer needed, so Repid stops calling it.
+Return `False` when the adapter knows the delivery no longer needs renewal, such as
+after settlement or lease expiry. Repid ends the renewal loop on that signal.
+Return `None` to keep the renewal schedule active.
 
 ## Creating a Subscriber
 

@@ -142,18 +142,9 @@ class PubsubReceivedMessage:
         self._action = action
         self._keep_alive_during_settlement = action is MessageAction.acked
 
-        async def settle() -> None:
-            try:
-                await operation()
-            except Exception:
-                self._action = None
-                raise
-            finally:
-                self._keep_alive_during_settlement = False
-
         # The action is reserved before I/O, so shutdown can no longer reject
         # this delivery. Keep its settlement queued until the broker responds.
-        settlement = asyncio.gather(settle(), return_exceptions=True)
+        settlement = asyncio.gather(self._perform_settlement(operation), return_exceptions=True)
         try:
             (result,) = await asyncio.shield(settlement)
         except asyncio.CancelledError:
@@ -161,6 +152,15 @@ class PubsubReceivedMessage:
             raise
         if isinstance(result, BaseException):
             raise result
+
+    async def _perform_settlement(self, operation: Callable[[], Awaitable[None]]) -> None:
+        try:
+            await operation()
+        except Exception:
+            self._action = None
+            raise
+        finally:
+            self._keep_alive_during_settlement = False
 
     async def extend_deadline(self, seconds: int) -> None:
         """Extend the ack deadline for this message.

@@ -7,10 +7,11 @@ import sys
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
-from repid._concurrency import _DEFAULT_WORKER_CONCURRENCY, Concurrency
+from repid._concurrency import _DEFAULT_WORKER_CONCURRENCY
 from repid._runner import _Runner
 from repid.asyncapi_server import AsyncAPIServer
 from repid.data.actor import ActorExecutionContext
+from repid.data.concurrency import Concurrency
 from repid.health_check_server import HealthCheckServer
 from repid.router import _MaterializedRouter
 

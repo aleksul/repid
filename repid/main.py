@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import signal
+import warnings
 from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any, cast, overload
 
-from repid._concurrency import _DEFAULT_WORKER_CONCURRENCY, Concurrency
+from repid._concurrency import _DEFAULT_WORKER_CONCURRENCY
 from repid._worker import _Worker
 from repid.asyncapi import AsyncAPI3Schema, AsyncAPIGenerator
 from repid.asyncapi_server import AsyncAPIServer, get_asyncapi_html
 from repid.data import ActorExecutionContext, MessageData, RunnerInfo
+from repid.data.concurrency import Concurrency
 from repid.message_registry import MessageRegistry
 from repid.middlewares import (
     ActorMiddlewareT,
@@ -97,6 +99,11 @@ class Repid:
         if tasks_limit is not None:
             if concurrency is not None:
                 raise ValueError("Specify either tasks_limit or concurrency.")
+            warnings.warn(
+                "tasks_limit is deprecated. Use concurrency=Concurrency(messages=...) instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             concurrency = Concurrency(messages=tasks_limit)
 
         worker = _Worker(

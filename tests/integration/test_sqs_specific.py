@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import botocore.exceptions
 import pytest
 
-from repid import Concurrency, Repid
+from repid import Concurrency, LeaseRenewal, Repid
 from repid._utils._typing import override
 from repid.connections.abc import MessageAction, ReceivedMessageT, SentMessageT
 from repid.connections.sqs import SqsServer
@@ -117,7 +117,7 @@ async def test_sqs_nack_routes_message_to_dlq(sqs_repid: Repid, sqs_connection: 
         received_msg: ReceivedMessageT | None = None
         event = asyncio.Event()
 
-        async def on_message(msg: ReceivedMessageT) -> None:
+        async def on_message(msg: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
             nonlocal received_msg
             received_msg = msg
             event.set()
@@ -139,7 +139,10 @@ async def test_sqs_nack_routes_message_to_dlq(sqs_repid: Repid, sqs_connection: 
         dlq_received_msg: ReceivedMessageT | None = None
         dlq_event = asyncio.Event()
 
-        async def on_dlq_message(msg: ReceivedMessageT) -> None:
+        async def on_dlq_message(
+            msg: ReceivedMessageT,
+            _renewal: LeaseRenewal | None = None,
+        ) -> None:
             nonlocal dlq_received_msg
             dlq_received_msg = msg
             dlq_event.set()
@@ -177,7 +180,7 @@ async def test_sqs_reply_sends_message_to_reply_channel(
         received_msg: ReceivedMessageT | None = None
         event = asyncio.Event()
 
-        async def on_message(msg: ReceivedMessageT) -> None:
+        async def on_message(msg: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
             nonlocal received_msg
             received_msg = msg
             event.set()
@@ -219,7 +222,7 @@ async def test_sqs_publish_preserves_empty_payload(
         received_msg: ReceivedMessageT | None = None
         event = asyncio.Event()
 
-        async def on_message(msg: ReceivedMessageT) -> None:
+        async def on_message(msg: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
             nonlocal received_msg
             received_msg = msg
             event.set()
@@ -255,7 +258,7 @@ async def test_sqs_reply_preserves_empty_payload(sqs_repid: Repid, sqs_connectio
         received_msg: ReceivedMessageT | None = None
         event = asyncio.Event()
 
-        async def on_message(msg: ReceivedMessageT) -> None:
+        async def on_message(msg: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
             nonlocal received_msg
             received_msg = msg
             event.set()
@@ -288,7 +291,7 @@ async def test_sqs_multiple_actions_are_ignored(sqs_repid: Repid, sqs_connection
         received_msg: ReceivedMessageT | None = None
         event = asyncio.Event()
 
-        async def on_message(msg: ReceivedMessageT) -> None:
+        async def on_message(msg: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
             nonlocal received_msg
             received_msg = msg
             event.set()
@@ -328,7 +331,7 @@ async def test_sqs_subscriber_handles_callback_exception(
 
         event = asyncio.Event()
 
-        async def on_message(msg: ReceivedMessageT) -> None:  # noqa: ARG001
+        async def on_message(msg: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:  # noqa: ARG001
             event.set()
             raise Exception("Test exception in callback")
 
@@ -352,7 +355,7 @@ async def test_sqs_subscriber_closes_gracefully(
     async with sqs_repid.servers.default.connection():
         subscriber = await sqs_connection.subscribe(
             channel_concurrency={},
-            channels_to_callbacks={channel_name: lambda msg: asyncio.sleep(0)},  # noqa: ARG005
+            channels_to_callbacks={channel_name: lambda msg, _renewal=None: asyncio.sleep(0)},  # noqa: ARG005
             concurrency=Concurrency(messages=1),
         )
 
@@ -526,7 +529,7 @@ async def test_sqs_subscriber_active_state(sqs_connection: ServerT) -> None:
                 concurrency=Concurrency(),
                 channel_concurrency={},
                 channels_to_callbacks={
-                    "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
+                    "test_subscriber_state_channel": lambda m, _renewal=None: asyncio.sleep(0),  # noqa: ARG005
                 },
             ),
         )
@@ -543,7 +546,7 @@ async def test_sqs_subscriber_task_property(sqs_connection: ServerT) -> None:
                 concurrency=Concurrency(),
                 channel_concurrency={},
                 channels_to_callbacks={
-                    "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
+                    "test_subscriber_state_channel": lambda m, _renewal=None: asyncio.sleep(0),  # noqa: ARG005
                 },
             ),
         )
@@ -561,7 +564,7 @@ async def test_sqs_subscriber_start_consuming_when_already_active(sqs_connection
                 concurrency=Concurrency(),
                 channel_concurrency={},
                 channels_to_callbacks={
-                    "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
+                    "test_subscriber_state_channel": lambda m, _renewal=None: asyncio.sleep(0),  # noqa: ARG005
                 },
             ),
         )
@@ -578,7 +581,7 @@ async def test_sqs_subscriber_resume_when_active(sqs_connection: ServerT) -> Non
                 concurrency=Concurrency(),
                 channel_concurrency={},
                 channels_to_callbacks={
-                    "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
+                    "test_subscriber_state_channel": lambda m, _renewal=None: asyncio.sleep(0),  # noqa: ARG005
                 },
             ),
         )
@@ -595,7 +598,7 @@ async def test_sqs_subscriber_pause_and_resume(sqs_connection: ServerT) -> None:
                 concurrency=Concurrency(),
                 channel_concurrency={},
                 channels_to_callbacks={
-                    "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
+                    "test_subscriber_state_channel": lambda m, _renewal=None: asyncio.sleep(0),  # noqa: ARG005
                 },
             ),
         )
@@ -615,12 +618,12 @@ async def test_sqs_subscriber_process_message_handles_callback_exception(
                 concurrency=Concurrency(),
                 channel_concurrency={},
                 channels_to_callbacks={
-                    "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
+                    "test_subscriber_state_channel": lambda m, _renewal=None: asyncio.sleep(0),  # noqa: ARG005
                 },
             ),
         )
 
-        async def err_cb(_: ReceivedMessageT) -> None:
+        async def err_cb(_: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
             raise ValueError("err")
 
         await sub._process_message(
@@ -644,7 +647,7 @@ async def test_sqs_subscriber_task_raises_when_not_active(sqs_connection: Server
                 concurrency=Concurrency(),
                 channel_concurrency={},
                 channels_to_callbacks={
-                    "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
+                    "test_subscriber_state_channel": lambda m, _renewal=None: asyncio.sleep(0),  # noqa: ARG005
                 },
             ),
         )
@@ -663,7 +666,7 @@ async def test_sqs_subscriber_handles_receive_exception(sqs_connection: ServerT)
                 concurrency=Concurrency(),
                 channel_concurrency={},
                 channels_to_callbacks={
-                    "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
+                    "test_subscriber_state_channel": lambda m, _renewal=None: asyncio.sleep(0),  # noqa: ARG005
                 },
             ),
         )
@@ -689,7 +692,7 @@ async def test_sqs_subscriber_handles_consume_cancellation(sqs_connection: Serve
                 concurrency=Concurrency(),
                 channel_concurrency={},
                 channels_to_callbacks={
-                    "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
+                    "test_subscriber_state_channel": lambda m, _renewal=None: asyncio.sleep(0),  # noqa: ARG005
                 },
             ),
         )
@@ -710,7 +713,7 @@ async def test_sqs_subscriber_handles_pause_cancellation(sqs_connection: ServerT
                 concurrency=Concurrency(),
                 channel_concurrency={},
                 channels_to_callbacks={
-                    "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
+                    "test_subscriber_state_channel": lambda m, _renewal=None: asyncio.sleep(0),  # noqa: ARG005
                 },
             ),
         )
@@ -728,7 +731,7 @@ async def test_sqs_subscriber_raises_if_client_is_none(sqs_connection: ServerT) 
             concurrency=Concurrency(),
             channel_concurrency={},
             channels_to_callbacks={
-                "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
+                "test_subscriber_state_channel": lambda m, _renewal=None: asyncio.sleep(0),  # noqa: ARG005
             },
         )
 
@@ -764,7 +767,7 @@ async def test_sqs_subscriber_handles_process_message_exception(sqs_connection: 
 
         sub = MockSubscriberWithProcessException(
             server,
-            {"other_channel": lambda _: asyncio.sleep(0)},
+            {"other_channel": lambda _, _renewal=None: asyncio.sleep(0)},
             channel_concurrency={"other_channel": Concurrency(messages=1)},
         )
         try:
@@ -780,7 +783,7 @@ async def test_sqs_subscriber_handles_message_instantiation_error(sqs_connection
     async with server.connection():
         sub = SqsSubscriber(
             server,
-            {"test_subscriber_state_channel": lambda _: asyncio.sleep(0)},
+            {"test_subscriber_state_channel": lambda _, _renewal=None: asyncio.sleep(0)},
             channel_concurrency={"test_subscriber_state_channel": Concurrency(messages=1)},
         )
         assert sub._make_message("default", "http://queue", {"Body": None}) is None
@@ -793,7 +796,7 @@ async def test_sqs_server_handles_subscriber_close_error(sqs_connection: ServerT
     async with server.connection():
         sub = MockSubscriberWithCloseException(
             server,
-            {"test_subscriber_state_channel": lambda _: asyncio.sleep(0)},
+            {"test_subscriber_state_channel": lambda _, _renewal=None: asyncio.sleep(0)},
         )
         server._active_subscribers.add(sub)
         await server.disconnect()
@@ -844,7 +847,7 @@ async def test_subscriber_process_message_reject_exception(
     subscriber = SqsSubscriber(server, {})
     subscriber._active = True
 
-    async def failing_callback(msg: Any) -> None:  # noqa: ARG001
+    async def failing_callback(msg: Any, _renewal: LeaseRenewal | None = None) -> None:  # noqa: ARG001
         raise asyncio.CancelledError()
 
     class BadMessage:
@@ -873,7 +876,7 @@ async def test_subscriber_process_message_nack_exception_sync(
     subscriber = SqsSubscriber(server, {})
     subscriber._active = True
 
-    async def failing_callback(msg: Any) -> None:
+    async def failing_callback(msg: Any, _renewal: LeaseRenewal | None = None) -> None:
         pass
 
     class BadMessage:
@@ -966,7 +969,7 @@ async def test_subscriber_process_message_nack_cancelled_sync(
     subscriber = SqsSubscriber(server, {})
     subscriber._active = True
 
-    async def failing_callback(msg: Any) -> None:  # noqa: ARG001
+    async def failing_callback(msg: Any, _renewal: LeaseRenewal | None = None) -> None:  # noqa: ARG001
         raise Exception("callback exception")
 
     class BadMessage:
@@ -994,7 +997,7 @@ async def test_subscriber_process_message_nack_error_sync(
     subscriber = SqsSubscriber(server, {})
     subscriber._active = True
 
-    async def failing_callback(msg: Any) -> None:  # noqa: ARG001
+    async def failing_callback(msg: Any, _renewal: LeaseRenewal | None = None) -> None:  # noqa: ARG001
         raise Exception("callback exception")
 
     class BadMessage:
@@ -1307,7 +1310,7 @@ async def test_sqs_process_message_cancelled() -> None:
 
     subscriber = SqsSubscriber(mock_server, {})
 
-    async def failing_callback(msg: ReceivedMessageT) -> None:
+    async def failing_callback(msg: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
         sqs_msg = cast(SqsReceivedMessage, msg)
         sqs_msg._action = None
         raise asyncio.CancelledError()
@@ -1325,7 +1328,7 @@ async def test_sqs_process_message_exception_nack_cancelled() -> None:
 
     subscriber = SqsSubscriber(mock_server, {})
 
-    async def failing_callback(msg: ReceivedMessageT) -> None:
+    async def failing_callback(msg: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
         sqs_msg = cast(SqsReceivedMessage, msg)
         sqs_msg._action = None
         setattr(sqs_msg, "nack", AsyncMock(side_effect=asyncio.CancelledError()))  # noqa: B010

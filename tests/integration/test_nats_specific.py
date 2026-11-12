@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 import pytest
 from nats.js.api import ConsumerConfig, StreamConsumerLimits
 
-from repid import Concurrency, Repid, Router
+from repid import Concurrency, LeaseRenewal, Repid, Router
 from repid.connections.abc import MessageAction, ReceivedMessageT, ServerT
 from repid.connections.nats import NatsServer
 from repid.connections.nats.message_broker import NatsReceivedMessage
@@ -57,7 +57,7 @@ async def test_nats_publish_subscribe(nats_connection: NatsServer) -> None:
         hit = []
         event = asyncio.Event()
 
-        async def cb(msg: Any) -> None:
+        async def cb(msg: Any, _renewal: LeaseRenewal | None = None) -> None:
             hit.append(msg)
             assert msg.headers == {"x": "y", "content-type": "text/plain"}
             assert msg.content_type == "text/plain"
@@ -93,7 +93,7 @@ async def test_nats_reject(nats_connection: NatsServer) -> None:
         hit_reject = []
         event_reject = asyncio.Event()
 
-        async def cb_reject(msg: Any) -> None:
+        async def cb_reject(msg: Any, _renewal: LeaseRenewal | None = None) -> None:
             hit_reject.append(True)
             if len(hit_reject) == 1:
                 await msg.reject()
@@ -117,7 +117,7 @@ async def test_nats_nack(nats_connection: NatsServer) -> None:
         hit_nack = []
         event_nack = asyncio.Event()
 
-        async def cb_nack(msg: Any) -> None:
+        async def cb_nack(msg: Any, _renewal: LeaseRenewal | None = None) -> None:
             hit_nack.append(True)
             if len(hit_nack) == 1:
                 await msg.nack()
@@ -141,7 +141,7 @@ async def test_nats_reply(nats_connection: NatsServer) -> None:
         hit_reply = []
         event_reply = asyncio.Event()
 
-        async def cb_reply(msg: Any) -> None:
+        async def cb_reply(msg: Any, _renewal: LeaseRenewal | None = None) -> None:
             hit_reply.append(True)
             await msg.reply(payload=b"resp", channel="test_reply_channel")
             await msg.reply(payload=b"resp", channel="test_reply_channel")
@@ -163,7 +163,7 @@ async def test_nats_exception(nats_connection: NatsServer) -> None:
         hit_exc = []
         event_exc = asyncio.Event()
 
-        async def cb_exc(msg: Any) -> None:
+        async def cb_exc(msg: Any, _renewal: LeaseRenewal | None = None) -> None:
             hit_exc.append(True)
             if len(hit_exc) == 1:
                 event_exc.set()
@@ -194,7 +194,7 @@ async def test_nats_subscribe_already_connected(nats_connection: NatsServer) -> 
 
     await server.connect()
 
-    async def cb(msg: Any) -> None:
+    async def cb(msg: Any, _renewal: LeaseRenewal | None = None) -> None:
         pass
 
     sub_dummy = await server.subscribe(
@@ -223,7 +223,7 @@ async def test_nats_message_without_headers_and_content_type(
     hit = []
     event = asyncio.Event()
 
-    async def cb(msg: Any) -> None:
+    async def cb(msg: Any, _renewal: LeaseRenewal | None = None) -> None:
         hit.append(msg)
         assert msg.headers is None
         assert msg.content_type is None
@@ -529,7 +529,7 @@ async def test_nats_new_durable_inherits_stream_ack_limit(
     stream = "limited_ack_pending_stream"
     delivered = asyncio.Event()
 
-    async def callback(message: ReceivedMessageT) -> None:
+    async def callback(message: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
         await message.ack()
         delivered.set()
 

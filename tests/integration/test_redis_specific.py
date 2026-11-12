@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 import pytest
 from redis.exceptions import ConnectionError as RedisConnectionError
 
-from repid import Concurrency
+from repid import Concurrency, LeaseRenewal
 from repid.connections.abc import ReceivedMessageT
 from repid.connections.redis import RedisServer
 from repid.connections.redis.message_broker import ChannelConfig, RedisSubscriber
@@ -29,7 +29,7 @@ async def test_close_interrupts_notifications_without_admin_permissions(
     )
     channels = [f"shutdown-{uuid.uuid4().hex}" for _ in range(2)]
 
-    async def callback(_message: ReceivedMessageT) -> None:
+    async def callback(_message: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
         pytest.fail("Empty streams must not deliver messages")
 
     async with redis_connection.connection():
@@ -100,7 +100,7 @@ async def test_recover_assigned_messages_after_lost_read_reply(
     active: list[ReceivedMessageT] = []
     lose_reply = True
 
-    async def callback(message: ReceivedMessageT) -> None:
+    async def callback(message: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
         delivered.append(message.payload)
         if message.payload == b"active":
             active.append(message)
@@ -194,7 +194,7 @@ async def test_recover_assigned_messages_after_lost_reclaim_reply(
     assigned = asyncio.Event()
     delivered: asyncio.Queue[bytes] = asyncio.Queue()
 
-    async def callback(message: ReceivedMessageT) -> None:
+    async def callback(message: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
         await message.ack()
         delivered.put_nowait(message.payload)
 
@@ -249,7 +249,7 @@ async def test_pending_recovery_excludes_a_concurrent_claim_on_the_same_stream(
     channel = f"recovery-race-{uuid.uuid4().hex}"
     delivered: list[str | None] = []
 
-    async def callback(message: ReceivedMessageT) -> None:
+    async def callback(message: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
         delivered.append(message.message_id)
         await message.ack()
 
@@ -314,7 +314,7 @@ async def test_stale_reclaim_retries_completed_unsettled_delivery(
     ack_attempts = 0
     failed_read = False
 
-    async def callback(message: ReceivedMessageT) -> None:
+    async def callback(message: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
         nonlocal calls
         calls += 1
         if calls == 1:

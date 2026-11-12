@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlparse
 from uuid import uuid4
 
-from repid._concurrency import Concurrency, _channel_hints
-from repid.connections.abc import CapabilitiesT, SentMessageT, SubscriberT
+from repid._concurrency import _channel_hints
+from repid.connections.abc import CapabilitiesT, MessageCallbackT, SentMessageT, SubscriberT
 from repid.connections.amqp._uamqp.message import Properties
 from repid.connections.amqp.protocol import (
     AmqpConnection,
@@ -16,13 +16,13 @@ from repid.connections.amqp.protocol import (
     ManagedSession,
 )
 from repid.connections.amqp.subscriber import AmqpSubscriber
+from repid.data.concurrency import Concurrency
 
 logger = logging.getLogger("repid.connections.amqp")
 
 if TYPE_CHECKING:
     from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
-    from repid.connections.abc import ReceivedMessageT
     from repid.data import ExternalDocs, Tag
 
 
@@ -323,7 +323,7 @@ class AmqpServer:
     async def subscribe(
         self,
         *,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
+        channels_to_callbacks: dict[str, MessageCallbackT],
         concurrency: Concurrency,
         channel_concurrency: dict[str, Concurrency],
     ) -> SubscriberT:

@@ -32,6 +32,9 @@ await app.run_worker(concurrency=Concurrency())
 
 There is no default payload byte cap.
 
+The `tasks_limit` worker argument is deprecated. Use `concurrency=Concurrency(messages=...)`
+to set the same limit.
+
 Each field accepts a positive integer or `None` for unlimited.
 
 Routers and actors have no default limits.

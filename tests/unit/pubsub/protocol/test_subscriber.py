@@ -8,6 +8,7 @@ import grpc
 import grpc.aio
 import pytest
 
+from repid import LeaseRenewal
 from repid.connections.abc import ReceivedMessageT
 from repid.connections.pubsub.message_broker import PubsubServer
 from repid.connections.pubsub.protocol._helpers import ChannelConfig, QueuedDelivery
@@ -829,7 +830,7 @@ async def test_fatal_stream_failure_stops_siblings_and_close_drains_callbacks() 
         finally:
             sibling_stopped.set()
 
-    async def callback(_message: ReceivedMessageT) -> None:
+    async def callback(_message: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
         callback_started.set()
         await asyncio.Future()
 

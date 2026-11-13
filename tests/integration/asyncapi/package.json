@@ -1,0 +1,7 @@
+{
+  "name": "repid-asyncapi-tests",
+  "private": true,
+  "devDependencies": {
+    "@asyncapi/cli": "6.3.0"
+  }
+}

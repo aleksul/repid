@@ -2,26 +2,37 @@ name: MyPy
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   mypy:
     name: MyPy (Python 3.11)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v7
+      uses: actions/checkout@v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Setup uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v7.6.0
 
-    - name: Install or update dependencies
-      run: uv sync --frozen --all-extras --all-groups --python 3.11
+    - name: Install type-checking dependencies
+      run: uv sync --frozen --all-extras --group lint --group tests --python 3.11
 
     - name: Add mypy annotator
       uses: pr-annotators/mypy-pr-annotator@v1.0.0
 
     - name: Run MyPy
-      run: uv run mypy .
+      run: uv run --no-sync mypy .

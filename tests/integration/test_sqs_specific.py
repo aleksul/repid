@@ -15,6 +15,8 @@ from repid.connections.sqs import SqsServer
 from repid.connections.sqs.message import SqsReceivedMessage
 from repid.connections.sqs.subscriber import SqsSubscriber
 
+pytestmark = pytest.mark.integration_target(name="sqs")
+
 if TYPE_CHECKING:
     from repid.connections.abc import ServerT
 

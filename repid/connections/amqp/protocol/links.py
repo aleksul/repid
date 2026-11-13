@@ -535,6 +535,8 @@ class ReceiverLink(Link):
         self._delivery_count = 0
         self._link_credit = prefetch
         self._prefetch = prefetch
+        self._closing = False
+        self._delivery_tasks: set[asyncio.Task[None]] = set()
 
         # Multi-frame transfer handling
         self._incoming_transfers: list[TransferFrame] = []
@@ -587,8 +589,42 @@ class ReceiverLink(Link):
     async def _handle_flow(self, flow: FlowFrame) -> None:
         """Handle FLOW frame (echo request)."""
         # Receivers typically only respond to drain/echo requests
-        if flow.echo:
+        if flow.echo and not self._closing:
             await self._send_flow()
+
+    @override
+    async def detach(self, _error: Exception | None = None) -> None:
+        self._closing = True
+        try:
+            await super().detach(_error)
+        finally:
+            self._cancel_delivery_tasks()
+
+    @override
+    async def _handle_detach(self, _detach: DetachFrame) -> None:
+        self._closing = True
+        try:
+            await super()._handle_detach(_detach)
+        finally:
+            self._cancel_delivery_tasks()
+
+    @override
+    def invalidate(self) -> None:
+        self._closing = True
+        super().invalidate()
+        self._cancel_delivery_tasks()
+
+    def track_delivery_task(self, task: asyncio.Task[None]) -> None:
+        if self._closing:
+            task.cancel()
+        else:
+            self._delivery_tasks.add(task)
+            task.add_done_callback(self._delivery_tasks.discard)
+
+    def _cancel_delivery_tasks(self) -> None:
+        for task in self._delivery_tasks:
+            if task is not asyncio.current_task() and not task.cancelling():
+                task.cancel()
 
     async def _send_flow(self) -> None:
         """Send FLOW frame to grant credit."""
@@ -685,7 +721,7 @@ class ReceiverLink(Link):
         self._delivery_settled_by_callback = True
 
     async def settle_delivery(self, delivery_id: int, state: ReceiverSettlementState) -> None:
-        if not self.is_delivery_settled(delivery_id):
+        if not self._closing and self.is_attached and not self.is_delivery_settled(delivery_id):
             await self._send_disposition(delivery_id, state)
         await self.release_delivery_credit(delivery_id)
 
@@ -740,7 +776,7 @@ class ReceiverLink(Link):
 
             if self._link_credit < self._prefetch:
                 self._link_credit += 1
-                if self.is_usable:
+                if self.is_attached and not self._closing:
                     await self._send_flow()
 
     async def set_credit(self, credit: int) -> None:

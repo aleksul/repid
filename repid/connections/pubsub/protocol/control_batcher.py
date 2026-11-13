@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
-from contextlib import suppress
 from typing import Protocol
 
 logger = logging.getLogger("repid.connections.pubsub.protocol")
@@ -32,8 +31,13 @@ class OperationInProgressOnCancellation(asyncio.CancelledError):
     """The caller was cancelled after its control operation left the pending batch.
 
     The RPC may already have reached Pub/Sub, so a message must not attempt a
-    different disposition after receiving this exception.
+    different disposition after receiving this exception. The completion future
+    allows the caller to order subsequent operations after the detached RPC.
     """
+
+    def __init__(self, completion: asyncio.Future[None]) -> None:
+        super().__init__()
+        self.completion = completion
 
 
 class _Operation:
@@ -91,36 +95,29 @@ class PubsubControlBatcher:
         self._lock = asyncio.Lock()
         self._ack_batches: dict[str, _AckBatch] = {}
         self._modify_batches: dict[tuple[str, int], _ModifyBatch] = {}
-        self._task: asyncio.Task[None] | None = None
-        self._immediate_tasks: set[asyncio.Task[None]] = set()
+        self._flush_task: asyncio.Task[None] | None = None
+        self._batch_tasks: set[asyncio.Task[None]] = set()
         self._shutdown_event = asyncio.Event()
 
     async def start(self) -> None:
-        self._task = asyncio.create_task(self._flush_loop())
+        self._flush_task = asyncio.create_task(self._flush_loop())
 
     async def stop(self) -> None:
         self._shutdown_event.set()
-        if self._task is not None:
-            self._task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
-        await self._flush_all()
-        await self._drain_immediate_tasks()
-
-    async def _drain_immediate_tasks(self) -> None:
-        """Wait for detached full batches, including tasks added while draining."""
-        while tasks := tuple(self._immediate_tasks):
-            await asyncio.gather(*tasks, return_exceptions=True)
-            self._immediate_tasks.difference_update(tasks)
+        if self._flush_task is not None:
+            await asyncio.shield(self._flush_task)
+            self._flush_task = None
+        await self._flush()
+        if self._batch_tasks:
+            await asyncio.wait(self._batch_tasks)
 
     async def _flush_loop(self) -> None:
-        try:
-            while not self._shutdown_event.is_set():
-                await asyncio.sleep(self._flush_interval)
-                await self._flush_all()
-        except asyncio.CancelledError:
-            pass
+        while not self._shutdown_event.is_set():
+            try:
+                async with asyncio.timeout(self._flush_interval):
+                    await self._shutdown_event.wait()
+            except TimeoutError:
+                await self._flush()
 
     async def add_ack(self, subscription_path: str, ack_id: str) -> None:
         future = asyncio.get_running_loop().create_future()
@@ -128,6 +125,8 @@ class PubsubControlBatcher:
         immediate: _AckBatch | None = None
 
         async with self._lock:
+            if self._shutdown_event.is_set():
+                raise ConnectionError("Pub/Sub control batcher is stopped.")
             batch = self._ack_batches.get(subscription_path)
             if batch is None:
                 batch = _AckBatch()
@@ -139,7 +138,7 @@ class PubsubControlBatcher:
                 immediate = batch
 
         if immediate is not None:
-            self._track_immediate_task(
+            self._track_batch_task(
                 asyncio.create_task(self._execute_ack_batch(subscription_path, immediate)),
             )
 
@@ -157,6 +156,8 @@ class PubsubControlBatcher:
         immediate: _ModifyBatch | None = None
 
         async with self._lock:
+            if self._shutdown_event.is_set():
+                raise ConnectionError("Pub/Sub control batcher is stopped.")
             batch = self._modify_batches.get(key)
             if batch is None:
                 batch = _ModifyBatch(seconds)
@@ -168,15 +169,15 @@ class PubsubControlBatcher:
                 immediate = batch
 
         if immediate is not None:
-            self._track_immediate_task(
+            self._track_batch_task(
                 asyncio.create_task(self._execute_modify_batch(subscription_path, immediate)),
             )
 
         await self._await_operation(operation)
 
-    def _track_immediate_task(self, task: asyncio.Task[None]) -> None:
-        self._immediate_tasks.add(task)
-        task.add_done_callback(self._immediate_tasks.discard)
+    def _track_batch_task(self, task: asyncio.Task[None]) -> None:
+        self._batch_tasks.add(task)
+        task.add_done_callback(self._batch_tasks.discard)
 
     async def _await_operation(self, operation: _Operation) -> None:
         future = operation.future
@@ -217,7 +218,7 @@ class PubsubControlBatcher:
             # No caller remains to await this detached operation. Consume a
             # later RPC failure so its future cannot become an unhandled error.
             future.add_done_callback(self._consume_abandoned_future)
-            raise OperationInProgressOnCancellation from None
+            raise OperationInProgressOnCancellation(future) from None
 
     @staticmethod
     def _consume_abandoned_future(future: asyncio.Future[None]) -> None:
@@ -241,23 +242,19 @@ class PubsubControlBatcher:
                     return True
         return False
 
-    async def _flush_all(self) -> None:
+    async def _flush(self) -> None:
         async with self._lock:
             ack_batches = self._ack_batches
             modify_batches = self._modify_batches
             self._ack_batches = {}
             self._modify_batches = {}
-
-        tasks: list[asyncio.Task[None]] = []
-        for subscription_path, ack_batch in ack_batches.items():
-            tasks.append(asyncio.create_task(self._execute_ack_batch(subscription_path, ack_batch)))
-        for (subscription_path, _), modify_batch in modify_batches.items():
-            tasks.append(
-                asyncio.create_task(self._execute_modify_batch(subscription_path, modify_batch)),
+        # A slow RPC for one batch must not delay the next delivery's renewal.
+        for path, ack_batch in ack_batches.items():
+            self._track_batch_task(asyncio.create_task(self._execute_ack_batch(path, ack_batch)))
+        for (path, _), modify_batch in modify_batches.items():
+            self._track_batch_task(
+                asyncio.create_task(self._execute_modify_batch(path, modify_batch)),
             )
-
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _execute_ack_batch(self, subscription_path: str, batch: _AckBatch) -> None:
         try:

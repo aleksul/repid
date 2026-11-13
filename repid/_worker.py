@@ -7,9 +7,11 @@ import sys
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
+from repid._concurrency import _DEFAULT_WORKER_CONCURRENCY
 from repid._runner import _Runner
 from repid.asyncapi_server import AsyncAPIServer
 from repid.data.actor import ActorExecutionContext
+from repid.data.concurrency import Concurrency
 from repid.health_check_server import HealthCheckServer
 from repid.router import _MaterializedRouter
 
@@ -28,7 +30,7 @@ class _Worker:
         router: _MaterializedRouter,
         graceful_shutdown_time: float = 25.0,
         messages_limit: int = float("inf"),  # pyrefly: ignore[bad-function-definition]
-        tasks_limit: int = 1000,
+        concurrency: Concurrency = _DEFAULT_WORKER_CONCURRENCY,
         register_signals: Iterable[signal.Signals] | None = None,
         health_check_server: HealthCheckServerSettings | None = None,
         asyncapi_server: AsyncAPIServerSettings | None = None,
@@ -38,7 +40,7 @@ class _Worker:
         self.server = actor_context.server
         self.centralized_router = router
 
-        self.tasks_limit: int = tasks_limit
+        self.concurrency = concurrency
         self.messages_limit: int = messages_limit
 
         self.graceful_shutdown_time: float = graceful_shutdown_time
@@ -68,7 +70,8 @@ class _Worker:
         logger.info(
             "worker.run.start",
             extra={
-                "tasks_limit": self.tasks_limit,
+                "concurrency_messages": self.concurrency.messages,
+                "concurrency_payload_bytes": self.concurrency.payload_bytes,
                 "messages_limit": self.messages_limit,
                 "graceful_shutdown_time": self.graceful_shutdown_time,
             },
@@ -90,7 +93,12 @@ class _Worker:
             runner = _Runner(
                 actor_context=self.actor_context,
                 max_tasks=self.messages_limit,
-                tasks_concurrency_limit=self.tasks_limit,
+                concurrency=self.concurrency,
+                channel_concurrency={
+                    ch.address: ch.concurrency
+                    for ch in self.centralized_router.channels
+                    if ch.concurrency is not None
+                },
                 health_check_server=self.health_check_server,
             )
 

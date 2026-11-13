@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
@@ -15,11 +16,13 @@ class KafkaReceivedMessage(ReceivedMessageT):
         self,
         server: KafkaServer,
         record: ConsumerRecordProtocol,
-        mark_complete_callback: Callable[[ConsumerRecordProtocol], Coroutine[Any, Any, None]],
+        mark_complete_callback: Callable[[], Coroutine[Any, Any, None]],
+        is_owned: Callable[[], bool],
     ) -> None:
         self._server = server
         self._record = record
         self._mark_complete_callback = mark_complete_callback
+        self._is_owned = is_owned
 
         self._action: MessageAction | None = None
         self._payload = record.value
@@ -76,18 +79,42 @@ class KafkaReceivedMessage(ReceivedMessageT):
         pass
 
     async def ack(self) -> None:
-        if self._action is not None:
+        if self._action is not None or not self._is_owned():
             return
 
-        self._action = MessageAction.acked
+        await self._settle(MessageAction.acked)
+
+    async def _settle(
+        self,
+        action: MessageAction,
+        publish: Coroutine[Any, Any, Any] | None = None,
+    ) -> None:
+        self._action = action
+
+        settlement = asyncio.create_task(self._perform_settlement(publish))
         try:
-            await self._mark_complete_callback(self._record)
-        except Exception:  # pragma: no cover
+            await asyncio.wait({settlement})
+        except asyncio.CancelledError:
+            # Publication and offset completion are one reserved settlement.
+            # Cancelling only its caller must not strand the offset halfway through.
+            await asyncio.gather(settlement, return_exceptions=True)
+            raise
+        settlement.result()
+
+    async def _perform_settlement(self, publish: Coroutine[Any, Any, Any] | None) -> None:
+        try:
+            if publish is not None:
+                if not self._is_owned():
+                    publish.close()
+                    return
+                await publish
+            await self._mark_complete_callback()
+        except Exception:
             self._action = None
             raise
 
     async def nack(self) -> None:
-        if self._action is not None:
+        if self._action is not None or not self._is_owned():
             return
 
         if self._server._producer is None:  # pragma: no cover
@@ -95,34 +122,30 @@ class KafkaReceivedMessage(ReceivedMessageT):
             # but we'll check just in case
             raise ConnectionError("Kafka producer is not connected.")
 
-        try:
-            dlq_topic_strategy = self._server._dlq_topic_strategy
-            if dlq_topic_strategy is not None and self._server._producer is not None:
-                dlq_topic = dlq_topic_strategy(self._channel)
-                headers = []
-                if self._headers:
-                    for k, v in self._headers.items():
-                        headers.append((k, v.encode()))
-                if self._content_type:
-                    headers.append(("content-type", self._content_type.encode()))
+        publish = None
+        dlq_topic_strategy = self._server._dlq_topic_strategy
+        if dlq_topic_strategy is not None:
+            dlq_topic = dlq_topic_strategy(self._channel)
+            headers = []
+            if self._headers:
+                for k, v in self._headers.items():
+                    headers.append((k, v.encode()))
+            if self._content_type:
+                headers.append(("content-type", self._content_type.encode()))
 
-                headers.append(("x-original-topic", self._channel.encode()))
-                headers.append(("x-original-offset", str(self._record.offset).encode()))
+            headers.append(("x-original-topic", self._channel.encode()))
+            headers.append(("x-original-offset", str(self._record.offset).encode()))
 
-                await self._server._producer.send_and_wait(
-                    topic=dlq_topic,
-                    value=self._payload,
-                    headers=headers,
-                )
+            publish = self._server._producer.send_and_wait(
+                topic=dlq_topic,
+                value=self._payload,
+                headers=headers,
+            )
 
-            self._action = MessageAction.nacked
-            await self._mark_complete_callback(self._record)
-        except Exception:  # pragma: no cover
-            self._action = None
-            raise
+        await self._settle(MessageAction.nacked, publish)
 
     async def reject(self) -> None:
-        if self._action is not None:
+        if self._action is not None or not self._is_owned():
             return
 
         if self._server._producer is None:  # pragma: no cover
@@ -130,28 +153,24 @@ class KafkaReceivedMessage(ReceivedMessageT):
             # but we'll check just in case
             raise ConnectionError("Kafka producer is not connected.")
 
-        try:
-            reject_topic_strategy = self._server._reject_topic_strategy
-            if reject_topic_strategy is not None:
-                reject_topic = reject_topic_strategy(self._channel)
-                headers = []
-                if self._headers:
-                    for k, v in self._headers.items():
-                        headers.append((k, v.encode()))
-                if self._content_type:
-                    headers.append(("content-type", self._content_type.encode()))
+        publish = None
+        reject_topic_strategy = self._server._reject_topic_strategy
+        if reject_topic_strategy is not None:
+            reject_topic = reject_topic_strategy(self._channel)
+            headers = []
+            if self._headers:
+                for k, v in self._headers.items():
+                    headers.append((k, v.encode()))
+            if self._content_type:
+                headers.append(("content-type", self._content_type.encode()))
 
-                await self._server._producer.send_and_wait(
-                    topic=reject_topic,
-                    value=self._payload,
-                    headers=headers,
-                )
+            publish = self._server._producer.send_and_wait(
+                topic=reject_topic,
+                value=self._payload,
+                headers=headers,
+            )
 
-            self._action = MessageAction.rejected
-            await self._mark_complete_callback(self._record)
-        except Exception:  # pragma: no cover
-            self._action = None
-            raise
+        await self._settle(MessageAction.rejected, publish)
 
     async def reply(
         self,

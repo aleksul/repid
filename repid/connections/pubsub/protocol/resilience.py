@@ -202,7 +202,7 @@ async def with_retry(
     """Execute an operation with automatic retry on transient failures.
 
     Args:
-        state: The shared resilience state.
+        state: Source of retry policy. Each unary operation has its own retry budget.
         operation: The async operation to execute.
         operation_name: Name for logging purposes.
 
@@ -216,20 +216,20 @@ async def with_retry(
     last_error: Exception | None = None
     _ = operation_name  # For future logging use
 
-    while state.should_retry():
+    max_attempts = state.config.max_attempts
+    for attempt in range(1, max_attempts + 1):
         try:
-            async with resilient_operation(state):
-                return await operation()
+            return await operation()
         except grpc.aio.AioRpcError as e:
             last_error = e
 
             if not state.is_retryable(e):
                 raise
 
-            delay = state.calculate_delay()
-            await asyncio.sleep(delay)
+            if attempt < max_attempts:
+                await asyncio.sleep(state.calculate_delay(attempt))
 
-    raise ReconnectionExhaustedError(state.attempt_count, last_error)
+    raise ReconnectionExhaustedError(max_attempts, last_error)
 
 
 async def with_retry_generator(

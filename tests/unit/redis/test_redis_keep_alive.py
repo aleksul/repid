@@ -1,5 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from repid.connections.abc import MessageAction
 from repid.connections.redis.message_broker import RedisReceivedMessage, RedisServer
 
@@ -59,7 +61,8 @@ async def test_redis_received_message_keep_alive_success() -> None:
     )
 
 
-async def test_redis_keep_alive_interval() -> None:
+@pytest.mark.parametrize(("min_idle_ms", "interval"), [(0, None), (1000, 1 / 3), (60_000, 20)])
+def test_redis_keep_alive_interval(min_idle_ms: int, interval: float | None) -> None:
     mock_redis = AsyncMock()
     mock_server = MagicMock(spec=RedisServer)
     mock_server._redis = mock_redis
@@ -77,6 +80,6 @@ async def test_redis_keep_alive_interval() -> None:
         server=mock_server,
         redis_client=mock_redis,
         dlq_stream="test_dlq",
+        min_idle_ms=min_idle_ms,
     )
-    # The property isn't explicitly initialized in the test wrapper, so it defaults to None or something, let's just cover it
-    _ = msg.keep_alive_interval
+    assert msg.keep_alive_interval == interval

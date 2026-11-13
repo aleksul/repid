@@ -1,9 +1,14 @@
+import asyncio
+from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from datetime import timedelta
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import grpc.aio
 import pytest
 
+from repid import Concurrency
 from repid.connections.pubsub import message_broker
 from repid.connections.pubsub.helpers import ChannelOverride
 from repid.connections.pubsub.protocol import (
@@ -13,6 +18,7 @@ from repid.connections.pubsub.protocol import (
     ResilienceState,
 )
 from repid.connections.pubsub.protocol.client import PubsubProtocolClient
+from repid.connections.pubsub.protocol.proto import StreamingPullRequest, StreamingPullResponse
 
 
 def test_init_defaults() -> None:
@@ -99,6 +105,8 @@ async def test_disconnect_closes_subscribers_and_channel() -> None:
     server = message_broker.PubsubServer(default_project="p")
     mock_channel = MagicMock(spec=grpc.aio.Channel)
     server._channel = mock_channel
+    batcher = MagicMock(stop=AsyncMock())
+    server._control_batcher = batcher
 
     mock_sub = AsyncMock()
     server._active_subscribers.append(mock_sub)
@@ -106,6 +114,8 @@ async def test_disconnect_closes_subscribers_and_channel() -> None:
     await server.disconnect()
 
     mock_sub.close.assert_called_once()
+    batcher.stop.assert_awaited_once()
+    assert server._control_batcher is None
     mock_channel.close.assert_called_once()
     assert server._channel is None
 
@@ -162,7 +172,11 @@ async def test_subscribe_creates_subscriber_via_factory() -> None:
         "repid.connections.pubsub.message_broker.PubsubSubscriber.create",
         new_callable=AsyncMock,
     ) as mock_create:
-        ret = await server.subscribe(channels_to_callbacks={"chan1": MagicMock()})
+        ret = await server.subscribe(
+            concurrency=Concurrency(),
+            channel_concurrency={},
+            channels_to_callbacks={"chan1": MagicMock()},
+        )
 
         assert ret is mock_create.return_value
         mock_create.assert_called_once()
@@ -179,7 +193,11 @@ async def test_subscribe_raises_error_when_disconnected() -> None:
     server = message_broker.PubsubServer(default_project="p")
 
     with pytest.raises(Exception, match=r"PubSub server is not connected\."):
-        await server.subscribe(channels_to_callbacks={"c": MagicMock()})
+        await server.subscribe(
+            concurrency=Concurrency(),
+            channel_concurrency={},
+            channels_to_callbacks={"c": MagicMock()},
+        )
 
 
 def test_resolve_topic_path() -> None:
@@ -353,3 +371,53 @@ async def test_connect_failure_survives_channel_close_failure() -> None:
         assert server.is_connected is False
         assert server._channel is None
         mock_channel.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("settings", "expected"),
+    [
+        ({"concurrency": Concurrency(messages=4)}, [(4, 0), (4, 0)]),
+        ({}, [(0, 0), (0, 0)]),
+        (
+            {
+                "concurrency": Concurrency(messages=1000),
+                "channel_concurrency": {"a": Concurrency(messages=3, payload_bytes=10 * 1024)},
+            },
+            [(3, 10 * 1024), (1000, 0)],
+        ),
+    ],
+)
+async def test_subscribe_sets_streaming_pull_limits(
+    settings: dict[str, Any],
+    expected: list[tuple[int, int]],
+) -> None:
+    server = message_broker.PubsubServer(default_project="p", use_google_auth=False)
+    server._channel = MagicMock(spec=grpc.aio.Channel)
+    initial_requests: asyncio.Queue[StreamingPullRequest] = asyncio.Queue()
+
+    async def pull(
+        requests: AsyncGenerator[StreamingPullRequest, None],
+    ) -> AsyncGenerator[StreamingPullResponse, None]:
+        async with aclosing(requests):
+            initial_requests.put_nowait(await anext(requests))
+            async for _ in requests:
+                yield StreamingPullResponse()
+
+    def open_stream(requests: AsyncGenerator[StreamingPullRequest, None]) -> MagicMock:
+        call = MagicMock(spec=grpc.aio.StreamStreamCall)
+        call.__aiter__.side_effect = lambda: pull(requests)
+        return call
+
+    server._channel.stream_stream.return_value = open_stream
+    subscriber = await server.subscribe(
+        channels_to_callbacks={"a": AsyncMock(), "b": AsyncMock()},
+        **{"concurrency": Concurrency(), "channel_concurrency": {}, **settings},  # pyrefly: ignore[bad-argument-type]
+    )
+    try:
+        requests = [await asyncio.wait_for(initial_requests.get(), 1) for _ in expected]
+        assert [
+            (request.max_outstanding_messages, request.max_outstanding_bytes)
+            for request in sorted(requests, key=lambda request: request.subscription)
+        ] == expected
+    finally:
+        await subscriber.close()

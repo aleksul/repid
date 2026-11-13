@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import signal
+import warnings
 from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any, cast, overload
 
+from repid._concurrency import _DEFAULT_WORKER_CONCURRENCY
 from repid._worker import _Worker
 from repid.asyncapi import AsyncAPI3Schema, AsyncAPIGenerator
 from repid.asyncapi_server import AsyncAPIServer, get_asyncapi_html
 from repid.data import ActorExecutionContext, MessageData, RunnerInfo
+from repid.data.concurrency import Concurrency
 from repid.message_registry import MessageRegistry
 from repid.middlewares import (
     ActorMiddlewareT,
@@ -78,7 +81,8 @@ class Repid:
         *,
         graceful_shutdown_time: float = 25.0,
         messages_limit: int = float("inf"),  # pyrefly: ignore[bad-function-definition]
-        tasks_limit: int = 1000,
+        tasks_limit: int | None = None,
+        concurrency: Concurrency | None = None,
         register_signals: Iterable[signal.Signals] | None = None,
         health_check_server: HealthCheckServerSettings | None = None,
         asyncapi_server: AsyncAPIServerSettings | None = None,
@@ -92,6 +96,16 @@ class Repid:
                 else "No default server configured.",
             )
 
+        if tasks_limit is not None:
+            if concurrency is not None:
+                raise ValueError("Specify either tasks_limit or concurrency.")
+            warnings.warn(
+                "tasks_limit is deprecated. Use concurrency=Concurrency(messages=...) instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            concurrency = Concurrency(messages=tasks_limit)
+
         worker = _Worker(
             actor_context=ActorExecutionContext(
                 server=server,
@@ -101,7 +115,7 @@ class Repid:
             router=self._centralized_router._materialize(),
             graceful_shutdown_time=graceful_shutdown_time,
             messages_limit=messages_limit,
-            tasks_limit=tasks_limit,
+            concurrency=concurrency or _DEFAULT_WORKER_CONCURRENCY,
             register_signals=register_signals,
             health_check_server=health_check_server,
             asyncapi_server=asyncapi_server,

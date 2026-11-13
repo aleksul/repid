@@ -29,6 +29,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("repid.connections.amqp.protocol")
 
+_ReceiverCallback = Callable[
+    [bytes, dict[str, Any] | None, int, bytes, ReceiverLink, "Properties | None"],
+    Any,
+]
+
 
 class ManagedSessionError(Exception):
     """Raised when a managed session operation fails."""
@@ -294,15 +299,7 @@ class ReceiverPool:
         """
         self._managed_session = managed_session
         self._links: dict[str, ReceiverLink] = {}
-        self._callbacks: dict[
-            str,
-            Callable[
-                [bytes, dict[str, Any] | None, int, bytes, ReceiverLink, Properties | None],
-                Any,
-            ],
-        ] = {}
-        self._link_names: dict[str, str] = {}  # address -> link name
-        self._prefetches: dict[str, int] = {}  # address -> prefetch count
+        self._subscriptions: dict[str, tuple[str, _ReceiverCallback, str, int]] = {}
         self._link_counter = 0
         self._lock = asyncio.Lock()
         self._stop_event = asyncio.Event()
@@ -316,12 +313,11 @@ class ReceiverPool:
     async def subscribe(
         self,
         address: str,
-        callback: Callable[
-            [bytes, dict[str, Any] | None, int, bytes, ReceiverLink, Properties | None],
-            Any,
-        ],
+        callback: _ReceiverCallback,
         name: str | None = None,
         prefetch: int = 100,
+        *,
+        subscription_key: str | None = None,
     ) -> ReceiverLink:
         """
         Subscribe to messages from the given address.
@@ -332,35 +328,35 @@ class ReceiverPool:
             name: Optional link name
             prefetch: Number of messages to pre-fetch (AMQP link credit).
                 Set to the concurrency limit to apply protocol-level back-pressure.
+            subscription_key: Stable identifier for unsubscribing a link independently
+                of other links at the same address. Defaults to the address.
 
         Returns:
             A ReceiverLink for the subscription
         """
         async with self._lock:
-            # Store callback and prefetch for re-subscription
-            self._callbacks[address] = callback
-            self._prefetches[address] = prefetch
+            key = address if subscription_key is None else subscription_key
+            if key in self._subscriptions:
+                raise ValueError(f"Receiver subscription {key!r} already exists")
             self._link_counter += 1
             base_name = name or f"receiver-{address}"
             link_name = f"{base_name}-{self._link_counter}"
-            self._link_names[address] = base_name
-
-            return await self._create_link(address, callback, link_name, prefetch)
+            link = await self._create_link(key, address, callback, link_name, prefetch)
+            self._subscriptions[key] = (address, callback, base_name, prefetch)
+            return link
 
     async def _create_link(
         self,
+        key: str,
         address: str,
-        callback: Callable[
-            [bytes, dict[str, Any] | None, int, bytes, ReceiverLink, Properties | None],
-            Any,
-        ],
+        callback: _ReceiverCallback,
         name: str,
         prefetch: int = 100,
     ) -> ReceiverLink:
         """Create a new receiver link."""
         session = await self._managed_session.get_session()
         link = await session.create_receiver(address, callback, name, prefetch=prefetch)
-        self._links[address] = link
+        self._links[key] = link
         return link
 
     async def _on_reconnected(self, _data: Any = None) -> None:
@@ -371,20 +367,18 @@ class ReceiverPool:
         async with self._lock:
             logger.debug(
                 "receiver_pool.reconnected",
-                extra={"count": len(self._callbacks)},
+                extra={"count": len(self._subscriptions)},
             )
 
             # Clear old links
             self._links.clear()
 
             # Re-create all subscriptions
-            for address, callback in list(self._callbacks.items()):
+            for key, (address, callback, base_name, prefetch) in self._subscriptions.items():
                 try:
                     self._link_counter += 1
-                    base_name = self._link_names.get(address, f"receiver-{address}")
                     link_name = f"{base_name}-{self._link_counter}"
-                    prefetch = self._prefetches.get(address, 100)
-                    await self._create_link(address, callback, link_name, prefetch)
+                    await self._create_link(key, address, callback, link_name, prefetch)
                     logger.debug("receiver_pool.resubscribed", extra={"address": address})
                 except Exception:
                     logger.exception("receiver_pool.resubscribe.error", extra={"address": address})
@@ -394,16 +388,10 @@ class ReceiverPool:
         self._links.clear()
 
     async def unsubscribe(self, address: str) -> None:
-        """Unsubscribe from the given address."""
+        """Unsubscribe using the subscription key (the address by default)."""
         async with self._lock:
-            if address in self._callbacks:
-                del self._callbacks[address]
-            if address in self._link_names:
-                del self._link_names[address]
-            if address in self._prefetches:
-                del self._prefetches[address]
-            if address in self._links:
-                link = self._links.pop(address)
+            self._subscriptions.pop(address, None)
+            if (link := self._links.pop(address, None)) is not None:
                 with contextlib.suppress(Exception):
                     await link.detach()
 
@@ -421,4 +409,4 @@ class ReceiverPool:
                     await link.detach()
 
             self._links.clear()
-            self._callbacks.clear()
+            self._subscriptions.clear()

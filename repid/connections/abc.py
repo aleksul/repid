@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
     from repid.data import ExternalDocs, Tag
+    from repid.data.concurrency import Concurrency
 
 
 class MessageAction(StrEnum):
@@ -66,11 +67,16 @@ class ReceivedMessageT(BaseMessageT, Protocol):
     async def reject(self) -> None: ...
 
     @property
-    def keep_alive_interval(self) -> int | None:
-        """Recommended seconds between keep_alive() calls, or None if not needed."""
+    def keep_alive_interval(self) -> float | None:
+        """Recommended positive interval in seconds, or None if keep-alive is unnecessary."""
 
-    async def keep_alive(self) -> None:
-        """Signal the broker that this message is still being processed."""
+    async def keep_alive(self) -> bool | None:
+        """Renew this delivery's lease.
+
+        Return False if the broker adapter knows further renewals are unnecessary,
+        for example after settlement or lease expiry. Repid then ends the renewal
+        loop. Return None to keep the renewal schedule active.
+        """
 
     async def reply(
         self,
@@ -88,6 +94,12 @@ class CapabilitiesT(TypedDict):
     supports_native_reply: bool
     supports_lightweight_pause: bool
     supports_keep_alive: bool
+
+
+class MessageCallbackT(Protocol):
+    """Submit a delivery to the worker."""
+
+    async def __call__(self, message: ReceivedMessageT, /) -> None: ...
 
 
 class SubscriberT(Protocol):
@@ -172,6 +184,7 @@ class ServerT(Protocol):
     async def subscribe(
         self,
         *,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        channels_to_callbacks: dict[str, MessageCallbackT],
+        concurrency: Concurrency,
+        channel_concurrency: dict[str, Concurrency],
     ) -> SubscriberT: ...

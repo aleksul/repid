@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import suppress
 from typing import Literal
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from repid import Repid, Router, ServerT
-from repid._runner import _keep_alive_loop, _run_with_keepalive, _Runner
+from repid import Concurrency, LeaseRenewal, Repid, Router, ServerT
+from repid._message_lifecycle import _actor_run
+from repid._runner import _Runner
 from repid.connections.in_memory import InMemoryServer
+from repid.connections.in_memory.message_broker import InMemoryReceivedMessage
 from repid.data import ActorExecutionContext, MessageData
 from repid.health_check_server import HealthCheckServer, HealthCheckStatus
 from repid.serializer import default_serializer
@@ -212,7 +213,7 @@ async def test_runner_max_tasks_hit(supports_lightweight_pause: bool) -> None:
         runner = _Runner(
             actor_context=_make_actor_context(mocked_server),
             max_tasks=5,
-            tasks_concurrency_limit=10,
+            concurrency=Concurrency(messages=10),
         )
 
         assert not runner.max_tasks_hit
@@ -234,18 +235,6 @@ async def test_runner_max_tasks_hit(supports_lightweight_pause: bool) -> None:
 
         assert runner.processed == 5
         assert runner.max_tasks_hit
-
-
-async def test_runner_unpause_threshold_validation() -> None:
-    server = InMemoryServer()
-
-    with pytest.raises(ValueError, match="Subscriber will never unpause"):
-        _Runner(
-            actor_context=_make_actor_context(server),
-            max_tasks=10,
-            tasks_concurrency_limit=1,
-            concurrency_unpause_percent=2.0,  # 200% - more than limit
-        )
 
 
 async def test_runner_cancel_event_during_actor_execution() -> None:
@@ -325,6 +314,13 @@ async def test_runner_no_matching_actor_rejects_message(
             ),
         )
 
+        queue = server.queues["default"]
+        raw = await queue.queue.get()
+        queue.processing.add(raw)
+        await runner._message_handler(
+            router._actors_per_channel_address["default"],
+            InMemoryReceivedMessage(raw, queue, "default"),
+        )
         runner.stop_consume_event.set()
 
         await runner.run(
@@ -358,7 +354,7 @@ async def test_runner_pause_and_resume_with_concurrency_limit() -> None:
     async with server.connection():
         runner = _Runner(
             actor_context=_make_actor_context(server),
-            tasks_concurrency_limit=2,
+            concurrency=Concurrency(messages=2),
         )
 
         async def publish_messages() -> None:
@@ -393,17 +389,21 @@ async def test_runner_pause_and_resume_with_concurrency_limit() -> None:
         assert len(processing) == 3
 
 
-@pytest.mark.parametrize("tasks_limit", [1, 2, 10])
-async def test_runner_resumes_saturated_in_memory_subscriber(tasks_limit: int) -> None:
+@pytest.mark.parametrize("message_cap", [1, 2, 10])
+async def test_runner_resumes_saturated_in_memory_subscriber(message_cap: int) -> None:
     server = InMemoryServer()
     router = Router()
     release = asyncio.Event()
-    finished = 0
-    message_count = tasks_limit * 2 + 2
+    saturated = asyncio.Event()
+    started = finished = 0
+    message_count = message_cap * 2 + 2
 
     @router.actor
     async def job() -> None:
-        nonlocal finished
+        nonlocal started, finished
+        started += 1
+        if started == message_cap:
+            saturated.set()
         await release.wait()
         finished += 1
 
@@ -419,7 +419,7 @@ async def test_runner_resumes_saturated_in_memory_subscriber(tasks_limit: int) -
             )
         runner = _Runner(
             actor_context=_make_actor_context(server),
-            tasks_concurrency_limit=tasks_limit,
+            concurrency=Concurrency(messages=message_cap),
             max_tasks=message_count,
         )
         running = asyncio.create_task(
@@ -429,12 +429,7 @@ async def test_runner_resumes_saturated_in_memory_subscriber(tasks_limit: int) -
             ),
         )
         try:
-
-            async def wait_for_pause() -> None:
-                while not runner._server_subscriber_was_paused:
-                    await asyncio.sleep(0)
-
-            await asyncio.wait_for(wait_for_pause(), timeout=1)
+            await asyncio.wait_for(saturated.wait(), timeout=1)
             release.set()
             await asyncio.wait_for(asyncio.shield(running), timeout=1)
             assert finished == message_count
@@ -700,20 +695,23 @@ async def test_runner_tasks_not_finishing_after_cancellation(
         await run_task
         await runner_task
 
-        tasks = set(runner._tasks)
         try:
             assert not finished_event.is_set()
-            assert tasks
+            queue = server.queues["default"]
+            assert not queue.processing
+            assert queue.queue.qsize() == 1
+            assert runner.processed == 0
             assert any(
                 r.levelno == logging.ERROR and r.message == "runner.shutdown.tasks_unfinished"
                 for r in caplog.get_records(when="call")
             )
-        finally:  # even if test fails, do a cleanup
+        finally:
             release_event.set()
-            await asyncio.gather(*tasks)
-
-        assert finished_event.is_set()
-        assert not runner._tasks
+            await asyncio.wait_for(finished_event.wait(), timeout=1)
+            async with asyncio.timeout(1):
+                while runner.processed == 0:
+                    await asyncio.sleep(0)
+        assert runner.processed == 1
 
 
 async def test_runner_on_error_reject_rejects_message() -> None:
@@ -827,13 +825,15 @@ async def test_runner_unrouted_message_reject_below_threshold() -> None:
         msg.nack.assert_not_called()
 
 
+@pytest.mark.parametrize("limit", [1, 3])
 async def test_runner_unrouted_message_nack_at_threshold(
     caplog: pytest.LogCaptureFixture,
+    limit: int,
 ) -> None:
     server = InMemoryServer()
-    runner = _Runner(actor_context=_make_actor_context(server), max_unrouted_retries=3)
+    runner = _Runner(actor_context=_make_actor_context(server), max_unrouted_retries=limit)
 
-    for _ in range(2):
+    for _ in range(limit - 1):
         await runner._message_handler([], _make_unrouted_message("msg-poison"))
 
     msg = _make_unrouted_message("msg-poison")
@@ -890,48 +890,73 @@ async def test_runner_unrouted_message_no_id_always_reject() -> None:
 
 
 async def test_keep_alive_loop_calls_keep_alive() -> None:
-    message = Mock()
-    message.is_acted_on = False
-    message.keep_alive = AsyncMock()
-    message.message_id = "test-msg"
+    renewed = asyncio.Event()
+    message = Mock(keep_alive=AsyncMock(side_effect=renewed.set))
 
-    task = asyncio.create_task(_keep_alive_loop(message, interval=0))
-    await asyncio.sleep(0.05)
-    task.cancel()
-    with suppress(asyncio.CancelledError):
-        await task
+    renewal = LeaseRenewal(message)
+    renewal.set_interval(0)
+    await asyncio.wait_for(renewed.wait(), 1)
+    await renewal.close()
 
-    assert message.keep_alive.call_count >= 1
+    message.keep_alive.assert_awaited()
 
 
-async def test_keep_alive_loop_exits_when_message_acted_on() -> None:
-    message = Mock()
-    message.is_acted_on = True
-    message.keep_alive = AsyncMock()
-    message.message_id = "test-msg"
+async def test_keep_alive_interval_can_change_and_pause_without_restarting() -> None:
+    renewed = asyncio.Event()
+    message = Mock(keep_alive=AsyncMock(side_effect=renewed.set))
+    renewal = LeaseRenewal(message)
+    renewal.set_interval(3600)
+    task = renewal._task
+    assert task is not None
+    try:
+        await asyncio.sleep(0)
+        renewal.set_interval(0)
+        await asyncio.wait_for(renewed.wait(), 1)
 
-    task = asyncio.create_task(_keep_alive_loop(message, interval=0))
-    await asyncio.sleep(0.05)
+        renewal.set_interval(None)
+        calls = message.keep_alive.await_count
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert message.keep_alive.await_count == calls
+        assert not task.done()
 
+        renewed.clear()
+        renewal.set_interval(0)
+        await asyncio.wait_for(renewed.wait(), 1)
+        assert renewal._task is task
+    finally:
+        await renewal.close()
     assert task.done()
-    message.keep_alive.assert_not_called()
+
+
+async def test_keep_alive_loop_exits_when_adapter_stops_renewal() -> None:
+    message = Mock(keep_alive=AsyncMock(return_value=False))
+
+    renewal = LeaseRenewal(message)
+    renewal.set_interval(0)
+    task = renewal._task
+    assert task is not None
+    await asyncio.wait_for(task, 1)
+    renewal.set_interval(1)
+    await renewal.close()
+
+    message.keep_alive.assert_awaited_once()
+    assert renewal._task is task
 
 
 async def test_keep_alive_loop_logs_error_and_continues(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    message = Mock()
-    message.is_acted_on = False
-    message.keep_alive = AsyncMock(side_effect=RuntimeError("broker error"))
-    message.message_id = "test-msg"
+    message = Mock(
+        keep_alive=AsyncMock(side_effect=[RuntimeError("broker error"), False]),
+        message_id="test-msg",
+    )
+    renewal = LeaseRenewal(message)
+    renewal.set_interval(0)
+    assert renewal._task is not None
+    await asyncio.wait_for(renewal._task, 1)
 
-    task = asyncio.create_task(_keep_alive_loop(message, interval=0))
-    await asyncio.sleep(0.05)
-    task.cancel()
-    with suppress(asyncio.CancelledError):
-        await task
-
-    assert message.keep_alive.call_count >= 1
+    assert message.keep_alive.await_count == 2
     warning = next(
         (r for r in caplog.records if r.message == "message.keep_alive.error"),
         None,
@@ -941,7 +966,12 @@ async def test_keep_alive_loop_logs_error_and_continues(
 
 
 def _make_mock_actor(fn: AsyncMock | None = None) -> Mock:
-    actor = Mock()
+    actor = Mock(keep_alive=True, timeout=None, confirmation_mode="manual", on_error="nack")
+
+    async def middleware(leaf: AsyncMock, message: Mock, actor: Mock) -> object:
+        return await leaf(message, actor)
+
+    actor.middleware_pipeline = middleware
     actor.converter.convert_inputs = AsyncMock(return_value=([], {}))
     actor.fn = fn if fn is not None else AsyncMock()
     return actor
@@ -955,33 +985,30 @@ def _make_actor_context(server: Mock | ServerT) -> ActorExecutionContext:
     )
 
 
-async def test_run_with_keepalive_skipped_when_capability_false() -> None:
-    message = Mock()
-    message.keep_alive_interval = 0
-    message.keep_alive = AsyncMock()
+@pytest.mark.parametrize(
+    ("supported", "interval", "enabled"),
+    [(False, 0, True), (True, None, True), (True, 0, False)],
+)
+async def test_actor_skips_keep_alive(
+    supported: bool,
+    interval: int | None,
+    enabled: bool,
+) -> None:
+    message = Mock(is_acted_on=False, keep_alive_interval=interval, keep_alive=AsyncMock())
+    server = Mock(capabilities={"supports_keep_alive": supported})
+    actor = _make_mock_actor()
+    actor.keep_alive = enabled
 
-    server = Mock()
-    server.capabilities = {"supports_keep_alive": False}
+    async def slow_fn() -> None:
+        await asyncio.sleep(0.01)
 
-    await _run_with_keepalive(message, _make_mock_actor(), _make_actor_context(server))
-
-    message.keep_alive.assert_not_called()
-
-
-async def test_run_with_keepalive_skipped_when_interval_none() -> None:
-    message = Mock()
-    message.keep_alive_interval = None
-    message.keep_alive = AsyncMock()
-
-    server = Mock()
-    server.capabilities = {"supports_keep_alive": True}
-
-    await _run_with_keepalive(message, _make_mock_actor(), _make_actor_context(server))
+    actor.fn = slow_fn
+    await _actor_run(actor, message, _make_actor_context(server))
 
     message.keep_alive.assert_not_called()
 
 
-async def test_run_with_keepalive_fires_during_slow_actor() -> None:
+async def test_keep_alive_runs_during_slow_actor() -> None:
     message = Mock()
     message.keep_alive_interval = 0
     message.is_acted_on = False
@@ -994,16 +1021,16 @@ async def test_run_with_keepalive_fires_during_slow_actor() -> None:
     async def slow_fn() -> None:
         await asyncio.sleep(0.1)
 
-    await _run_with_keepalive(
-        message,
+    await _actor_run(
         _make_mock_actor(AsyncMock(side_effect=slow_fn)),
+        message,
         _make_actor_context(server),
     )
 
     assert message.keep_alive.call_count >= 1
 
 
-async def test_run_with_keepalive_task_cancelled_on_actor_timeout() -> None:
+async def test_keep_alive_task_cancelled_on_actor_timeout() -> None:
     message = Mock()
     message.keep_alive_interval = 0
     message.is_acted_on = False
@@ -1016,16 +1043,98 @@ async def test_run_with_keepalive_task_cancelled_on_actor_timeout() -> None:
     async def very_slow_fn() -> None:
         await asyncio.sleep(10)
 
-    with pytest.raises(asyncio.TimeoutError):
-        await asyncio.wait_for(
-            _run_with_keepalive(
-                message,
-                _make_mock_actor(AsyncMock(side_effect=very_slow_fn)),
-                _make_actor_context(server),
-            ),
-            timeout=0.05,
-        )
+    message.nack = AsyncMock()
+    actor = _make_mock_actor(AsyncMock(side_effect=very_slow_fn))
+    actor.timeout = 0.05
+    result = await _actor_run(actor, message, _make_actor_context(server))
+    assert isinstance(result, TimeoutError)
+    message.nack.assert_awaited_once()
 
     call_count_after_timeout = message.keep_alive.call_count
     await asyncio.sleep(0.05)
     assert message.keep_alive.call_count == call_count_after_timeout
+
+
+async def test_actor_keep_alive_propagates_cancellation_during_cleanup() -> None:
+    keep_alive_started = asyncio.Event()
+    cleaning = asyncio.Event()
+
+    async def keep_alive() -> None:
+        keep_alive_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleaning.set()
+            await asyncio.Event().wait()
+
+    message = Mock(is_acted_on=False, keep_alive_interval=0, keep_alive=keep_alive)
+    actor = _make_mock_actor(AsyncMock(side_effect=keep_alive_started.wait))
+    server = Mock(capabilities={"supports_keep_alive": True})
+    running = asyncio.create_task(_actor_run(actor, message, _make_actor_context(server)))
+    await asyncio.wait_for(cleaning.wait(), 1)
+    running.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await running
+
+
+@pytest.mark.parametrize("settlement", ["ack", "nack"])
+async def test_keep_alive_runs_during_middleware_and_settlement(settlement: str) -> None:
+    keep_alive_before_actor = asyncio.Event()
+    keep_alive_during_settlement = asyncio.Event()
+    settling = asyncio.Event()
+
+    def record_keep_alive() -> None:
+        if settling.is_set():
+            keep_alive_during_settlement.set()
+        else:
+            keep_alive_before_actor.set()
+
+    async def middleware(leaf: AsyncMock, message: Mock, actor: Mock) -> object:
+        await asyncio.wait_for(keep_alive_before_actor.wait(), 0.5)
+        return await leaf(message, actor)
+
+    async def settle() -> None:
+        settling.set()
+        await asyncio.wait_for(keep_alive_during_settlement.wait(), 0.5)
+
+    actor = _make_mock_actor()
+    actor.confirmation_mode = "auto"
+    actor.keep_alive = 0.001
+    actor.middleware_pipeline = middleware
+    if settlement == "nack":
+        actor.fn.side_effect = ValueError("actor failed")
+    message = Mock(
+        is_acted_on=False,
+        keep_alive_interval=None,
+        keep_alive=AsyncMock(side_effect=record_keep_alive),
+    )
+    setattr(message, settlement, AsyncMock(side_effect=settle))
+    server = Mock(capabilities={"supports_keep_alive": True})
+    await _actor_run(actor, message, _make_actor_context(server))
+    assert keep_alive_before_actor.is_set()
+    assert keep_alive_during_settlement.is_set()
+    getattr(message, settlement).assert_awaited_once()
+
+
+async def test_actor_failure_after_ack_does_not_settle_again() -> None:
+    message = Mock(is_acted_on=False, ack=AsyncMock(), nack=AsyncMock(), reject=AsyncMock())
+    error = RuntimeError("actor failed after acknowledging")
+
+    def acknowledge() -> None:
+        message.is_acted_on = True
+
+    async def fail_after_ack() -> None:
+        await message.ack()
+        raise error
+
+    message.ack.side_effect = acknowledge
+    actor = _make_mock_actor(AsyncMock(side_effect=fail_after_ack))
+    actor.keep_alive = False
+    actor.confirmation_mode = "auto"
+
+    result = await _actor_run(actor, message, _make_actor_context(InMemoryServer()))
+
+    assert result is error
+    message.ack.assert_awaited_once()
+    message.nack.assert_not_awaited()
+    message.reject.assert_not_awaited()

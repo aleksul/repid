@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from repid import Repid
+from repid import Concurrency, LeaseRenewal, Repid
 from repid.connections.abc import ReceivedMessageT, SentMessageT
 from repid.connections.kafka.subscriber import KafkaSubscriber
 
@@ -70,14 +70,15 @@ async def test_kafka_reject(kafka_repid: Repid, kafka_connection: ServerT) -> No
         received_msg: ReceivedMessageT | None = None
         event = asyncio.Event()
 
-        async def on_message(msg: ReceivedMessageT) -> None:
+        async def on_message(msg: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
             nonlocal received_msg
             received_msg = msg
             event.set()
 
         subscriber = await kafka_connection.subscribe(
+            channel_concurrency={},
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            concurrency=Concurrency(messages=1),
         )
 
         await asyncio.wait_for(event.wait(), timeout=10.0)
@@ -93,14 +94,18 @@ async def test_kafka_reject(kafka_repid: Repid, kafka_connection: ServerT) -> No
         requeued_msg: ReceivedMessageT | None = None
         requeued_event = asyncio.Event()
 
-        async def on_requeued_message(msg: ReceivedMessageT) -> None:
+        async def on_requeued_message(
+            msg: ReceivedMessageT,
+            _renewal: LeaseRenewal | None = None,
+        ) -> None:
             nonlocal requeued_msg
             requeued_msg = msg
             requeued_event.set()
 
         requeued_subscriber = await kafka_connection.subscribe(
+            channel_concurrency={},
             channels_to_callbacks={channel_name: on_requeued_message},
-            concurrency_limit=1,
+            concurrency=Concurrency(messages=1),
         )
 
         await asyncio.wait_for(requeued_event.wait(), timeout=10.0)
@@ -131,14 +136,15 @@ async def test_kafka_nack_to_dlq(kafka_repid: Repid, kafka_connection: ServerT) 
         received_msg: ReceivedMessageT | None = None
         event = asyncio.Event()
 
-        async def on_message(msg: ReceivedMessageT) -> None:
+        async def on_message(msg: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
             nonlocal received_msg
             received_msg = msg
             event.set()
 
         subscriber = await kafka_connection.subscribe(
+            channel_concurrency={},
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            concurrency=Concurrency(messages=1),
         )
 
         await asyncio.wait_for(event.wait(), timeout=10.0)
@@ -153,14 +159,18 @@ async def test_kafka_nack_to_dlq(kafka_repid: Repid, kafka_connection: ServerT) 
         dlq_received_msg: ReceivedMessageT | None = None
         dlq_event = asyncio.Event()
 
-        async def on_dlq_message(msg: ReceivedMessageT) -> None:
+        async def on_dlq_message(
+            msg: ReceivedMessageT,
+            _renewal: LeaseRenewal | None = None,
+        ) -> None:
             nonlocal dlq_received_msg
             dlq_received_msg = msg
             dlq_event.set()
 
         dlq_subscriber = await kafka_connection.subscribe(
+            channel_concurrency={},
             channels_to_callbacks={dlq_channel_name: on_dlq_message},
-            concurrency_limit=1,
+            concurrency=Concurrency(messages=1),
         )
 
         await asyncio.wait_for(dlq_event.wait(), timeout=10.0)
@@ -187,14 +197,15 @@ async def test_kafka_reply(kafka_repid: Repid, kafka_connection: ServerT) -> Non
         received_msg: ReceivedMessageT | None = None
         event = asyncio.Event()
 
-        async def on_message(msg: ReceivedMessageT) -> None:
+        async def on_message(msg: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
             nonlocal received_msg
             received_msg = msg
             event.set()
 
         subscriber = await kafka_connection.subscribe(
+            channel_concurrency={},
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            concurrency=Concurrency(messages=1),
         )
 
         await asyncio.wait_for(event.wait(), timeout=10.0)
@@ -260,12 +271,14 @@ async def test_kafka_message_properties_and_double_actions(  # noqa: PLR0915
         received_msg: ReceivedMessageT | None = None
         event = asyncio.Event()
 
-        async def on_message(msg: ReceivedMessageT) -> None:
+        async def on_message(msg: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:
             nonlocal received_msg
             received_msg = msg
             event.set()
 
         subscriber = await kafka_connection.subscribe(
+            concurrency=Concurrency(),
+            channel_concurrency={},
             channels_to_callbacks={channel_name: on_message},
         )
 
@@ -315,13 +328,14 @@ async def test_kafka_subscriber_callback_exception(
 
         event = asyncio.Event()
 
-        async def on_message(msg: ReceivedMessageT) -> None:  # noqa: ARG001
+        async def on_message(msg: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:  # noqa: ARG001
             event.set()
             raise Exception("Test exception in callback")
 
         subscriber = await kafka_connection.subscribe(
+            channel_concurrency={},
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            concurrency=Concurrency(messages=1),
         )
 
         await asyncio.wait_for(event.wait(), timeout=10.0)
@@ -346,15 +360,16 @@ async def test_kafka_subscriber_close_exception_and_cancellation(
 
         event = asyncio.Event()
 
-        async def on_message(msg: ReceivedMessageT) -> None:  # noqa: ARG001
+        async def on_message(msg: ReceivedMessageT, _renewal: LeaseRenewal | None = None) -> None:  # noqa: ARG001
             event.set()
             # Sleep a long time so that the task is still in background_tasks
             # when subscriber.close() is called.
             await asyncio.sleep(60.0)
 
         subscriber = await kafka_connection.subscribe(
+            channel_concurrency={},
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            concurrency=Concurrency(messages=1),
         )
 
         await asyncio.wait_for(event.wait(), timeout=10.0)

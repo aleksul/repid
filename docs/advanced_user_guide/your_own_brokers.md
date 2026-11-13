@@ -13,13 +13,14 @@ Here is a simplified overview of what you need to implement:
 
 ```python
 import asyncio
-from typing import Mapping, Sequence, Callable, Coroutine, Any
+from typing import Mapping, Sequence, Any
 from collections.abc import AbstractAsyncContextManager
+from repid import Concurrency
 from repid.connections.abc import (
     ServerT,
     SubscriberT,
     SentMessageT,
-    ReceivedMessageT,
+    MessageCallbackT,
     CapabilitiesT,
 )
 
@@ -42,6 +43,7 @@ class MyCustomServer:
         return {
             "supports_native_reply": False,
             "supports_lightweight_pause": False,
+            "supports_keep_alive": False,
         }
 
     # 3. Connection Lifecycle
@@ -77,13 +79,33 @@ class MyCustomServer:
     async def subscribe(
         self,
         *,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        channels_to_callbacks: dict[str, MessageCallbackT],
+        concurrency: Concurrency,
+        channel_concurrency: dict[str, Concurrency],
     ) -> SubscriberT:
         # Start consuming from the requested channels and map them to their callbacks
         # Return an object that implements `SubscriberT` (can manage pauses, resumes, closures)
         ...
 ```
+
+The worker enforces execution budgets locally and passes its budget as `concurrency`.
+The `channel_concurrency` mapping contains the explicitly configured channel budgets.
+For native intake settings, use the tighter finite limit for each field. Direct calls
+can pass an empty mapping when all channels inherit the worker budget.
+
+Await each callback. It returns once Repid has scheduled the message for processing or
+acknowledged or rejected it. It may wait for room in the worker, so keep reading broker events
+and handling other channels while it waits. Once the callback starts, Repid takes care of
+acknowledgments and rejections.
+
+If the subscriber started a `repid.LeaseRenewal`, wrap `await callback(message)` in
+`with renewal.handoff():` and call `await renewal.close_if_unclaimed()` in a `finally` block.
+The worker claims the renewal for that delivery and closes it when processing finishes.
+
+If your broker supports keep-alive, use `keep_alive()` to renew the message's lease.
+Return `False` when the adapter knows the delivery no longer needs renewal, such as
+after settlement or lease expiry. Repid ends the renewal loop on that signal.
+Return `None` to keep the renewal schedule active.
 
 ## Creating a Subscriber
 

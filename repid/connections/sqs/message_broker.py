@@ -2,26 +2,33 @@ from __future__ import annotations
 
 import base64
 import logging
-from collections.abc import AsyncIterator, Callable, Coroutine, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 from aiobotocore.session import get_session
 
-from repid.connections.abc import CapabilitiesT, SentMessageT, ServerT, SubscriberT
+from repid._concurrency import _channel_hints
+from repid.connections.abc import (
+    CapabilitiesT,
+    MessageCallbackT,
+    SentMessageT,
+    ServerT,
+    SubscriberT,
+)
 from repid.connections.sqs.constants import (
     EMPTY_PAYLOAD_ATTRIBUTE,
     EMPTY_PAYLOAD_ATTRIBUTE_VALUE,
     EMPTY_PAYLOAD_BODY_PLACEHOLDER,
 )
 from repid.connections.sqs.subscriber import SqsSubscriber
+from repid.data.concurrency import Concurrency
 
 if TYPE_CHECKING:
     from types_aiobotocore_sqs.client import SQSClient
 
     from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
-    from repid.connections.abc import ReceivedMessageT
     from repid.data import ExternalDocs, Tag
 
 logger = logging.getLogger("repid.connections.sqs")
@@ -236,8 +243,9 @@ class SqsServer(ServerT):
     async def subscribe(
         self,
         *,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        channels_to_callbacks: dict[str, MessageCallbackT],
+        concurrency: Concurrency,
+        channel_concurrency: dict[str, Concurrency],
     ) -> SubscriberT:
         logger.debug("channel.subscribe", extra={"channels": list(channels_to_callbacks.keys())})
 
@@ -247,8 +255,11 @@ class SqsServer(ServerT):
         sub = SqsSubscriber(
             server=self,
             channels_to_callbacks=channels_to_callbacks,
-            concurrency_limit=concurrency_limit,
+            channel_concurrency=_channel_hints(
+                channels_to_callbacks,
+                concurrency,
+                channel_concurrency,
+            ),
         )
         self._active_subscribers.add(sub)
-        sub.task.add_done_callback(lambda _: self._active_subscribers.discard(sub))
         return sub

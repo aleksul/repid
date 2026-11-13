@@ -329,14 +329,14 @@ async def test_receiver_pool_close_with_link_error() -> None:
 
     # Add bad link and a callback
     pool._links["/queues/test"] = cast(Any, BadLink())
-    pool._callbacks["/queues/test"] = lambda *_: None
+    pool._subscriptions["/queues/test"] = ("/queues/test", lambda *_: None, "test", 100)
 
     # Should handle error without raising
     await pool.close()
 
     # Should clear both links and callbacks
     assert len(pool._links) == 0
-    assert len(pool._callbacks) == 0
+    assert len(pool._subscriptions) == 0
 
 
 async def test_receiver_pool_on_reconnected_re_subscribe() -> None:
@@ -364,14 +364,37 @@ async def test_receiver_pool_on_reconnected_re_subscribe() -> None:
     receiver_pool = ReceiverPool(managed)
 
     # Subscribe to an address
-    receiver_pool._callbacks["test-queue"] = callback
-    receiver_pool._link_names["test-queue"] = "test-receiver"
+    receiver_pool._subscriptions["test-queue"] = ("test-queue", callback, "test-receiver", 123)
 
     # Call _on_reconnected to trigger re-subscription
     await receiver_pool._on_reconnected()
 
     # Link should be created
     assert "test-queue" in receiver_pool._links
+
+
+async def test_receiver_pool_same_address_subscriptions_reconnect_and_close_independently() -> None:
+    first, second, reconnected_first, reconnected_second = [FakeReceiverLink() for _ in range(4)]
+    session = FakeSessionForPools(
+        connection=None,
+        sender_links=[],
+        receiver_links=[first, second, reconnected_first, reconnected_second],
+    )
+    connection = FakeManagedConnection(is_connected=True, session_factory=lambda: session)
+    pool = ManagedSession(cast(AmqpConnection, connection)).receiver_pool
+
+    assert await pool.subscribe("queue", lambda *_: None, subscription_key="one") is first
+    assert await pool.subscribe("queue", lambda *_: None, subscription_key="two") is second
+    with pytest.raises(ValueError, match="already exists"):
+        await pool.subscribe("queue", lambda *_: None, subscription_key="one")
+    await pool._on_reconnected()
+
+    await pool.unsubscribe("one")
+    assert reconnected_first.detached
+    assert not reconnected_second.detached
+
+    await pool.close()
+    assert reconnected_second.detached
 
 
 async def test_receiver_pool_invalidate() -> None:

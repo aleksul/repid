@@ -1,22 +1,28 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-from collections.abc import AsyncIterator, Callable, Coroutine, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, cast
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 
-from repid.connections.abc import CapabilitiesT, SentMessageT, ServerT, SubscriberT
+from repid._concurrency import _channel_hints
+from repid.connections.abc import (
+    CapabilitiesT,
+    MessageCallbackT,
+    SentMessageT,
+    ServerT,
+    SubscriberT,
+)
 from repid.connections.kafka.subscriber import KafkaSubscriber
 
 if TYPE_CHECKING:
     from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
-    from repid.connections.abc import ReceivedMessageT
     from repid.connections.kafka.protocols import AIOKafkaConsumerProtocol, AIOKafkaProducerProtocol
     from repid.data import ExternalDocs, Tag
+    from repid.data.concurrency import Concurrency
 
 logger = logging.getLogger("repid.connections.kafka")
 
@@ -217,37 +223,46 @@ class KafkaServer(ServerT):
     async def subscribe(
         self,
         *,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        channels_to_callbacks: dict[str, MessageCallbackT],
+        concurrency: Concurrency,
+        channel_concurrency: dict[str, Concurrency],
     ) -> SubscriberT:
         if not self.is_connected:  # pragma: no cover
             raise ConnectionError("Kafka producer is not connected.")
 
         logger.debug("channel.subscribe", extra={"channels": list(channels_to_callbacks.keys())})
 
+        # One consumer shares a poll/fetch budget across its subscribed topics.
+        hints = _channel_hints(channels_to_callbacks, concurrency, channel_concurrency).values()
+        max_records = min(
+            (hint.messages for hint in hints if hint.messages is not None),
+            default=1000,
+        )
+        fetch_max_bytes = min(
+            (hint.payload_bytes for hint in hints if hint.payload_bytes is not None),
+            default=None,
+        )
+        consumer_kwargs = self._conn_kwargs
+        if fetch_max_bytes is not None:
+            consumer_kwargs = {
+                **consumer_kwargs,
+                "fetch_max_bytes": min(fetch_max_bytes, 2**31 - 1),
+            }
+
         consumer = AIOKafkaConsumer(
-            *channels_to_callbacks.keys(),
             bootstrap_servers=self.dsn,
             group_id=self._group_id,
             group_instance_id=self._group_instance_id,
             enable_auto_commit=False,
             auto_offset_reset=self._auto_offset_reset,
-            **self._conn_kwargs,
+            **consumer_kwargs,
         )
-        await consumer.start()
-
         subscriber = KafkaSubscriber(
             server=self,
             consumer=cast("AIOKafkaConsumerProtocol", consumer),
             channels_to_callbacks=channels_to_callbacks,
-            concurrency_limit=concurrency_limit,
+            max_records=max_records,
         )
+        await subscriber.start()
         self._active_subscribers.append(subscriber)
-
-        def _on_done(_task: asyncio.Task[Any]) -> None:
-            if subscriber in self._active_subscribers:
-                self._active_subscribers.remove(subscriber)
-
-        subscriber.task.add_done_callback(_on_done)
-
         return subscriber

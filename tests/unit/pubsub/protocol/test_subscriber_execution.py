@@ -25,8 +25,6 @@ def _make_subscriber(**overrides: Any) -> sub_module.PubsubSubscriber:
         "resilience_state": MagicMock(spec=ResilienceState),
         "server": MagicMock(),
         "stream_ack_deadline_seconds": 10,
-        "client_id": "client",
-        "concurrency_limit": 10,
     }
     defaults.update(overrides)
     return sub_module.PubsubSubscriber(**defaults)
@@ -116,10 +114,12 @@ async def test_run_streaming_pull_logic() -> None:
 
     def side_effect(
         iterator: AsyncIterator[proto.StreamingPullRequest],
-    ) -> AsyncIterator[proto.StreamingPullResponse]:
+    ) -> MagicMock:
         nonlocal captured_iterator
         captured_iterator = iterator
-        return stream_iterator()
+        call = MagicMock()
+        call.__aiter__.side_effect = stream_iterator
+        return call
 
     stream_mock.side_effect = side_effect
 

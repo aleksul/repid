@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Coroutine
 from typing import Any
 
@@ -104,43 +105,50 @@ class AmqpReceivedMessage:
     async def keep_alive(self) -> None:  # pragma: no cover
         pass
 
-    async def _settle_delivery(self, state: Accepted | Rejected | Released) -> None:
-        await self._link.settle_delivery(self._delivery_id, state)
+    async def _settle_delivery(
+        self,
+        action: MessageAction,
+        state: Accepted | Rejected | Released,
+        publish: Coroutine[Any, Any, None] | None = None,
+    ) -> None:
+        # Claim the delivery before awaiting broker I/O. Finish the disposition
+        # and credit update even if the actor is canceled during the operation.
+        self._action = action
+
+        settlement = asyncio.create_task(self._perform_settlement(state, publish))
+        try:
+            # Unlike shield, wait does not report a later RPC failure to the
+            # event loop if the caller is canceled while settlement continues.
+            await asyncio.wait({settlement})
+        except asyncio.CancelledError:
+            await asyncio.gather(settlement, return_exceptions=True)
+            raise
+        settlement.result()
+
+    async def _perform_settlement(
+        self,
+        state: Accepted | Rejected | Released,
+        publish: Coroutine[Any, Any, None] | None,
+    ) -> None:
+        try:
+            if publish is not None:
+                await publish
+            await self._link.settle_delivery(self._delivery_id, state)
+        except Exception:
+            self._action = None
+            raise
 
     async def ack(self) -> None:
-        # Reserve the action before the RPC: in a single event loop the
-        # check-and-set is atomic, so concurrent settlements are deduplicated,
-        # and a settlement cancelled mid-RPC is never followed by a second one.
-        if self._action is not None:
-            return
-        self._action = MessageAction.acked
-        try:
-            await self._settle_delivery(ACCEPTED_STATE)
-        except Exception:
-            # Cancellation is not caught, so a cancelled settlement stays
-            # reserved even if the disposition may have reached the broker.
-            self._action = None
-            raise
+        if self._action is None:
+            await self._settle_delivery(MessageAction.acked, ACCEPTED_STATE)
 
     async def nack(self) -> None:
-        if self._action is not None:
-            return
-        self._action = MessageAction.nacked
-        try:
-            await self._settle_delivery(REJECTED_STATE)
-        except Exception:
-            self._action = None
-            raise
+        if self._action is None:
+            await self._settle_delivery(MessageAction.nacked, REJECTED_STATE)
 
     async def reject(self) -> None:
-        if self._action is not None:
-            return
-        self._action = MessageAction.rejected
-        try:
-            await self._settle_delivery(RELEASED_STATE)
-        except Exception:
-            self._action = None
-            raise
+        if self._action is None:
+            await self._settle_delivery(MessageAction.rejected, RELEASED_STATE)
 
     async def reply(
         self,
@@ -161,11 +169,10 @@ class AmqpReceivedMessage:
 
         params = dict(server_specific_parameters or {})
 
-        self._action = MessageAction.replied
-        try:
-            # Reply then settle as one reserved unit: another settlement cannot
-            # interleave, since _action is already reserved.
-            await self._publish_fn(
+        await self._settle_delivery(
+            MessageAction.replied,
+            ACCEPTED_STATE,
+            self._publish_fn(
                 channel=reply_channel,
                 message=MessageData(
                     payload=payload,
@@ -173,8 +180,5 @@ class AmqpReceivedMessage:
                     content_type=content_type,
                 ),
                 server_specific_parameters=params,
-            )
-            await self._settle_delivery(ACCEPTED_STATE)
-        except Exception:
-            self._action = None
-            raise
+            ),
+        )

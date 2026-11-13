@@ -57,7 +57,7 @@ def test_basic_properties(msg: received_message.PubsubReceivedMessage) -> None:
     assert msg.delivery_attempt == 1
 
 
-async def test_concurrent_settlement_and_keep_alive_issue_only_one_broker_operation(
+async def test_ack_allows_keep_alive_but_blocks_other_settlements(
     msg: received_message.PubsubReceivedMessage,
 ) -> None:
     ack_started = asyncio.Event()
@@ -75,16 +75,43 @@ async def test_concurrent_settlement_and_keep_alive_issue_only_one_broker_operat
         asyncio.create_task(msg.reject()),
         asyncio.create_task(msg.keep_alive()),
     ]
+    await asyncio.gather(*other_tasks)
     release_ack.set()
-
-    await asyncio.gather(ack_task, *other_tasks)
+    await ack_task
 
     assert msg.action is MessageAction.acked
     _batcher(msg).add_ack.assert_awaited_once_with("sub1", "ack1")
-    _batcher(msg).add_modify_deadline.assert_not_awaited()
+    _batcher(msg).add_modify_deadline.assert_awaited_once_with("sub1", "ack1", 300)
 
 
-async def test_cancelled_settlement_stays_reserved_and_blocks_retry(
+async def test_timer_flushes_keep_alive_during_a_blocked_ack(
+    msg: received_message.PubsubReceivedMessage,
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def acknowledge(*_: object) -> None:
+        started.set()
+        await release.wait()
+
+    client = _FakeControlClient()
+    client.acknowledge.side_effect = acknowledge
+    batcher = PubsubControlBatcher(client, flush_interval=0.001)
+    msg._server._control_batcher = batcher
+    await batcher.start()
+    ack = asyncio.create_task(msg.ack())
+    try:
+        await asyncio.wait_for(started.wait(), 1)
+        await asyncio.wait_for(msg.keep_alive(), 1)
+        client.modify_ack_deadline.assert_awaited_once_with("sub1", ["ack1"], 300)
+        assert not ack.done()
+    finally:
+        release.set()
+        await asyncio.wait_for(ack, 1)
+        await batcher.stop()
+
+
+async def test_cancelled_settlement_waits_for_broker_and_blocks_retry(
     msg: received_message.PubsubReceivedMessage,
 ) -> None:
     ack_started = asyncio.Event()
@@ -98,19 +125,19 @@ async def test_cancelled_settlement_stays_reserved_and_blocks_retry(
     task = asyncio.create_task(msg.ack())
     await ack_started.wait()
     task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-
-    # Cancellation may have left the operation in flight, so the disposition
-    # stays reserved and a retry must not send another operation.
+    await asyncio.sleep(0)
+    assert not task.done()
     assert msg.action is MessageAction.acked
-    _batcher(msg).add_ack.side_effect = None
     await msg.ack()
     _batcher(msg).add_ack.assert_awaited_once_with("sub1", "ack1")
+    release_ack.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
     assert msg.action is MessageAction.acked
 
 
-async def test_cancelled_queued_settlement_is_withdrawn_and_stays_reserved() -> None:
+@pytest.mark.parametrize("acknowledge", [False, True])
+async def test_cancelled_queued_settlement_is_still_flushed(acknowledge: bool) -> None:
     client = _FakeControlClient()
     batcher = PubsubControlBatcher(client, flush_interval=10)
     server = MagicMock()
@@ -126,22 +153,25 @@ async def test_cancelled_queued_settlement_is_withdrawn_and_stays_reserved() -> 
     )
     await batcher.start()
 
-    task = asyncio.create_task(message.ack())
+    task = asyncio.create_task(message.ack() if acknowledge else message.reject())
+    await asyncio.sleep(0)
     await asyncio.sleep(0)
     task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+    await message.nack()
+    await batcher.stop()
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    # The queued operation was withdrawn (nothing reached the server), but
-    # the caller cannot know that — the disposition stays reserved and later
-    # settlement attempts must not send anything.
-    assert message.action is MessageAction.acked
-    nack_task = asyncio.create_task(message.nack())
-    await asyncio.sleep(0)
-    await batcher.stop()
-    await nack_task
-    client.acknowledge.assert_not_awaited()
-    client.modify_ack_deadline.assert_not_awaited()
+    if acknowledge:
+        assert message.action is MessageAction.acked
+        client.acknowledge.assert_awaited_once_with("sub1", ["ack1"])
+        client.modify_ack_deadline.assert_not_awaited()
+    else:
+        assert message.action is MessageAction.rejected
+        client.acknowledge.assert_not_awaited()
+        client.modify_ack_deadline.assert_awaited_once_with("sub1", ["ack1"], 1)
 
 
 async def test_cancelled_flushing_settlement_reserves_its_disposition() -> None:
@@ -171,13 +201,12 @@ async def test_cancelled_flushing_settlement_reserves_its_disposition() -> None:
     task = asyncio.create_task(message.ack())
     await started.wait()
     task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-
     assert message.action is MessageAction.acked
     await message.nack()
     client.modify_ack_deadline.assert_not_awaited()
     release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
     await batcher.stop()
 
 
@@ -305,7 +334,7 @@ async def test_keep_alive_noop_after_ack(msg: received_message.PubsubReceivedMes
     await msg.ack()
 
     _batcher(msg).add_modify_deadline.reset_mock()
-    await msg.keep_alive()
+    assert await msg.keep_alive() is False
 
     _batcher(msg).add_modify_deadline.assert_not_called()
 
@@ -359,3 +388,55 @@ async def test_ack_raises_connection_error_when_batcher_missing() -> None:
         await msg.ack()
 
     assert not msg.is_acted_on
+
+
+@pytest.mark.parametrize(("action", "delay"), [("nack", 0), ("reject", 1)])
+@pytest.mark.parametrize("cancel_keep_alive", [False, True])
+@pytest.mark.parametrize("race", ["none", "cancel", "ack"])
+async def test_redelivery_waits_for_in_flight_deadline_extension(
+    msg: received_message.PubsubReceivedMessage,
+    action: str,
+    delay: int,
+    cancel_keep_alive: bool,
+    race: str,
+) -> None:
+    extending = asyncio.Event()
+    release = asyncio.Event()
+    applied = []
+
+    async def modify(_subscription: str, _ack_id: str, seconds: int) -> None:
+        if seconds == 300:
+            extending.set()
+            await release.wait()
+        applied.append(seconds)
+
+    client = _FakeControlClient()
+    client.modify_ack_deadline.side_effect = modify
+    batcher = PubsubControlBatcher(client, max_batch_ids=1)
+    msg._server._control_batcher = batcher
+    keep_alive_task = asyncio.create_task(msg.keep_alive())
+    await asyncio.wait_for(extending.wait(), 1)
+    if cancel_keep_alive:
+        keep_alive_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(keep_alive_task, 1)
+    settlement = asyncio.create_task(getattr(msg, action)())
+    try:
+        done, _ = await asyncio.wait({settlement}, timeout=0.01)
+        assert not done
+        client.modify_ack_deadline.assert_awaited_once_with("sub1", ["ack1"], 300)
+        if race == "cancel":
+            settlement.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await settlement
+            assert not msg.is_acted_on
+            settlement = asyncio.create_task(getattr(msg, action)())
+        elif race == "ack":
+            await msg.ack()
+    finally:
+        release.set()
+        await asyncio.wait_for(settlement, 1)
+        if not cancel_keep_alive:
+            await keep_alive_task
+        await batcher.stop()
+    assert applied == ([300] if race == "ack" else [300, delay])

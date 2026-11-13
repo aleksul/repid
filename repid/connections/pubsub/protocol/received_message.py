@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from repid.connections.abc import MessageAction
 
-from .control_batcher import PubsubControlBatcher
+from .control_batcher import OperationInProgressOnCancellation, PubsubControlBatcher
 from .proto import PubsubMessage
 
 if TYPE_CHECKING:
@@ -38,8 +40,11 @@ class PubsubReceivedMessage:
         self._channel_name = channel_name
         self._server = server
         self._action: MessageAction | None = None
+        self._keep_alive_during_settlement = False
+        self._deadline_lock = asyncio.Lock()
+        self._pending_deadline: asyncio.Future[None] | None = None
         self._stream_ack_deadline_seconds = stream_ack_deadline_seconds
-        self._keep_alive_interval: int = stream_ack_deadline_seconds // 3
+        self._keep_alive_interval = stream_ack_deadline_seconds / 3
 
     @property
     def payload(self) -> bytes:
@@ -80,7 +85,7 @@ class PubsubReceivedMessage:
         return self._delivery_attempt
 
     @property
-    def keep_alive_interval(self) -> int:
+    def keep_alive_interval(self) -> float:
         return self._keep_alive_interval
 
     @property
@@ -90,49 +95,72 @@ class PubsubReceivedMessage:
             raise ConnectionError("Control batcher not available.")
         return batcher
 
-    async def keep_alive(self) -> None:
+    async def keep_alive(self) -> bool | None:
+        if self._action is not None and not self._keep_alive_during_settlement:
+            return False
         await self.extend_deadline(self._stream_ack_deadline_seconds)
+        return None
 
     async def ack(self) -> None:
         """Acknowledge the message via batched unary Acknowledge RPC."""
         if self._action is not None:
             return
-        self._action = MessageAction.acked
-        try:
-            await self._batcher.add_ack(self._subscription_path, self._ack_id)
-        except Exception:
-            self._action = None
-            raise
+        await self._settle(
+            MessageAction.acked,
+            lambda: self._batcher.add_ack(self._subscription_path, self._ack_id),
+        )
 
     async def nack(self) -> None:
         """Negative acknowledge the message (set deadline to 0 for redelivery)."""
-        if self._action is not None:
-            return
-        self._action = MessageAction.nacked
-        try:
-            await self._batcher.add_modify_deadline(
-                self._subscription_path,
-                self._ack_id,
-                0,
-            )
-        except Exception:
-            self._action = None
-            raise
+        await self._redeliver(MessageAction.nacked, 0)
 
     async def reject(self) -> None:
         """Reject the message (set deadline to 1 second)."""
+        await self._redeliver(MessageAction.rejected, 1)
+
+    async def _redeliver(self, action: MessageAction, seconds: int) -> None:
         if self._action is not None:
             return
-        self._action = MessageAction.rejected
-        try:
-            await self._batcher.add_modify_deadline(
-                self._subscription_path,
-                self._ack_id,
-                1,
+        async with self._deadline_lock:
+            await self._wait_for_pending_deadline()
+            if self._action is not None:
+                return
+            await self._settle(
+                action,
+                lambda: self._batcher.add_modify_deadline(
+                    self._subscription_path,
+                    self._ack_id,
+                    seconds,
+                ),
             )
+
+    async def _settle(
+        self,
+        action: MessageAction,
+        operation: Callable[[], Awaitable[None]],
+    ) -> None:
+        self._action = action
+        self._keep_alive_during_settlement = action is MessageAction.acked
+
+        # The action is reserved before I/O, so shutdown can no longer reject
+        # this delivery. Keep its settlement queued until the broker responds.
+        settlement = asyncio.gather(self._perform_settlement(operation), return_exceptions=True)
+        try:
+            (result,) = await asyncio.shield(settlement)
+        except asyncio.CancelledError:
+            await asyncio.wait({settlement})
+            raise
+        if isinstance(result, BaseException):
+            raise result
+
+    async def _perform_settlement(self, operation: Callable[[], Awaitable[None]]) -> None:
+        try:
+            await operation()
         except Exception:
             self._action = None
             raise
+        finally:
+            self._keep_alive_during_settlement = False
 
     async def extend_deadline(self, seconds: int) -> None:
         """Extend the ack deadline for this message.
@@ -140,17 +168,25 @@ class PubsubReceivedMessage:
         Args:
             seconds: New deadline in seconds (10-600).
         """
-        # Settlements reserve _action before their first await, so a plain
-        # check here is enough to keep a renewal from racing a settlement.
-        if self._action is not None:
-            return
+        async with self._deadline_lock:
+            await self._wait_for_pending_deadline()
+            if self._action is not None and not self._keep_alive_during_settlement:
+                return
+            try:
+                await self._batcher.add_modify_deadline(
+                    self._subscription_path,
+                    self._ack_id,
+                    max(10, min(600, seconds)),
+                )
+            except OperationInProgressOnCancellation as exc:
+                self._pending_deadline = exc.completion
+                raise
 
-        seconds = max(10, min(600, seconds))
-        await self._batcher.add_modify_deadline(
-            self._subscription_path,
-            self._ack_id,
-            seconds,
-        )
+    async def _wait_for_pending_deadline(self) -> None:
+        # A cancelled deadline extension can leave its RPC running after releasing the lock.
+        if self._pending_deadline is not None:
+            await asyncio.wait({self._pending_deadline})
+            self._pending_deadline = None
 
     async def reply(
         self,

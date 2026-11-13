@@ -21,7 +21,7 @@ jobs:
         persist-credentials: false
 
     - name: Setup uv
-      uses: astral-sh/setup-uv@v7.6.0
+      uses: astral-sh/setup-uv@v10.3.3
 
     - name: Export requirements
       run: uv export --format requirements-txt --frozen --all-groups --all-extras > requirements.txt

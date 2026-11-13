@@ -168,8 +168,8 @@ async def _actor_run_with_cancel_event_and_callback(  # noqa: PLR0917
     message: ReceivedMessageT,
     actor_context: ActorExecutionContext,
     cancel_event: asyncio.Event,
-    cancel_event_task: asyncio.Task,
-    callback: Callable[[], Awaitable],
+    cancel_event_task: asyncio.Task[object],
+    callback: Callable[[], Awaitable[object]],
 ) -> None:
     process_task = asyncio.create_task(_actor_run(actor, message, actor_context))
     await asyncio.wait(
@@ -219,7 +219,7 @@ class _Runner:
         self,
         *,
         actor_context: ActorExecutionContext,
-        max_tasks: int = float("inf"),  # type: ignore[assignment]
+        max_tasks: int = float("inf"),  # pyrefly: ignore[bad-function-definition]
         tasks_concurrency_limit: int = 1000,
         concurrency_unpause_percent: float = 0.1,  # 10 percent
         health_check_server: HealthCheckServer | None = None,
@@ -242,7 +242,7 @@ class _Runner:
         self.max_unrouted_retries = max_unrouted_retries
         self._unrouted_seen_counts: dict[tuple[str, str], int] = {}
 
-        self._tasks: set[asyncio.Task] = set()
+        self._tasks: set[asyncio.Task[object]] = set()
 
         self.stop_consume_event = asyncio.Event()
         self.cancel_event = asyncio.Event()
@@ -269,18 +269,18 @@ class _Runner:
         )
 
     @property
-    def cancel_event_task(self) -> asyncio.Task:
+    def cancel_event_task(self) -> asyncio.Task[object]:
         if not hasattr(self, "_cancel_event_task"):
             self._cancel_event_task = asyncio.create_task(self.cancel_event.wait())
         return self._cancel_event_task
 
     @property
-    def stop_consume_event_task(self) -> asyncio.Task:
+    def stop_consume_event_task(self) -> asyncio.Task[object]:
         if not hasattr(self, "_stop_consume_event_task"):
             self._stop_consume_event_task = asyncio.create_task(self.stop_consume_event.wait())
         return self._stop_consume_event_task
 
-    def _task_callback(self, task: asyncio.Task) -> None:
+    def _task_callback(self, task: asyncio.Task[object]) -> None:
         self._tasks.discard(task)
         self._limiter.release()
         self._processed += 1

@@ -37,7 +37,7 @@ class ProducerMiddlewareT(Protocol):
     ) -> ProducerMiddlewareReturnsT: ...
 
 
-YourFunc = TypeVar("YourFunc", bound=Callable)
+YourFunc = TypeVar("YourFunc", bound=Callable[..., Any])
 
 
 class _ProducerMiddlewareLastLeaf(Protocol):
@@ -94,7 +94,7 @@ def _compile_producer_middleware_pipeline(
     middlewares: Sequence[ProducerMiddlewareT] | None,
 ) -> Callable[
     [_ProducerMiddlewareLastLeaf],
-    Callable[[str, MessageData, dict[str, Any] | None], Coroutine],
+    Callable[[str, MessageData, dict[str, Any] | None], Coroutine[Any, Any, Any]],
 ]:
     """Compile middlewares into a call-next chain factory.
 
@@ -105,7 +105,7 @@ def _compile_producer_middleware_pipeline(
 
     def assemble(
         leaf: _ProducerMiddlewareLastLeaf,
-    ) -> Callable[[str, MessageData, dict[str, Any] | None], Coroutine]:
+    ) -> Callable[[str, MessageData, dict[str, Any] | None], Coroutine[Any, Any, Any]]:
         async def last(
             channel: str,
             message: MessageData,

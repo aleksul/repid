@@ -54,6 +54,7 @@ async def test_close_interrupts_notifications_without_admin_permissions(
                 )
 
                 async def wait_for_blocked_notifications() -> None:
+                    assert admin is not None
                     while True:
                         blocked = [
                             client
@@ -122,7 +123,7 @@ async def test_recover_assigned_messages_after_lost_read_reply(
             result = await original(
                 groupname=groupname,
                 consumername=consumername,
-                streams=streams,  # type: ignore[arg-type]
+                streams=streams,  # pyrefly: ignore[bad-argument-type]
                 count=count,
             )
             if (
@@ -271,7 +272,7 @@ async def test_stale_reclaim_retries_completed_unsettled_delivery(
                 await original_read(
                     groupname=groupname,
                     consumername=consumername,
-                    streams=streams,  # type: ignore[arg-type]
+                    streams=streams,  # pyrefly: ignore[bad-argument-type]
                     count=count,
                 ),
             )

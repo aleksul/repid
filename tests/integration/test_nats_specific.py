@@ -15,15 +15,15 @@ pytestmark = pytest.mark.integration_target(name="nats")
 
 class MockSentMsgNoHeaders:
     payload = b"test2"
-    headers = None
-    content_type = None
-    reply_to = None
+    headers: None = None
+    content_type: None = None
+    reply_to: None = None
 
 
 class MockSentMsg:
     payload = b"test"
     content_type = "text/plain"
-    reply_to = None
+    reply_to: None = None
 
     def __init__(self) -> None:
         self.headers = {"x": "y"}

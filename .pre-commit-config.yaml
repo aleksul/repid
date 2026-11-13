@@ -1,6 +1,6 @@
 ci:
   skip:
-  - mypy
+  - pyrefly
   autofix_commit_msg: 🎨 [pre-commit.ci] Auto format from pre-commit.com hooks
   autoupdate_commit_msg: ⬆ [pre-commit.ci] pre-commit autoupdate
 
@@ -42,10 +42,10 @@ repos:
 
 - repo: local
   hooks:
-  - id: mypy
-    name: mypy
-    language: python
+  - id: pyrefly
+    name: pyrefly
+    language: unsupported
     pass_filenames: false
-    entry: uv run --no-active mypy .
+    entry: uv run --no-active --frozen --all-extras --group lint --group tests pyrefly check
     types: [python]
     require_serial: true

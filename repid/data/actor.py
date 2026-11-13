@@ -43,7 +43,7 @@ class ActorData:
             ReceivedMessageT,
             ActorData,
         ],
-        Coroutine,
+        Coroutine[Any, Any, Any],
     ]
     channel_address: str
     converter: ConverterT

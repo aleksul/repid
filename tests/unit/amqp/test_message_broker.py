@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from repid._utils._typing import override
 from repid.connections.abc import MessageAction, SentMessageT
 from repid.connections.amqp._uamqp.message import Properties
 from repid.connections.amqp._uamqp.outcomes import Accepted, Rejected, Released
@@ -117,7 +118,7 @@ async def test_amqp_server_publish_subscribe_and_disconnect(monkeypatch: Any) ->
     await server.connect()
     assert server.is_connected is True
 
-    server._managed_session = DummyManagedSession(object())  # type: ignore[assignment]
+    server._managed_session = DummyManagedSession(object())  # pyrefly: ignore[bad-assignment]
     sender_calls: list[dict[str, Any]] = []
 
     class DummySenderPool:
@@ -184,7 +185,7 @@ async def test_amqp_subscriber_create_pause_resume_and_close() -> None:
         managed_session=cast(ManagedSession, managed),
         queues_to_callbacks={"queue": callback},
         naming_strategy=lambda q: f"/queues/{q}",
-        publish_fn=lambda **_kwargs: asyncio.sleep(0),
+        publish_fn=lambda **_kwargs: asyncio.sleep(0),  # pyrefly: ignore[implicit-any-lambda]
     )
 
     address, wrapped_callback, _name = managed.receiver_pool.subscriptions[0]
@@ -304,6 +305,7 @@ async def test_amqp_received_message_presettled_ack_sends_no_disposition() -> No
         handle: int = 7
         session: FakeSession = fake_session
 
+        @override
         def is_delivery_settled(self, _delivery_id: int) -> bool:
             return True
 
@@ -565,9 +567,9 @@ async def test_amqp_publish_fills_missing_message_id_on_existing_properties(
 
     class FakeMessage:
         payload = b"hello"
-        headers: ClassVar[dict] = {}
-        reply_to = None
-        content_type = None
+        headers: ClassVar[dict[str, Any]] = {}
+        reply_to: None = None
+        content_type: None = None
 
     # Provide Properties with message_id=None — should be auto-filled
     await broker.publish(
@@ -610,9 +612,9 @@ async def test_amqp_publish_fills_missing_reply_to_on_existing_properties(
 
     class FakeMessage:
         payload = b"hello"
-        headers: ClassVar[dict] = {}
+        headers: ClassVar[dict[str, Any]] = {}
         reply_to = "reply-1"
-        content_type = None
+        content_type: None = None
 
     await broker.publish(
         channel="queue",
@@ -1013,7 +1015,7 @@ async def test_amqp_received_message_reply_requires_channel_or_reply_to() -> Non
         delivery_tag=b"tag",
         channel_name="q",
         managed_session=cast(ManagedSession, object()),
-        publish_fn=lambda **_kwargs: asyncio.sleep(0),
+        publish_fn=lambda **_kwargs: asyncio.sleep(0),  # pyrefly: ignore[implicit-any-lambda]
     )
 
     with pytest.raises(ValueError, match="Reply channel is not set"):

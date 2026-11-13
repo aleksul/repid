@@ -166,7 +166,7 @@ class PubsubServer:
         # Parse target for AsyncAPI info
         target = parse_dsn(dsn)
         self._host = target
-        self._pathname = None
+        self._pathname: str | None = None
 
         # Connection state
         self._channel: grpc.aio.Channel | None = None

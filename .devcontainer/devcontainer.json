@@ -9,14 +9,13 @@
 	"customizations": {
 		"vscode": {
 			"settings": {
-				"python.defaultInterpreterPath": "/usr/local/bin/python",
+				"python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
 				"python.venvPath": "${workspaceFolder}/.venv"
 			},
 			"extensions": [
 				"ms-python.python",
-				"ms-python.vscode-pylance",
 				"ms-python.debugpy",
-				"matangover.mypy",
+				"meta.pyrefly",
 				"charliermarsh.ruff",
 				"ryanluker.vscode-coverage-gutters",
 				"seatonjiang.gitmoji-vscode",

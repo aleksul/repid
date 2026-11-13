@@ -19,7 +19,7 @@ from repid.connections.sqs.message_broker import SqsServer
 def _server() -> MagicMock:
     server = MagicMock(spec=SqsServer)
     server._client = AsyncMock()
-    server._dlq_queue_strategy = lambda channel: f"{channel}-dlq"
+    server._dlq_queue_strategy = lambda channel: f"{channel}-dlq"  # pyrefly: ignore[implicit-any-lambda]
     server._get_queue_url = AsyncMock(return_value="dlq-url")
     return server
 

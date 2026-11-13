@@ -36,7 +36,7 @@ async def seed_conn(
 
 
 @asynccontextmanager
-async def managed_subscriber(subscriber: SubscriberT) -> AsyncGenerator:
+async def managed_subscriber(subscriber: SubscriberT) -> AsyncGenerator[Any, None]:
     try:
         yield subscriber
     finally:
@@ -116,7 +116,7 @@ async def test_forced_worker_stop(autoconn: Repid) -> None:
 
 
 async def test_another_channel_is_not_consumed(seed_conn: ServerT) -> None:
-    queue: asyncio.Queue = asyncio.Queue()
+    queue: asyncio.Queue[Any] = asyncio.Queue()
 
     async def wrong_callback(msg: Any) -> None:
         await queue.put(msg)
@@ -128,7 +128,7 @@ async def test_another_channel_is_not_consumed(seed_conn: ServerT) -> None:
             # since the message was scheduled on 'default' channel
             await asyncio.wait_for(queue.get(), 1.0)
 
-    queue2: asyncio.Queue = asyncio.Queue()
+    queue2: asyncio.Queue[Any] = asyncio.Queue()
 
     async def right_callback(msg: Any) -> None:
         await queue2.put(msg)

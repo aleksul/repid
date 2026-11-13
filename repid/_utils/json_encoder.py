@@ -5,6 +5,7 @@ from dataclasses import asdict, is_dataclass
 from datetime import date, datetime, time, timedelta
 from typing import Any
 
+from repid._utils._typing import override
 from repid._utils.is_installed import is_installed
 
 if is_installed("pydantic"):
@@ -12,7 +13,8 @@ if is_installed("pydantic"):
 
 
 class _RepidJSONEncoder(json.JSONEncoder):
-    def default(self, obj: Any) -> Any:  # noqa: PLR0911
+    @override
+    def default(self, obj: Any) -> Any:  # pyrefly: ignore[bad-override-param-name] # noqa: PLR0911
         if isinstance(obj, datetime | date | time):
             return obj.isoformat()
         if isinstance(obj, timedelta):

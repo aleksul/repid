@@ -15,7 +15,7 @@ class Error:
 
     condition: Annotated[str, AMQPTAnnotation(AMQPTypes.symbol)]
     description: Annotated[str | None, AMQPTAnnotation(AMQPTypes.string)] = None
-    info: Annotated[dict | None, AMQPTAnnotation(FieldDefinition.fields)] = None
+    info: Annotated[dict[Any, Any] | None, AMQPTAnnotation(FieldDefinition.fields)] = None
 
 
 class SenderSettleMode(IntEnum):
@@ -124,7 +124,7 @@ class OpenFrame(Performative):
     ] = None
     offered_capabilities: Annotated[list[str] | None, AMQPTAnnotation(AMQPTypes.symbol)] = None
     desired_capabilities: Annotated[list[str] | None, AMQPTAnnotation(AMQPTypes.symbol)] = None
-    properties: Annotated[dict | None, AMQPTAnnotation(FieldDefinition.fields)] = None
+    properties: Annotated[dict[Any, Any] | None, AMQPTAnnotation(FieldDefinition.fields)] = None
 
 
 @dataclass(slots=True, kw_only=True)
@@ -173,7 +173,7 @@ class BeginFrame(Performative):
     handle_max: Annotated[int, AMQPTAnnotation(FieldDefinition.handle)] = 4294967295
     offered_capabilities: Annotated[list[str] | None, AMQPTAnnotation(AMQPTypes.symbol)] = None
     desired_capabilities: Annotated[list[str] | None, AMQPTAnnotation(AMQPTypes.symbol)] = None
-    properties: Annotated[dict | None, AMQPTAnnotation(FieldDefinition.fields)] = None
+    properties: Annotated[dict[Any, Any] | None, AMQPTAnnotation(FieldDefinition.fields)] = None
 
 
 @dataclass(slots=True, kw_only=True)
@@ -255,7 +255,7 @@ class AttachFrame(Performative):
     ] = ReceiverSettleMode.first
     source: Annotated[Any | None, AMQPTAnnotation(ObjDefinition.source)] = None
     target: Annotated[Any | None, AMQPTAnnotation(ObjDefinition.target)] = None
-    unsettled: Annotated[dict | None, AMQPTAnnotation(AMQPTypes.map)] = None
+    unsettled: Annotated[dict[Any, Any] | None, AMQPTAnnotation(AMQPTypes.map)] = None
     incomplete_unsettled: Annotated[bool, AMQPTAnnotation(AMQPTypes.boolean)] = False
     initial_delivery_count: Annotated[int | None, AMQPTAnnotation(FieldDefinition.sequence_no)] = (
         None
@@ -263,7 +263,7 @@ class AttachFrame(Performative):
     max_message_size: Annotated[int | None, AMQPTAnnotation(AMQPTypes.ulong)] = None
     offered_capabilities: Annotated[list[str] | None, AMQPTAnnotation(AMQPTypes.symbol)] = None
     desired_capabilities: Annotated[list[str] | None, AMQPTAnnotation(AMQPTypes.symbol)] = None
-    properties: Annotated[dict | None, AMQPTAnnotation(FieldDefinition.fields)] = None
+    properties: Annotated[dict[Any, Any] | None, AMQPTAnnotation(FieldDefinition.fields)] = None
 
 
 @dataclass(slots=True, kw_only=True)
@@ -320,7 +320,7 @@ class FlowFrame(Performative):
     available: Annotated[int | None, AMQPTAnnotation(AMQPTypes.uint)] = None
     drain: Annotated[bool, AMQPTAnnotation(AMQPTypes.boolean)] = False
     echo: Annotated[bool, AMQPTAnnotation(AMQPTypes.boolean)] = False
-    properties: Annotated[dict | None, AMQPTAnnotation(FieldDefinition.fields)] = None
+    properties: Annotated[dict[Any, Any] | None, AMQPTAnnotation(FieldDefinition.fields)] = None
 
 
 @dataclass(slots=True, kw_only=True)

@@ -24,7 +24,7 @@ if is_installed("pydantic"):
     from pydantic.fields import FieldInfo
 
 
-FnParams = tuple[list, dict]
+FnParams = tuple[list[Any], dict[str, Any]]
 
 
 async def _resolve_dependencies(  # noqa: PLR0917
@@ -47,7 +47,7 @@ async def _resolve_dependencies(  # noqa: PLR0917
         headers_id_to_name=headers_id_to_name,
     )
 
-    unresolved_dependencies: dict[str, Coroutine] = {
+    unresolved_dependencies: dict[str, Coroutine[Any, Any, Any]] = {
         dep_name: dep.resolve(context=context) for dep_name, dep in dependencies.items()
     }
 
@@ -64,7 +64,7 @@ async def _resolve_dependencies(  # noqa: PLR0917
 class ConverterT(Protocol):
     def __init__(
         self,
-        fn: Callable[..., Coroutine],
+        fn: Callable[..., Coroutine[Any, Any, Any]],
         *,
         fn_locals: dict[str, Any] | None = None,
         correlation_id: CorrelationId | None,
@@ -82,9 +82,9 @@ class ConverterT(Protocol):
 
 
 class DefaultConverter:
-    def __new__(  # type: ignore[misc]
+    def __new__(
         cls,
-        fn: Callable[..., Coroutine],
+        fn: Callable[..., Coroutine[Any, Any, Any]],
         *,
         fn_locals: dict[str, Any] | None = None,
         correlation_id: CorrelationId | None,
@@ -98,7 +98,7 @@ class DefaultConverter:
     # pretend to be an implementation of ConverterT
     def __init__(
         self,
-        fn: Callable[..., Coroutine],
+        fn: Callable[..., Coroutine[Any, Any, Any]],
         *,
         fn_locals: dict[str, Any] | None = None,
         correlation_id: CorrelationId | None,
@@ -121,7 +121,7 @@ class DefaultConverter:
 class BasicConverter:
     def __init__(
         self,
-        fn: Callable[..., Coroutine],
+        fn: Callable[..., Coroutine[Any, Any, Any]],
         *,
         fn_locals: dict[str, Any] | None = None,
         correlation_id: CorrelationId | None,
@@ -248,7 +248,7 @@ class BasicConverter:
 class PydanticConverter:
     def __init__(
         self,
-        fn: Callable[..., Coroutine],
+        fn: Callable[..., Coroutine[Any, Any, Any]],
         *,
         fn_locals: dict[str, Any] | None = None,
         correlation_id: CorrelationId | None,
@@ -325,9 +325,8 @@ class PydanticConverter:
             if p.name not in dependency_kwargs and p.name != root_arg_name
         }
 
-        dependencies: Iterable[DependsClass] = filter(
-            lambda d: isinstance(d, DependsClass),  # type: ignore[arg-type]
-            dependency_kwargs.values(),
+        dependencies: Iterable[DependsClass] = (
+            d for d in dependency_kwargs.values() if isinstance(d, DependsClass)
         )
 
         # Include params from Depends
@@ -368,12 +367,15 @@ class PydanticConverter:
             root_type = root_arg[1]
             if not fields:
                 return root_type
-            return create_model(model_name, __base__=root_type, **fields)  # type: ignore[call-overload, no-any-return]
+
+            # Pydantic dynamically builds the model from the field mapping.
+            return create_model(model_name, __base__=root_type, **fields)  # pyrefly: ignore[no-matching-overload]
 
         if not fields:
             return None
 
-        return create_model(model_name, **fields)  # type: ignore[call-overload, no-any-return]
+        # Pydantic dynamically builds the model from the field mapping.
+        return create_model(model_name, **fields)  # pyrefly: ignore[no-matching-overload]
 
     @staticmethod
     def _build_headers_model(
@@ -462,7 +464,8 @@ class PydanticConverter:
         if not header_fields:
             return None
 
-        return create_model(model_name, **header_fields)  # type: ignore[call-overload, no-any-return]
+        # Pydantic dynamically builds the model from the field mapping.
+        return create_model(model_name, **header_fields)  # pyrefly: ignore[no-matching-overload]
 
     @staticmethod
     def _build_headers_id_to_name_mapping(

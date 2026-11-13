@@ -283,7 +283,7 @@ def _decode_symbol_large(buffer: memoryview) -> tuple[memoryview, str]:
     return buffer[4 + length :], value
 
 
-_DECODE_MAP: dict[int, Callable] = {
+_DECODE_MAP: dict[int, Callable[..., Any]] = {
     0x00000000: _decode_described,
     0x00000040: _decode_null,
     0x00000041: _decode_true,
@@ -343,7 +343,7 @@ DESCRIBED_TYPES_MAP: dict[int, type[Any]] = {
 
 def _list_to_dataclass(cls: type[ListToDataclassT], fields_list: list[Any]) -> ListToDataclassT:
     kwargs = {}
-    cls_fields = fields(cls)  # type: ignore[arg-type]
+    cls_fields = fields(cls)  # pyrefly: ignore[bad-argument-type]
     target_fields = [f for f in cls_fields if f.name != "payload"]
 
     for i, f in enumerate(target_fields):

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 import pytest
 
@@ -50,7 +50,7 @@ async def test_actor_middleware_pipeline_order() -> None:
     pipeline = pipeline_factory(actor_handler_mock)
 
     # fake pipeline inputs as we don't use them
-    res = await pipeline(None, None)  # type: ignore[arg-type]
+    res = await pipeline(None, None)  # pyrefly: ignore[bad-argument-type]
     assert res == "ok"
     assert calls == ["enter1", "enter2", "leaf", "exit2", "exit1"]
 
@@ -123,9 +123,9 @@ async def test_actor_middleware_on_actor_level() -> None:
     pipeline = router.actors[0].middleware_pipeline
 
     async def mock_leaf(message: ReceivedMessageT, actor: ActorData) -> str:
-        return await actor.fn(message, actor)
+        return cast(str, await actor.fn(message, actor))
 
-    res = await pipeline(mock_leaf, None, router.actors[0])  # type: ignore[arg-type]
+    res = await pipeline(mock_leaf, None, router.actors[0])  # pyrefly: ignore[bad-argument-type]
     assert res == "ok"
     assert calls == ["enter", "actor", "exit"]
 
@@ -153,9 +153,9 @@ async def test_actor_middleware_on_router_level() -> None:
     pipeline = router.actors[0].middleware_pipeline
 
     async def mock_leaf(message: ReceivedMessageT, actor: ActorData) -> str:
-        return await actor.fn(message, actor)
+        return cast(str, await actor.fn(message, actor))
 
-    res = await pipeline(mock_leaf, None, router.actors[0])  # type: ignore[arg-type]
+    res = await pipeline(mock_leaf, None, router.actors[0])  # pyrefly: ignore[bad-argument-type]
     assert res == "ok"
     assert calls == ["enter", "actor", "exit"]
 
@@ -187,9 +187,9 @@ async def test_actor_middleware_on_repid_level() -> None:
     pipeline = repid._centralized_router.actors[0].middleware_pipeline
 
     async def mock_leaf(message: ReceivedMessageT, actor: ActorData) -> str:
-        return await actor.fn(message, actor)
+        return cast(str, await actor.fn(message, actor))
 
-    res = await pipeline(mock_leaf, None, repid._centralized_router.actors[0])  # type: ignore[arg-type]
+    res = await pipeline(mock_leaf, None, repid._centralized_router.actors[0])  # pyrefly: ignore[bad-argument-type]
     assert res == "ok"
     assert calls == ["enter", "actor", "exit"]
 
@@ -319,7 +319,7 @@ async def test_producer_middleware_on_message_dependency_sends_in_worker() -> No
 async def test_actor_middleware_combination() -> None:
     calls: list[str] = []
 
-    def create_middleware(name: str) -> Callable:
+    def create_middleware(name: str) -> Callable[..., Any]:
         async def middleware(
             call_next: Callable[[ReceivedMessageT, ActorData], Coroutine[None, None, T]],
             message: ReceivedMessageT,
@@ -349,9 +349,9 @@ async def test_actor_middleware_combination() -> None:
     pipeline = repid._centralized_router.actors[0].middleware_pipeline
 
     async def mock_leaf(message: ReceivedMessageT, actor: ActorData) -> str:
-        return await actor.fn(message, actor)
+        return cast(str, await actor.fn(message, actor))
 
-    res = await pipeline(mock_leaf, None, repid._centralized_router.actors[0])  # type: ignore[arg-type]
+    res = await pipeline(mock_leaf, None, repid._centralized_router.actors[0])  # pyrefly: ignore[bad-argument-type]
     assert res == "ok"
     assert calls == [
         "enter_repid",
@@ -401,9 +401,9 @@ async def test_actor_middleware_contextvar() -> None:
     pipeline = router.actors[0].middleware_pipeline
 
     async def mock_leaf(message: ReceivedMessageT, actor: ActorData) -> str:
-        return await actor.fn(message, actor)
+        return cast(str, await actor.fn(message, actor))
 
-    res = await pipeline(mock_leaf, None, router.actors[0])  # type: ignore[arg-type]
+    res = await pipeline(mock_leaf, None, router.actors[0])  # pyrefly: ignore[bad-argument-type]
     assert res == "ok"
     assert calls == [
         "outer_enter:outer",
@@ -442,10 +442,10 @@ async def test_actor_middleware_error_handling() -> None:
     pipeline = router.actors[0].middleware_pipeline
 
     async def mock_leaf(message: ReceivedMessageT, actor: ActorData) -> str:
-        return await actor.fn(message, actor)
+        return cast(str, await actor.fn(message, actor))
 
     with pytest.raises(ValueError, match="oops"):
-        await pipeline(mock_leaf, None, router.actors[0])  # type: ignore[arg-type]
+        await pipeline(mock_leaf, None, router.actors[0])  # pyrefly: ignore[bad-argument-type]
 
     assert calls == ["enter", "actor", "caught", "exit"]
 
@@ -497,7 +497,7 @@ async def test_actor_middleware_mutation() -> None:
         message: ReceivedMessageT,
         actor: ActorData,
     ) -> T:
-        message.payload = b"mutated"  # type: ignore[misc]
+        message.payload = b"mutated"  # pyrefly: ignore[read-only]
         return await call_next(message, actor)
 
     async def actor_handler_mock(message: ReceivedMessageT, actor: ActorData) -> str:  # noqa: ARG001
@@ -506,7 +506,7 @@ async def test_actor_middleware_mutation() -> None:
     pipeline_factory = _compile_actor_middleware_pipeline([middleware])
     pipeline = pipeline_factory(actor_handler_mock)
 
-    res = await pipeline(MockMessage(payload=b"original"), None)  # type: ignore[arg-type]
+    res = await pipeline(MockMessage(payload=b"original"), None)  # pyrefly: ignore[bad-argument-type]
     assert res == "mutated"
 
 

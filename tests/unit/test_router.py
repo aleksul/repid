@@ -2,17 +2,21 @@ from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import cast
+from typing import ParamSpec, TypeVar, cast
 
 import pytest
 
 from repid import Router
 from repid._utils import NotSet
+from repid._utils._typing import override
 from repid.connections.abc import ReceivedMessageT
 from repid.converter import BasicConverter
 from repid.data import ActorData, Channel, MessageData
 from repid.middlewares import ActorMiddlewareT
 from repid.router import catch_all_routing_strategy, topic_based_routing_strategy
+
+P = ParamSpec("P")
+T = TypeVar("T")
 
 
 class TrackingThreadPoolExecutor(ThreadPoolExecutor):
@@ -20,13 +24,14 @@ class TrackingThreadPoolExecutor(ThreadPoolExecutor):
         super().__init__(max_workers=1)
         self.submit_calls = 0
 
+    @override
     def submit(
         self,
-        fn: Callable[..., object],
+        fn: Callable[P, T],
         /,
-        *args: object,
-        **kwargs: object,
-    ) -> Future:
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ) -> Future[T]:
         self.submit_calls += 1
         return super().submit(fn, *args, **kwargs)
 
@@ -377,7 +382,7 @@ async def test_include_router_combines_middlewares_without_mutating_child() -> N
     async def mock_leaf(_message: ReceivedMessageT, actor: ActorData) -> None:
         await actor.fn()
 
-    await pipeline(mock_leaf, None, router1.actors[0])  # type: ignore[arg-type]
+    await pipeline(mock_leaf, None, router1.actors[0])  # pyrefly: ignore[bad-argument-type]
 
     assert calls == [
         "parent_enter",
@@ -439,6 +444,6 @@ def test_actor_raises_on_invalid_confirmation_mode_and_on_error(confirmation_mod
         r"confirmation modes, as the message will always be acknowledged\.",
     ):
 
-        @router.actor(confirmation_mode=confirmation_mode, on_error="reject")  # type: ignore[call-overload]
+        @router.actor(confirmation_mode=confirmation_mode, on_error="reject")  # pyrefly: ignore[no-matching-overload]
         def my_actor() -> None:
             pass

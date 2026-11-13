@@ -4,7 +4,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable, Coroutine, Mapping, Sequence
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
     from repid.connections.abc import ReceivedMessageT
-    from repid.connections.kafka.protocols import AIOKafkaProducerProtocol
+    from repid.connections.kafka.protocols import AIOKafkaConsumerProtocol, AIOKafkaProducerProtocol
     from repid.data import ExternalDocs, Tag
 
 logger = logging.getLogger("repid.connections.kafka")
@@ -238,7 +238,7 @@ class KafkaServer(ServerT):
 
         subscriber = KafkaSubscriber(
             server=self,
-            consumer=consumer,  # pyright: ignore[reportArgumentType]
+            consumer=cast("AIOKafkaConsumerProtocol", consumer),
             channels_to_callbacks=channels_to_callbacks,
             concurrency_limit=concurrency_limit,
         )

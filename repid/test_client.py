@@ -261,7 +261,7 @@ class TestClient:
         self._sent_messages: list[TestMessage] = []
         self._processed_messages: list[TestMessage] = []
         self._message_queue: asyncio.Queue[tuple[str, TestMessage]] = asyncio.Queue()
-        self._mock_server: ServerT = _MockServer(self)  # type: ignore[assignment]
+        self._mock_server: ServerT = _MockServer(self)  # pyrefly: ignore[bad-assignment]
         self._producer_middleware_pipeline = app._producer_middleware_pipeline
         self._actor_publish = self._producer_middleware_pipeline(self._mock_server.publish)
         self._router = app._centralized_router._materialize()
@@ -324,7 +324,7 @@ class TestClient:
                 await self._message_queue.put((channel, test_message))
 
         await self._producer_middleware_pipeline(_publish)(
-            channel,  # type: ignore[arg-type]
+            channel,  # pyrefly: ignore[bad-argument-type]
             MessageData(
                 payload=payload,
                 headers=headers,

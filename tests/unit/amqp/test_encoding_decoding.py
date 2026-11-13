@@ -6,7 +6,7 @@ import struct
 import uuid
 from dataclasses import dataclass
 from enum import Enum
-from typing import Annotated, Any
+from typing import Annotated, Any, ClassVar
 from unittest.mock import patch
 
 import pytest
@@ -443,7 +443,7 @@ def test_encode_uuid() -> None:
     assert out[0] == 0x98
 
     with pytest.raises(TypeError):
-        encode._encode_uuid(bytearray(), 123)  # type: ignore[arg-type]
+        encode._encode_uuid(bytearray(), 123)  # pyrefly: ignore[bad-argument-type]
 
 
 def test_encode_binary() -> None:
@@ -713,9 +713,9 @@ def test_encode_performative_body_large() -> None:
 
     @dataclass
     class LargePerformative:
-        CODE: int = 0
-        FRAME_TYPE: bytes = b"\x00"
-        FRAME_OFFSET: bytes = b"\x00"
+        CODE: ClassVar[int] = 0
+        FRAME_TYPE: ClassVar[bytes] = b"\x00"
+        FRAME_OFFSET: ClassVar[bytes] = b"\x00"
 
         f1: Annotated[bytes, AMQPTAnnotation(AMQPTypes.binary)] = b""
 
@@ -751,9 +751,9 @@ class DummyEnum(Enum):
 def test_encode_performative_body_complex() -> None:
     @dataclass
     class FakePerformative:
-        CODE: int = 0
-        FRAME_TYPE: bytes = b"\x00"
-        FRAME_OFFSET: bytes = b"\x00"
+        CODE: ClassVar[int] = 0
+        FRAME_TYPE: ClassVar[bytes] = b"\x00"
+        FRAME_OFFSET: ClassVar[bytes] = b"\x00"
 
         # Use FieldDefinition
         f1: Annotated[int, AMQPTAnnotation(FieldDefinition.handle)] = 1
@@ -767,9 +767,9 @@ def test_encode_performative_body_complex() -> None:
     # Now test failure with unknown type
     @dataclass
     class BadPerformative:
-        CODE: int = 0
-        FRAME_TYPE: bytes = b"\x00"
-        FRAME_OFFSET: bytes = b"\x00"
+        CODE: ClassVar[int] = 0
+        FRAME_TYPE: ClassVar[bytes] = b"\x00"
+        FRAME_OFFSET: ClassVar[bytes] = b"\x00"
 
         f1: Annotated[int, AMQPTAnnotation(DummyEnum.Unknown)] = 1
 

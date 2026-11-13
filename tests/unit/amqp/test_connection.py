@@ -870,7 +870,7 @@ async def test_connection_create_session_no_free_channels() -> None:
 
     # Fill the only available channel
     fake_session = FakeSession(connection=FakeConnection(), channel=0)
-    conn._sessions[0] = fake_session  # type: ignore[assignment]
+    conn._sessions[0] = fake_session  # pyrefly: ignore[unsupported-operation]
 
     with pytest.raises(ConnectionError, match="No free channels"):
         await conn.create_session()
@@ -954,7 +954,7 @@ async def test_connection_remove_session() -> None:
 
     # Add fake session
     fake_session = FakeSession(connection=FakeConnection(), channel=1)
-    conn._sessions[1] = fake_session  # type: ignore[assignment]
+    conn._sessions[1] = fake_session  # pyrefly: ignore[unsupported-operation]
 
     # Remove session
     conn._remove_session(1)
@@ -1166,7 +1166,7 @@ async def test_connection_close_with_sessions() -> None:
 
     # Add fake session
     fake_session = FakeSession(connection=FakeConnection(), channel=1)
-    conn._sessions[1] = fake_session  # type: ignore[assignment]
+    conn._sessions[1] = fake_session  # pyrefly: ignore[unsupported-operation]
 
     with (
         patch.object(conn._transport, "send_performative", new_callable=AsyncMock),
@@ -1191,7 +1191,7 @@ async def test_connection_handle_unexpected_close_invalidates_sessions() -> None
 
     # Add fake session with invalidate method
     fake_session = FakeSession(connection=FakeConnection(), channel=1)
-    conn._sessions[1] = fake_session  # type: ignore[assignment]
+    conn._sessions[1] = fake_session  # pyrefly: ignore[unsupported-operation]
 
     with (
         patch.object(conn._transport, "connect", new_callable=AsyncMock),

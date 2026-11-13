@@ -58,7 +58,7 @@ async def test_session_end_link_detach_error() -> None:
 
     # Add a link that will fail to detach
     link = FakeLinkWithDetachError()
-    session._links["test-link"] = link  # type: ignore[assignment]
+    session._links["test-link"] = link  # pyrefly: ignore[unsupported-operation]
 
     # Should handle detach error gracefully
     await session.end()
@@ -83,7 +83,7 @@ async def test_session_handle_attach_missing_handle() -> None:
 
     # Create attach frame with invalid data to test missing handle case
     attach = AttachFrame(name="test-link", handle=0, role=True)
-    attach.handle = None  # type: ignore[assignment]
+    attach.handle = None  # pyrefly: ignore[bad-assignment]
 
     # Should log error and return early
     await session._handle_attach(attach)
@@ -104,7 +104,7 @@ async def test_session_handle_detach_missing_handle() -> None:
 
     # Create detach frame with invalid data to test missing handle case
     detach = DetachFrame(handle=0)
-    detach.handle = None  # type: ignore[assignment]
+    detach.handle = None  # pyrefly: ignore[bad-assignment]
 
     # Should return early without error
     await session._handle_detach(detach)
@@ -200,11 +200,11 @@ async def test_session_remove_link() -> None:
     session = Session(cast(AmqpConnection, connection), channel=1)
 
     link = MockLink()
-    session._links["test-link"] = link  # type: ignore[assignment]
-    session._links_by_handle[5] = link  # type: ignore[assignment]
-    session._links_by_remote_handle[10] = link  # type: ignore[assignment]
+    session._links["test-link"] = link  # pyrefly: ignore[unsupported-operation]
+    session._links_by_handle[5] = link  # pyrefly: ignore[unsupported-operation]
+    session._links_by_remote_handle[10] = link  # pyrefly: ignore[unsupported-operation]
 
-    session._remove_link(link)  # type: ignore[arg-type]
+    session._remove_link(link)  # pyrefly: ignore[bad-argument-type]
 
     assert "test-link" not in session._links
     assert 5 not in session._links_by_handle
@@ -250,11 +250,11 @@ async def test_session_handle_attach_bytes_name() -> None:
 
     # Add link to session
     link = MockLink()
-    session._links["test-link"] = link  # type: ignore[assignment]
+    session._links["test-link"] = link  # pyrefly: ignore[unsupported-operation]
 
     # Create attach with bytes name (will be decoded)
     attach = AttachFrame(name="test-link", handle=5, role=True)
-    attach.name = b"test-link"  # type: ignore[assignment]
+    attach.name = b"test-link"  # pyrefly: ignore[bad-assignment]
 
     await session._handle_attach(attach)
 
@@ -268,7 +268,7 @@ async def test_session_handle_transfer_missing_handle() -> None:
 
     # Create transfer frame with missing handle
     transfer = TransferFrame(handle=0, delivery_id=1)
-    transfer.handle = None  # type: ignore[assignment]
+    transfer.handle = None  # pyrefly: ignore[bad-assignment]
 
     # Should log error and return early
     await session._handle_transfer(transfer)

@@ -141,7 +141,7 @@ class FakeSessionForPools:
 
     async def create_sender(self, address: str) -> FakeSenderLink:
         if self._sender_link_factory:
-            return self._sender_link_factory(address)  # type: ignore[no-any-return]
+            return self._sender_link_factory(address)  # pyrefly: ignore[no-any-return-explicit]
         if self.sender_links:
             return self.sender_links.pop(0)
         return FakeSenderLink(session=self, name=f"sender-{address}")

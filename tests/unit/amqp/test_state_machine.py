@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from repid.connections.amqp.protocol.states import (
     ConnectionState,
     ConnectionStateMachine,
@@ -32,9 +34,9 @@ async def test_state_error() -> None:
 
 async def test_state_machine_listeners() -> None:
     sm = ConnectionStateMachine()
-    transitions: list[StateTransition] = []
+    transitions: list[StateTransition[Any]] = []
 
-    def listener(t: StateTransition) -> None:
+    def listener(t: StateTransition[Any]) -> None:
         transitions.append(t)
 
     sm.add_listener(listener)
@@ -60,7 +62,7 @@ async def test_state_machine_history() -> None:
 async def test_state_machine_listener_exception() -> None:
     sm = ConnectionStateMachine()
 
-    def bad_listener(_t: StateTransition) -> None:
+    def bad_listener(_t: StateTransition[Any]) -> None:
         raise ValueError("Test error")
 
     sm.add_listener(bad_listener)
@@ -71,7 +73,7 @@ async def test_state_machine_listener_exception() -> None:
 async def test_state_machine_remove_nonexistent_listener() -> None:
     sm = ConnectionStateMachine()
 
-    def listener(_t: StateTransition) -> None:
+    def listener(_t: StateTransition[Any]) -> None:
         pass
 
     # Should not raise when removing non-existent listener

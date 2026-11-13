@@ -298,7 +298,7 @@ class RedisReceivedMessage(ReceivedMessageT):
                     if self._dlq_maxlen is not None:
                         xadd_kwargs["maxlen"] = self._dlq_maxlen
                         xadd_kwargs["approximate"] = True
-                    pipe.xadd(self._dlq_stream, fields, **xadd_kwargs)  # type: ignore[arg-type]
+                    pipe.xadd(self._dlq_stream, fields, **xadd_kwargs)  # pyrefly: ignore[bad-argument-type]
 
                 pipe.xack(self._stream_name, self._consumer_group, self._message_id)
                 await pipe.execute()
@@ -326,7 +326,7 @@ class RedisReceivedMessage(ReceivedMessageT):
                     self._content_type,
                     self._reply_to,
                 )
-                pipe.xadd(self._stream_name, fields)  # type: ignore[arg-type]
+                pipe.xadd(self._stream_name, fields)  # pyrefly: ignore[bad-argument-type]
                 pipe.xack(self._stream_name, self._consumer_group, self._message_id)
                 await pipe.execute()
             if self._on_settled is not None:
@@ -607,7 +607,7 @@ class RedisSubscriber(SubscriberT):
                 self._redis.xreadgroup(
                     groupname=group_name,
                     consumername=self._consumer_name,
-                    streams=streams,  # type: ignore[arg-type]
+                    streams=streams,  # pyrefly: ignore[bad-argument-type]
                     count=self._batch_size,
                 ),
                 timeout=self._read_timeout,
@@ -697,7 +697,7 @@ class RedisSubscriber(SubscriberT):
         return found
 
     async def _wait_for_activity(self, cursors: dict[str, bytes | str]) -> None:
-        await self._redis.xread(streams=cursors, count=1, block=self._block_ms)  # type: ignore[arg-type]
+        await self._redis.xread(streams=cursors, count=1, block=self._block_ms)  # pyrefly: ignore[bad-argument-type]
 
     async def _process_stream_messages(
         self,
@@ -1021,7 +1021,7 @@ class RedisServer(ServerT):
             decode_responses=False,  # We handle decoding ourselves
         )
         try:
-            await redis.ping()  # type: ignore[misc]
+            await redis.ping()  # pyrefly: ignore[not-async]
         except BaseException:
             try:
                 await redis.aclose()
@@ -1099,7 +1099,7 @@ class RedisServer(ServerT):
             extra={"stream": stream_name, "channel": channel},
         )
 
-        await self._redis.xadd(stream_name, fields, id=stream_id, **xadd_kwargs)  # type: ignore[arg-type]
+        await self._redis.xadd(stream_name, fields, id=stream_id, **xadd_kwargs)  # pyrefly: ignore[bad-argument-type]
 
     async def subscribe(
         self,

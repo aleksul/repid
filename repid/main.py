@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import signal
 from collections.abc import Iterable, Sequence
-from typing import TYPE_CHECKING, Any, overload
+from typing import TYPE_CHECKING, Any, cast, overload
 
 from repid._worker import _Worker
 from repid.asyncapi import AsyncAPI3Schema, AsyncAPIGenerator
@@ -77,7 +77,7 @@ class Repid:
         self,
         *,
         graceful_shutdown_time: float = 25.0,
-        messages_limit: int = float("inf"),  # type: ignore[assignment]
+        messages_limit: int = float("inf"),  # pyrefly: ignore[bad-function-definition]
         tasks_limit: int = 1000,
         register_signals: Iterable[signal.Signals] | None = None,
         health_check_server: HealthCheckServerSettings | None = None,
@@ -171,6 +171,7 @@ class Repid:
         if channel is not None and operation_id is not None:
             raise ValueError("Specify either 'channel' or 'operation_id', not both.")
 
+        operation_channel = channel
         if operation_id is not None:
             operation = self._messages.get_operation(operation_id)
             if operation is None:
@@ -186,7 +187,7 @@ class Repid:
             )
 
         await self._producer_middleware_pipeline(server.publish)(
-            channel if channel is not None else operation_channel,
+            cast(str, operation_channel),
             MessageData(
                 payload=payload,
                 headers=headers,

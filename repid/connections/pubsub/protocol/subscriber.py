@@ -208,7 +208,7 @@ class PubsubSubscriber:
     ) -> PubsubReceivedMessage:
         """Create a PubsubReceivedMessage from a raw received message."""
         return PubsubReceivedMessage(
-            raw_message=received_msg.message,  # type: ignore[arg-type]
+            raw_message=received_msg.message,  # pyrefly: ignore[bad-argument-type]
             ack_id=received_msg.ack_id,
             delivery_attempt=received_msg.delivery_attempt,
             subscription_path=config.subscription_path,
@@ -241,9 +241,9 @@ class PubsubSubscriber:
         await self._credentials_provider.ensure_valid()
 
         # Create the bidirectional stream
-        stream_method = self._channel.stream_stream(  # type: ignore[var-annotated]
+        stream_method = self._channel.stream_stream(
             STREAMING_PULL_METHOD,
-            request_serializer=lambda req: req.serialize(),
+            request_serializer=StreamingPullRequest.serialize,
             response_deserializer=StreamingPullResponse.deserialize,
         )
 

@@ -156,4 +156,7 @@ class Modified(DeliveryState):
 
     delivery_failed: Annotated[bool | None, AMQPTAnnotation(AMQPTypes.boolean)] = None
     undeliverable_here: Annotated[bool | None, AMQPTAnnotation(AMQPTypes.boolean)] = None
-    message_annotations: Annotated[dict | None, AMQPTAnnotation(FieldDefinition.fields)] = None
+    message_annotations: Annotated[
+        dict[Any, Any] | None,
+        AMQPTAnnotation(FieldDefinition.fields),
+    ] = None

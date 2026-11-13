@@ -144,7 +144,7 @@ async def test_sender_pool_removes_stale_link() -> None:
     sender_pool = SenderPool(managed)
 
     # Add a stale link
-    sender_pool._links["test-address"] = StaleLink()  # type: ignore[assignment]
+    sender_pool._links["test-address"] = StaleLink()  # pyrefly: ignore[unsupported-operation]
 
     # Get should remove stale link and create new one
     link = await sender_pool.get("test-address")

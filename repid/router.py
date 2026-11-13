@@ -51,7 +51,7 @@ def catch_all_routing_strategy(*, actor_name: str, **_: Any) -> Callable[[BaseMe
     return strategy
 
 
-YourFunc = TypeVar("YourFunc", bound=Callable)
+YourFunc = TypeVar("YourFunc", bound=Callable[..., Any])
 ExplicitFunc = TypeVar("ExplicitFunc", bound=Callable[..., Coroutine[Any, Any, ManualActionT]])
 
 
@@ -301,7 +301,7 @@ class Router:
             call_next: Callable[[ReceivedMessageT, ActorData], Coroutine[Any, Any, Any]],
             message: ReceivedMessageT,
             actor: ActorData,
-            _composer: Callable = composer,
+            _composer: Callable[..., Any] = composer,
             _all_middlewares: list[ActorMiddlewareT] = all_middlewares,
         ) -> Any:
             if _all_middlewares:
@@ -744,7 +744,7 @@ class Router:
         """
 
         if fn is None:
-            return partial(  # type: ignore[return-value]
+            return partial(
                 self.actor,
                 name=name,
                 confirmation_mode=confirmation_mode,

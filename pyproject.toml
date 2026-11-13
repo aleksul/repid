@@ -12,7 +12,7 @@ docs = [
   "pygments<2.20.0"
 ]
 lint = [
-  "mypy>=2.4.1",
+  "pyrefly>=1.4.1",
   "ruff>=0.17.3",
   "types-grpcio>=1.85.0.20261028",
   "types-aiobotocore[sqs]>=3.9.2"
@@ -43,7 +43,8 @@ classifiers = [
   "Typing :: Typed"
 ]
 dependencies = [
-  "packaging>=22.0"
+  "packaging>=22.0",
+  "typing_extensions>=4.4.0; python_version < '3.12'"
 ]
 description = "Repid is a simple, fast, and extensible async task queue framework, with built-in AsyncAPI 3.0 schema generation."
 dynamic = ["version"]
@@ -104,23 +105,23 @@ stern = false  # Stern length checking
 strict = false  # Strict length checking
 tables = true  # Include tables
 
-[tool.mypy]
-check_untyped_defs = true
-disallow_any_unimported = true
-disallow_untyped_defs = true
-exclude = ["benchmarks"]
-no_implicit_optional = true
-show_error_codes = true
-warn_return_any = true
-warn_unused_ignores = true
+[tool.pyrefly]
+check-unannotated-defs = true
+ignore-missing-imports = ["aiokafka.*"]
+infer-return-types = "never"
+preset = "strict"
+project-includes = ["repid", "tests"]
+python-version = "3.11"
+type-ignore-unknown-tag-behavior = "no-effect"
 
-[[tool.mypy.overrides]]
-disallow_any_unimported = false
-module = "tests.*"
-
-[[tool.mypy.overrides]]
-ignore_missing_imports = true
-module = ["aiokafka.*"]
+[tool.pyrefly.errors]
+implicit-any-parameter = "error"
+missing-import = "error"
+no-any-return = "error"
+unannotated-return = "error"
+untyped-import = "error"
+unused-ignore = "error"
+unused-type-ignore = "error"
 
 [tool.pytest.ini_options]
 asyncio_default_fixture_loop_scope = "function"

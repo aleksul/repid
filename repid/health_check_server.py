@@ -7,6 +7,8 @@ from dataclasses import asdict, dataclass
 from enum import IntEnum
 from wsgiref.handlers import format_date_time
 
+from repid._utils._typing import override
+
 logger = logging.getLogger("repid.health_check_server")
 
 
@@ -68,9 +70,12 @@ class _HttpServerProtocol(asyncio.Protocol):
         self.endpoint_name = endpoint_name
         self.status = status
 
+    @override
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
-        self.transport: asyncio.WriteTransport = transport  # type: ignore[assignment]
+        # The asyncio server supplies a write transport.
+        self.transport: asyncio.WriteTransport = transport  # pyrefly: ignore[bad-assignment]
 
+    @override
     def data_received(self, data: bytes) -> None:
         message = data.decode()
 

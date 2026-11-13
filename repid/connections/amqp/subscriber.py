@@ -53,7 +53,7 @@ class AmqpSubscriber:
         return self._is_active
 
     @property
-    def task(self) -> asyncio.Task:
+    def task(self) -> asyncio.Task[object]:
         return self._task
 
     async def pause(self) -> None:

@@ -18,6 +18,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
+from repid._utils._typing import override
 from repid.connections.amqp._uamqp._decode import transfer_frames_to_message
 from repid.connections.amqp._uamqp._encode import message_to_transfer_frames
 from repid.connections.amqp._uamqp.endpoints import Source, Target
@@ -185,7 +186,7 @@ class Link(ABC):
                 logger.warning("link.detach_frame.error", exc_info=True)
 
         # Remove from session
-        self._session._remove_link(self)  # type: ignore[arg-type]
+        self._session._remove_link(self)  # pyrefly: ignore[bad-argument-type]
 
         logger.debug(
             "link.detached",
@@ -242,7 +243,7 @@ class Link(ABC):
                 )
                 await self._state_machine.transition("send_detach")
 
-        self._session._remove_link(self)  # type: ignore[arg-type]
+        self._session._remove_link(self)  # pyrefly: ignore[bad-argument-type]
 
     @abstractmethod
     async def _handle_flow(self, flow: FlowFrame) -> None:
@@ -572,6 +573,7 @@ class ReceiverLink(Link):
             extra={"link": self._name, "address": self._address},
         )
 
+    @override
     async def _handle_attach(self, _attach: AttachFrame) -> None:
         """Handle ATTACH response and send initial flow."""
         await super()._handle_attach(_attach)

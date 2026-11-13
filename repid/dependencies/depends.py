@@ -25,7 +25,7 @@ class Depends:
 
     def __init__(
         self,
-        fn: Callable[..., Any | Coroutine],
+        fn: Callable[..., Any | Coroutine[Any, Any, Any]],
         *,
         run_in_process: bool = False,
         pool_executor: Executor | None = None,
@@ -35,7 +35,7 @@ class Depends:
 
         self._fn = asyncify(fn, run_in_process=run_in_process, executor=pool_executor)
 
-        self._fn_locals = None
+        self._fn_locals: dict[str, Any] | None = None
         current_frame = inspect.currentframe()
         if current_frame is not None:
             previous_frame = current_frame.f_back
@@ -46,7 +46,7 @@ class Depends:
 
     def override(
         self,
-        fn: Callable[..., Any | Coroutine],
+        fn: Callable[..., Any | Coroutine[Any, Any, Any]],
         *,
         run_in_process: bool = False,
         pool_executor: Executor | None = None,
@@ -58,7 +58,7 @@ class Depends:
         self._update_subdependencies()
 
     async def resolve(self, *, context: DependencyContext) -> Any:
-        unresolved_dependencies: dict[str, Coroutine] = {
+        unresolved_dependencies: dict[str, Coroutine[Any, Any, Any]] = {
             dep_name: dep.resolve(context=context)
             for dep_name, dep in self._subdependencies.items()
         }

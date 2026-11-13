@@ -54,7 +54,7 @@ requires-python = ">=3.11"
 
 [project.optional-dependencies]
 amqp = []
-kafka = ["aiokafka>=0.14.0,<0.15.0"]
+kafka = ["aiokafka>=0.14.0,<0.16.0"]
 nats = ["nats-py>=2.14.0,<3.0.0"]
 pubsub = [
   "google-auth[requests]>=2.43.0,<3.0.0",

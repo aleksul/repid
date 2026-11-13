@@ -30,7 +30,7 @@ async def explicit_no_action_actor() -> Literal["ack", "nack", "reject", "no_act
 
 @router.actor(confirmation_mode="manual_explicit")
 async def explicit_invalid_actor() -> Literal["ack", "nack", "reject", "no_action"]:
-    return "something else"  # type: ignore[return-value]
+    return "something else"  # pyrefly: ignore[bad-return]
 
 
 @pytest.mark.asyncio

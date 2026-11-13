@@ -8,7 +8,7 @@ from collections.abc import Callable, Generator, Iterable, Sequence, Sized
 from dataclasses import fields
 from datetime import datetime
 from functools import cache
-from typing import Any, Protocol, cast, get_type_hints
+from typing import Any, ClassVar, Protocol, cast, get_type_hints
 
 from . import performatives
 from .amqptypes import (
@@ -34,14 +34,9 @@ MAX_ASCII_BYTE = 0x7F
 
 
 class EncodableT(Protocol):
-    @property
-    def CODE(self) -> int: ...  # noqa: N802
-
-    @property
-    def FRAME_TYPE(self) -> bytes: ...  # noqa: N802
-
-    @property
-    def FRAME_OFFSET(self) -> bytes: ...  # noqa: N802
+    CODE: ClassVar[int]
+    FRAME_TYPE: ClassVar[bytes]
+    FRAME_OFFSET: ClassVar[bytes]
 
 
 AQMPSimpleType = bool | float | str | bytes | uuid.UUID | None
@@ -768,7 +763,7 @@ def _encode_unknown(  # noqa: C901, PLR0912
         raise TypeError(f"Unable to encode unknown value: {value}")
 
 
-_ENCODE_MAP: dict[str | None, Callable] = {
+_ENCODE_MAP: dict[str | None, Callable[..., Any]] = {
     None: _encode_unknown,
     AMQPTypes.null.value: _encode_null,
     AMQPTypes.boolean.value: _encode_boolean,
@@ -869,7 +864,7 @@ def _encode_application_properties(
 
 def _encode_value(output: bytearray, value: Any, **kwargs: Any) -> None:
     try:
-        cast(Callable, _ENCODE_MAP[value[TYPE]])(output, value[VALUE], **kwargs)
+        cast(Callable[..., Any], _ENCODE_MAP[value[TYPE]])(output, value[VALUE], **kwargs)
     except (KeyError, TypeError):
         _encode_unknown(output, value, **kwargs)
 
@@ -880,7 +875,7 @@ def _get_performative_fields(
 ) -> list[tuple[str, AMQPTypes | FieldDefinition | ObjDefinition | None]]:
     cached_fields = []
     type_hints = get_type_hints(performative_type, include_extras=True)
-    current_fields = fields(performative_type)  # type: ignore[arg-type]
+    current_fields = fields(performative_type)  # pyrefly: ignore[bad-argument-type]
     for f in current_fields:
         if f.name == "payload":
             continue

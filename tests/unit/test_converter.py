@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Annotated
+from typing import Annotated, Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -31,18 +31,18 @@ _CONVERTER_CONTEXT = ActorExecutionContext(
 async def test_converter_parses_payload_args_kwargs(
     converter: type[ConverterT],
     payload: bytes,
-    expected: dict,
+    expected: dict[str, Any],
 ) -> None:
     async def fn(a: int, b: int = 1) -> None: ...
 
     conv = converter(fn, correlation_id=None, fn_locals=None)
     args, kwargs = await conv.convert_inputs(
-        message=MessageData(  # type: ignore[arg-type]
+        message=MessageData(  # pyrefly: ignore[bad-argument-type]
             payload=payload,
             headers=None,
             content_type="application/json",
         ),
-        actor=None,  # type: ignore[arg-type]
+        actor=None,  # pyrefly: ignore[bad-argument-type]
         actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
@@ -60,19 +60,19 @@ async def test_converter_parses_payload_args_kwargs(
 async def test_converter_parses_payload_positional_args(
     converter: type[ConverterT],
     payload: bytes,
-    expected_args: list,
-    expected_kwargs: dict,
+    expected_args: list[Any],
+    expected_kwargs: dict[str, Any],
 ) -> None:
     async def fn(a: int, /, b: int = 1) -> None: ...
 
     conv = converter(fn, correlation_id=None, fn_locals=None)
     args, kwargs = await conv.convert_inputs(
-        message=MessageData(  # type: ignore[arg-type]
+        message=MessageData(  # pyrefly: ignore[bad-argument-type]
             payload=payload,
             headers=None,
             content_type="application/json",
         ),
-        actor=None,  # type: ignore[arg-type]
+        actor=None,  # pyrefly: ignore[bad-argument-type]
         actor_context=_CONVERTER_CONTEXT,
     )
     assert args == expected_args
@@ -93,7 +93,7 @@ async def test_pydantic_converter_properly_coerces_types() -> None:
         correlation_id=None,
     )
     args, kwargs = await conv.convert_inputs(
-        message=MessageData(  # type: ignore[arg-type]
+        message=MessageData(  # pyrefly: ignore[bad-argument-type]
             payload=json.dumps(
                 {
                     "model": {
@@ -107,7 +107,7 @@ async def test_pydantic_converter_properly_coerces_types() -> None:
             headers=None,
             content_type="application/json",
         ),
-        actor=None,  # type: ignore[arg-type]
+        actor=None,  # pyrefly: ignore[bad-argument-type]
         actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
@@ -150,12 +150,12 @@ async def test_pydantic_converter_validation_errors(
     conv = PydanticConverter(fn, fn_locals=None, correlation_id=None)
     with pytest.raises(ValidationError, match=expected_error_substring):
         await conv.convert_inputs(
-            message=MessageData(  # type: ignore[arg-type]
+            message=MessageData(  # pyrefly: ignore[bad-argument-type]
                 payload=payload,
                 headers=None,
                 content_type="application/json",
             ),
-            actor=None,  # type: ignore[arg-type]
+            actor=None,  # pyrefly: ignore[bad-argument-type]
             actor_context=_CONVERTER_CONTEXT,
         )
 
@@ -167,12 +167,12 @@ async def test_converter_not_json_error(converter: type[ConverterT]) -> None:
     conv = converter(fn, correlation_id=None, fn_locals=None)
     with pytest.raises(ValueError, match="Unsupported content type"):
         await conv.convert_inputs(
-            message=MessageData(  # type: ignore[arg-type]
+            message=MessageData(  # pyrefly: ignore[bad-argument-type]
                 payload=b"<body>This is not a json!</body>",
                 headers=None,
                 content_type="application/xml",
             ),
-            actor=None,  # type: ignore[arg-type]
+            actor=None,  # pyrefly: ignore[bad-argument-type]
             actor_context=_CONVERTER_CONTEXT,
         )
 
@@ -191,12 +191,12 @@ async def test_converter_header_in_depends(converter: type[ConverterT]) -> None:
     )
 
     args, kwargs = await conv.convert_inputs(
-        message=MessageData(  # type: ignore[arg-type]
+        message=MessageData(  # pyrefly: ignore[bad-argument-type]
             payload=b"",
             headers={"X-Custom": "header_value"},
             content_type="application/json",
         ),
-        actor=None,  # type: ignore[arg-type]
+        actor=None,  # pyrefly: ignore[bad-argument-type]
         actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
@@ -211,7 +211,7 @@ async def test_converter_header_in_depends(converter: type[ConverterT]) -> None:
     ],
 )
 @pytest.mark.parametrize("converter", [BasicConverter, PydanticConverter])
-async def test_converter_header(converter: type[ConverterT], input_headers: dict) -> None:
+async def test_converter_header(converter: type[ConverterT], input_headers: dict[str, Any]) -> None:
     async def _fn_with_header(d: Annotated[str, Header(name="X-Custom")]) -> None: ...
 
     conv = converter(
@@ -221,12 +221,12 @@ async def test_converter_header(converter: type[ConverterT], input_headers: dict
     )
 
     args, kwargs = await conv.convert_inputs(
-        message=MessageData(  # type: ignore[arg-type]
+        message=MessageData(  # pyrefly: ignore[bad-argument-type]
             payload=b"",
             headers=input_headers,
             content_type="application/json",
         ),
-        actor=None,  # type: ignore[arg-type]
+        actor=None,  # pyrefly: ignore[bad-argument-type]
         actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
@@ -243,7 +243,10 @@ async def test_converter_header(converter: type[ConverterT], input_headers: dict
     ],
 )
 @pytest.mark.parametrize("converter", [BasicConverter, PydanticConverter])
-async def test_converter_header_defaults(converter: type[ConverterT], input_headers: dict) -> None:
+async def test_converter_header_defaults(
+    converter: type[ConverterT],
+    input_headers: dict[str, Any],
+) -> None:
     async def _fn_with_header(
         d: Annotated[str, Header(name="X-Custom")] = "default_value",
     ) -> None: ...
@@ -255,12 +258,12 @@ async def test_converter_header_defaults(converter: type[ConverterT], input_head
     )
 
     args, kwargs = await conv.convert_inputs(
-        message=MessageData(  # type: ignore[arg-type]
+        message=MessageData(  # pyrefly: ignore[bad-argument-type]
             payload=b"",
             headers=input_headers,
             content_type="application/json",
         ),
-        actor=None,  # type: ignore[arg-type]
+        actor=None,  # pyrefly: ignore[bad-argument-type]
         actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
@@ -293,12 +296,12 @@ async def test_converter_payload_in_depends(
     )
 
     args, kwargs = await conv.convert_inputs(
-        message=MessageData(  # type: ignore[arg-type]
+        message=MessageData(  # pyrefly: ignore[bad-argument-type]
             payload=input_payload,
             headers=None,
             content_type="application/json",
         ),
-        actor=None,  # type: ignore[arg-type]
+        actor=None,  # pyrefly: ignore[bad-argument-type]
         actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
@@ -325,12 +328,12 @@ async def test_converter_payload_in_depends_with_default(
     )
 
     args, kwargs = await conv.convert_inputs(
-        message=MessageData(  # type: ignore[arg-type]
+        message=MessageData(  # pyrefly: ignore[bad-argument-type]
             payload=input_payload,
             headers=None,
             content_type="application/json",
         ),
-        actor=None,  # type: ignore[arg-type]
+        actor=None,  # pyrefly: ignore[bad-argument-type]
         actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
@@ -340,7 +343,7 @@ async def test_converter_payload_in_depends_with_default(
 @pytest.mark.parametrize("input_headers", [None, {}, {"X-Other": None}])
 @pytest.mark.parametrize("converter", [BasicConverter, PydanticConverter])
 async def test_converter_header_in_depends_with_default(
-    input_headers: dict | None,
+    input_headers: dict[str, Any] | None,
     converter: type[ConverterT],
 ) -> None:
     def _header_dep_with_default(
@@ -359,12 +362,12 @@ async def test_converter_header_in_depends_with_default(
     )
 
     args, kwargs = await conv.convert_inputs(
-        message=MessageData(  # type: ignore[arg-type]
+        message=MessageData(  # pyrefly: ignore[bad-argument-type]
             payload=b"",
             headers=input_headers,
             content_type="application/json",
         ),
-        actor=None,  # type: ignore[arg-type]
+        actor=None,  # pyrefly: ignore[bad-argument-type]
         actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
@@ -416,12 +419,12 @@ async def test_converter_unsupported_content_type(converter: type[ConverterT]) -
     conv = converter(fn, correlation_id=None, fn_locals=None)
     with pytest.raises(ValueError, match="Unsupported content type"):
         await conv.convert_inputs(
-            message=MessageData(  # type: ignore[arg-type]
+            message=MessageData(  # pyrefly: ignore[bad-argument-type]
                 payload=b"some data",
                 headers=None,
                 content_type="text/plain",
             ),
-            actor=None,  # type: ignore[arg-type]
+            actor=None,  # pyrefly: ignore[bad-argument-type]
             actor_context=_CONVERTER_CONTEXT,
         )
 
@@ -432,12 +435,12 @@ async def test_basic_converter_payload_not_dict() -> None:
     conv = BasicConverter(fn, correlation_id=None, fn_locals=None)
     with pytest.raises(ValueError, match="Payload must be a JSON dict object"):
         await conv.convert_inputs(
-            message=MessageData(  # type: ignore[arg-type]
+            message=MessageData(  # pyrefly: ignore[bad-argument-type]
                 payload=b"[1, 2, 3]",  # array, not dict
                 headers=None,
                 content_type="application/json",
             ),
-            actor=None,  # type: ignore[arg-type]
+            actor=None,  # pyrefly: ignore[bad-argument-type]
             actor_context=_CONVERTER_CONTEXT,
         )
 
@@ -447,12 +450,12 @@ async def test_basic_converter_var_kwargs() -> None:
 
     conv = BasicConverter(fn, correlation_id=None, fn_locals=None)
     args, kwargs = await conv.convert_inputs(
-        message=MessageData(  # type: ignore[arg-type]
+        message=MessageData(  # pyrefly: ignore[bad-argument-type]
             payload=b'{"a": 1, "b": 2, "c": 3}',
             headers=None,
             content_type="application/json",
         ),
-        actor=None,  # type: ignore[arg-type]
+        actor=None,  # pyrefly: ignore[bad-argument-type]
         actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
@@ -464,12 +467,12 @@ async def test_basic_converter_var_args() -> None:
 
     conv = BasicConverter(fn, correlation_id=None, fn_locals=None)
     args, kwargs = await conv.convert_inputs(
-        message=MessageData(  # type: ignore[arg-type]
+        message=MessageData(  # pyrefly: ignore[bad-argument-type]
             payload=b'{"a": 1, "b": 2}',
             headers=None,
             content_type="application/json",
         ),
-        actor=None,  # type: ignore[arg-type]
+        actor=None,  # pyrefly: ignore[bad-argument-type]
         actor_context=_CONVERTER_CONTEXT,
     )
     # For *args, the values (not keys) get extended as args
@@ -496,12 +499,12 @@ async def test_converter_empty_payload(payload: bytes, converter: type[Converter
 
     conv = converter(fn, correlation_id=None, fn_locals=None)
     args, kwargs = await conv.convert_inputs(
-        message=MessageData(  # type: ignore[arg-type]
+        message=MessageData(  # pyrefly: ignore[bad-argument-type]
             payload=payload,
             headers=None,
             content_type="application/json",
         ),
-        actor=None,  # type: ignore[arg-type]
+        actor=None,  # pyrefly: ignore[bad-argument-type]
         actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
@@ -545,12 +548,12 @@ async def test_converter_header_no_name_uses_param_name(converter: type[Converte
     conv = converter(_fn_with_header_no_name, correlation_id=None, fn_locals=locals())
 
     args, kwargs = await conv.convert_inputs(
-        message=MessageData(  # type: ignore[arg-type]
+        message=MessageData(  # pyrefly: ignore[bad-argument-type]
             payload=b"",
             headers={"custom_header": "header_value"},
             content_type="application/json",
         ),
-        actor=None,  # type: ignore[arg-type]
+        actor=None,  # pyrefly: ignore[bad-argument-type]
         actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
@@ -560,7 +563,7 @@ async def test_converter_header_no_name_uses_param_name(converter: type[Converte
 @pytest.mark.parametrize("input_headers", [None, {}, {"X-Other": None}])
 @pytest.mark.parametrize("converter", [BasicConverter, PydanticConverter])
 async def test_converter_header_default_uses_param_name(
-    input_headers: dict | None,
+    input_headers: dict[str, Any] | None,
     converter: type[ConverterT],
 ) -> None:
     def _header_dep_default_no_name(
@@ -574,12 +577,12 @@ async def test_converter_header_default_uses_param_name(
 
     conv = converter(_fn_with_header_default_no_name, correlation_id=None, fn_locals=locals())
     args, kwargs = await conv.convert_inputs(
-        message=MessageData(  # type: ignore[arg-type]
+        message=MessageData(  # pyrefly: ignore[bad-argument-type]
             payload=b"",
             headers=input_headers,
             content_type="application/json",
         ),
-        actor=None,  # type: ignore[arg-type]
+        actor=None,  # pyrefly: ignore[bad-argument-type]
         actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
@@ -772,12 +775,12 @@ async def test_pydantic_converter_full_payload_model_parse() -> None:
 
     conv = PydanticConverter(fn, fn_locals=locals(), correlation_id=None)
     args, kwargs = await conv.convert_inputs(
-        message=MessageData(  # type: ignore[arg-type]
+        message=MessageData(  # pyrefly: ignore[bad-argument-type]
             payload=b'{"a": 1, "b": 2.5}',
             headers=None,
             content_type="application/json",
         ),
-        actor=None,  # type: ignore[arg-type]
+        actor=None,  # pyrefly: ignore[bad-argument-type]
         actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []
@@ -815,12 +818,12 @@ async def test_pydantic_converter_full_payload_model_with_extra_kwargs() -> None
 
     conv = PydanticConverter(fn, fn_locals=locals(), correlation_id=None)
     args, kwargs = await conv.convert_inputs(
-        message=MessageData(  # type: ignore[arg-type]
+        message=MessageData(  # pyrefly: ignore[bad-argument-type]
             payload=b'{"a": 1, "b": 2.5, "extra": "hello"}',
             headers=None,
             content_type="application/json",
         ),
-        actor=None,  # type: ignore[arg-type]
+        actor=None,  # pyrefly: ignore[bad-argument-type]
         actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []

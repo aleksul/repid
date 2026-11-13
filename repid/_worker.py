@@ -27,7 +27,7 @@ class _Worker:
         actor_context: ActorExecutionContext,
         router: _MaterializedRouter,
         graceful_shutdown_time: float = 25.0,
-        messages_limit: int = float("inf"),  # type: ignore[assignment]
+        messages_limit: int = float("inf"),  # pyrefly: ignore[bad-function-definition]
         tasks_limit: int = 1000,
         register_signals: Iterable[signal.Signals] | None = None,
         health_check_server: HealthCheckServerSettings | None = None,

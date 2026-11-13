@@ -370,9 +370,9 @@ async def test_task_property_returns_task() -> None:
     sub = _make_subscriber(channel_configs=[config])
     sub._start_background_tasks()
     assert sub.task is not None
-    sub._task.cancel()  # type: ignore[union-attr]
+    sub._task.cancel()  # pyrefly: ignore[missing-attribute]
     with contextlib.suppress(asyncio.CancelledError):
-        await sub._task  # type: ignore[misc]
+        await sub._task  # pyrefly: ignore[not-async]
 
 
 # --- _cancel_callback_tasks ---
@@ -484,7 +484,7 @@ async def test_close_waits_for_callbacks_before_rejecting_in_flight() -> None:
             return self.acted
 
     msg = FakeMessage()
-    sub._in_flight_messages.add(msg)  # type: ignore[arg-type]
+    sub._in_flight_messages.add(msg)  # pyrefly: ignore[bad-argument-type]
 
     async def callback_task() -> None:
         try:

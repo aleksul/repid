@@ -7,10 +7,9 @@
 #   - how sending the message affects the state of that message at the sending Node
 #   - the behavior of Messages which have been transferred on the Link, but have not yet reached a
 #     terminal state at the receiver, when the source is destroyed.
-
 from dataclasses import dataclass
 from enum import Enum, IntEnum
-from typing import Annotated, ClassVar
+from typing import Annotated, Any, ClassVar
 
 from .amqptypes import AMQPTAnnotation, AMQPTypes, FieldDefinition, ObjDefinition
 
@@ -162,15 +161,18 @@ class Source:
     timeout: Annotated[int, AMQPTAnnotation(FieldDefinition.seconds)] = 0
     dynamic: Annotated[bool, AMQPTAnnotation(AMQPTypes.boolean)] = False
     dynamic_node_properties: Annotated[
-        dict | None,
+        dict[Any, Any] | None,
         AMQPTAnnotation(FieldDefinition.node_properties),
     ] = None
     distribution_mode: Annotated[
         DistributionMode | None,
         AMQPTAnnotation(FieldDefinition.distribution_mode),
     ] = None
-    filters: Annotated[dict | None, AMQPTAnnotation(FieldDefinition.filter_set)] = None
-    default_outcome: Annotated[dict | None, AMQPTAnnotation(ObjDefinition.delivery_state)] = None
+    filters: Annotated[dict[Any, Any] | None, AMQPTAnnotation(FieldDefinition.filter_set)] = None
+    default_outcome: Annotated[
+        dict[Any, Any] | None,
+        AMQPTAnnotation(ObjDefinition.delivery_state),
+    ] = None
     outcomes: Annotated[list[str] | None, AMQPTAnnotation(AMQPTypes.symbol)] = None
     capabilities: Annotated[list[str] | None, AMQPTAnnotation(AMQPTypes.symbol)] = None
 
@@ -229,7 +231,7 @@ class Target:
     timeout: Annotated[int, AMQPTAnnotation(FieldDefinition.seconds)] = 0
     dynamic: Annotated[bool, AMQPTAnnotation(AMQPTypes.boolean)] = False
     dynamic_node_properties: Annotated[
-        dict | None,
+        dict[Any, Any] | None,
         AMQPTAnnotation(FieldDefinition.node_properties),
     ] = None
     capabilities: Annotated[list[str] | None, AMQPTAnnotation(AMQPTypes.symbol)] = None

@@ -122,8 +122,7 @@ class SqsReceivedMessage(ReceivedMessageT):
         await self._change_visibility(self._visibility_timeout)
 
     async def _change_visibility(self, visibility_timeout: int) -> None:
-        # Callers validate client and receipt handle first; re-check here so
-        # mypy narrowing survives the method boundary.
+        # Re-check the client and receipt handle after crossing the method boundary.
         client = self._server._client
         receipt_handle = self._receipt_handle
         if client is None or not receipt_handle:  # pragma: no cover
@@ -189,8 +188,7 @@ class SqsReceivedMessage(ReceivedMessageT):
             raise
 
     async def _publish_to_dlq(self, dlq_channel: str) -> None:
-        # Callers validate the client first; re-check here so mypy narrowing
-        # survives the method boundary.
+        # Re-check the client after crossing the method boundary.
         client = self._server._client
         if client is None:  # pragma: no cover
             raise ConnectionError("SQS client is not connected.")

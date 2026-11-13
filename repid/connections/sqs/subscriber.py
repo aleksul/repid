@@ -40,8 +40,8 @@ class SqsSubscriber(SubscriberT):
         self._shutdown_event = asyncio.Event()
         self._shutdown_wait_task: asyncio.Task[bool] | None = None
         self._pause_wait_task: asyncio.Task[bool] | None = None
-        self._tasks: list[asyncio.Task] = []
-        self._main_task: asyncio.Task | None = None
+        self._tasks: list[asyncio.Task[object]] = []
+        self._main_task: asyncio.Task[object] | None = None
 
         self._start_consuming()
 
@@ -55,7 +55,7 @@ class SqsSubscriber(SubscriberT):
         )
 
     @property
-    def task(self) -> asyncio.Task:
+    def task(self) -> asyncio.Task[object]:
         if self._main_task is None:
             raise RuntimeError("Subscriber is not active.")
         return self._main_task
@@ -104,7 +104,7 @@ class SqsSubscriber(SubscriberT):
                     ).reject(),
                 )
 
-                def _ignore_exception(task: asyncio.Task) -> None:
+                def _ignore_exception(task: asyncio.Task[object]) -> None:
                     with contextlib.suppress(Exception, asyncio.CancelledError):
                         task.result()
 
@@ -219,7 +219,7 @@ class SqsSubscriber(SubscriberT):
                         active_message_tasks.add(task)
                         messages.remove(msg)
 
-                        def _done_callback(t: asyncio.Task) -> None:
+                        def _done_callback(t: asyncio.Task[object]) -> None:
                             active_message_tasks.discard(t)
                             if self._semaphore:
                                 self._semaphore.release()
@@ -271,7 +271,7 @@ class SqsSubscriber(SubscriberT):
                 t = asyncio.create_task(message.reject())
 
                 # Suppress exceptions from the detached reject task
-                def _ignore_exception(task: asyncio.Task) -> None:
+                def _ignore_exception(task: asyncio.Task[object]) -> None:
                     with contextlib.suppress(Exception):
                         task.result()
 

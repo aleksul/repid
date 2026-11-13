@@ -403,7 +403,7 @@ async def test_sender_link_send_large_message(sender: SenderLink) -> None:
     sender._credit_available.set()
 
     # Set small max frame size on connection to force fragmentation
-    sender.session.connection.max_frame_size = 64  # type: ignore[misc]
+    sender.session.connection.max_frame_size = 64  # pyrefly: ignore[read-only]
 
     payload = b"x" * 100
     await sender.send(payload)
@@ -479,8 +479,9 @@ async def test_receiver_link_attach(receiver: ReceiverLink) -> None:
     assert receiver.state == LinkState.ATTACHED
 
     # Should have sent initial flow
-    assert len(receiver.session.connection.sent) == 2
-    assert isinstance(receiver.session.connection.sent[1][1], FlowFrame)
+    connection = cast(Any, receiver.session.connection)
+    assert len(connection.sent) == 2
+    assert isinstance(connection.sent[1][1], FlowFrame)
 
 
 async def test_receiver_link_uses_remote_initial_delivery_count(receiver: ReceiverLink) -> None:
@@ -716,8 +717,8 @@ async def test_receiver_link_credit_replenish(receiver: ReceiverLink) -> None:
     await receiver.release_delivery_credit(0)
 
     assert receiver.link_credit == 6
-    assert len(receiver.session.connection.sent) == 1  # type: ignore[attr-defined]
-    assert isinstance(receiver.session.connection.sent[-1][1], FlowFrame)  # type: ignore[attr-defined]
+    assert len(receiver.session.connection.sent) == 1  # pyrefly: ignore[missing-attribute]
+    assert isinstance(receiver.session.connection.sent[-1][1], FlowFrame)  # pyrefly: ignore[bad-index]
 
 
 async def test_receiver_link_prefetch_one_replenishes_credit(receiver: ReceiverLink) -> None:
@@ -733,8 +734,8 @@ async def test_receiver_link_prefetch_one_replenishes_credit(receiver: ReceiverL
     await receiver._handle_transfer(frames[0])
 
     assert receiver.link_credit == 1
-    assert len(receiver.session.connection.sent) == 1  # type: ignore[attr-defined]
-    flow = receiver.session.connection.sent[-1][1]  # type: ignore[attr-defined]
+    assert len(receiver.session.connection.sent) == 1  # pyrefly: ignore[missing-attribute]
+    flow = receiver.session.connection.sent[-1][1]  # pyrefly: ignore[bad-index]
     assert isinstance(flow, FlowFrame)
     assert flow.link_credit == 1
 
@@ -786,7 +787,7 @@ async def test_receiver_process_message_str_body(receiver: ReceiverLink) -> None
 async def test_receiver_process_message_error(receiver: ReceiverLink) -> None:
     receiver._state_machine.transition_sync("send_attach")
     receiver._state_machine.transition_sync("recv_attach")
-    receiver.session.connection.sent.clear()  # type: ignore[attr-defined]
+    receiver.session.connection.sent.clear()  # pyrefly: ignore[missing-attribute]
 
     # Callback raises exception
     receiver._callback = Mock(side_effect=ValueError("Callback error"))
@@ -800,7 +801,7 @@ async def test_receiver_process_message_error(receiver: ReceiverLink) -> None:
     assert len(receiver._incoming_transfers) == 0
     assert receiver._delivery_count == 1
     assert receiver.link_credit == receiver._prefetch
-    assert len(receiver.session.connection.sent) == 1  # type: ignore[attr-defined]
+    assert len(receiver.session.connection.sent) == 1  # pyrefly: ignore[missing-attribute]
 
 
 async def test_link_detach(sender: SenderLink) -> None:
@@ -841,7 +842,7 @@ async def test_link_detach_already_detached(sender: SenderLink) -> None:
 
     await sender.detach()
 
-    assert len(sender.session.connection.sent) == 0  # type: ignore[attr-defined]
+    assert len(sender.session.connection.sent) == 0  # pyrefly: ignore[missing-attribute]
 
 
 async def test_link_detach_error(sender: SenderLink) -> None:
@@ -883,7 +884,7 @@ async def test_subscription(receiver: ReceiverLink) -> None:
     assert not sub.is_active  # Connection not connected in fixture usually
 
     # Mock connection connected
-    receiver.session.connection.is_connected = True  # type: ignore[misc]
+    receiver.session.connection.is_connected = True  # pyrefly: ignore[read-only]
     receiver._state_machine.transition_sync("send_attach")
     receiver._state_machine.transition_sync("recv_attach")  # make usable
 
@@ -896,13 +897,13 @@ async def test_subscription(receiver: ReceiverLink) -> None:
 async def test_receiver_set_credit(receiver: ReceiverLink) -> None:
     receiver._state_machine.transition_sync("send_attach")
     receiver._state_machine.transition_sync("recv_attach")
-    receiver.session.connection.sent.clear()  # type: ignore[attr-defined]
+    receiver.session.connection.sent.clear()  # pyrefly: ignore[missing-attribute]
 
     await receiver.set_credit(500)
 
     assert receiver.link_credit == 500
-    assert len(receiver.session.connection.sent) == 1  # type: ignore[attr-defined]
-    assert isinstance(receiver.session.connection.sent[0][1], FlowFrame)  # type: ignore[attr-defined]
+    assert len(receiver.session.connection.sent) == 1  # pyrefly: ignore[missing-attribute]
+    assert isinstance(receiver.session.connection.sent[0][1], FlowFrame)  # pyrefly: ignore[bad-index]
 
 
 async def test_receiver_set_credit_rejects_negative_credit(receiver: ReceiverLink) -> None:

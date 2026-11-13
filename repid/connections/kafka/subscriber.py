@@ -43,7 +43,7 @@ class KafkaSubscriber(SubscriberT):
             else None
         )
 
-        self._offset_tracker: dict[TopicPartition, dict[int, bool]] = {}  # type: ignore[no-any-unimported]
+        self._offset_tracker: dict[TopicPartition, dict[int, bool]] = {}
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self._task = asyncio.create_task(self._consume_loop())
 
@@ -108,7 +108,7 @@ class KafkaSubscriber(SubscriberT):
         except asyncio.CancelledError:
             pass
 
-    async def _mark_complete(  # type: ignore[no-any-unimported]
+    async def _mark_complete(
         self,
         r: ConsumerRecordProtocol,
         tp: TopicPartition,
@@ -138,7 +138,7 @@ class KafkaSubscriber(SubscriberT):
             if self._semaphore:
                 self._semaphore.release()
 
-    async def _process_message(  # type: ignore[no-any-unimported]
+    async def _process_message(
         self,
         record: ConsumerRecordProtocol,
         tp: TopicPartition,

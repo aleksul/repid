@@ -186,13 +186,13 @@ class InMemorySubscriber(SubscriberT):
         self._closed = False
         self._paused_event = asyncio.Event()
         self._paused_event.set()  # start in resumed state
-        self._channel_tasks: dict[str, asyncio.Task] = {}
+        self._channel_tasks: dict[str, asyncio.Task[object]] = {}
         self._semaphore: asyncio.Semaphore | None = (
             asyncio.Semaphore(concurrency_limit)
             if concurrency_limit and concurrency_limit > 0
             else None
         )
-        self._callback_tasks: set[asyncio.Task] = set()
+        self._callback_tasks: set[asyncio.Task[object]] = set()
         self._supervisor_task = asyncio.create_task(self._supervisor())
 
     # --- SubscriberT protocol ---
@@ -201,7 +201,7 @@ class InMemorySubscriber(SubscriberT):
         return not self._closed and any(not t.done() for t in self._channel_tasks.values())
 
     @property
-    def task(self) -> asyncio.Task:
+    def task(self) -> asyncio.Task[object]:
         return self._supervisor_task
 
     async def pause(self) -> None:
@@ -434,7 +434,7 @@ class InMemoryServer(ServerT):
         self._subscribers.add(subscriber)
 
         # Remove from set when supervisor task finishes
-        def _on_done(_task: asyncio.Task) -> None:
+        def _on_done(_task: asyncio.Task[object]) -> None:
             self._subscribers.discard(subscriber)
 
         subscriber.task.add_done_callback(_on_done)

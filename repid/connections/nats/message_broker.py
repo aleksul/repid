@@ -226,7 +226,7 @@ class NatsSubscriber(SubscriberT):
         return self._active
 
     @property
-    def task(self) -> asyncio.Task:
+    def task(self) -> asyncio.Task[object]:
         return self._task
 
     async def _start(self) -> None:

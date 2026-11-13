@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import cast
 
 import pytest
-from typing_extensions import override
 
+from repid._utils._typing import override
 from repid.connections.amqp.protocol import ManagedSession
 from repid.connections.amqp.protocol.connection import (
     AmqpConnection,
@@ -45,7 +45,7 @@ async def test_managed_session_and_pools() -> None:
 
     class TestSenderPool(SenderPool):
         @override
-        async def _wait_for_connection(self, timeout: float = 5.0) -> None:
+        async def _wait_for_connection(self, timeout: float = 5.0) -> None:  # noqa: ARG002 - match the overridden signature
             return None
 
     managed._sender_pool = TestSenderPool(managed)

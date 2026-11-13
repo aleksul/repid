@@ -510,7 +510,7 @@ async def test_test_client_send_without_channel_or_operation_id_raises() -> None
             ValueError,
             match="Either 'channel' or 'operation_id' must be specified",
         ):
-            await client.send_message(  # type: ignore[call-overload]
+            await client.send_message(  # pyrefly: ignore[no-matching-overload]
                 payload=b"{}",  # Neither channel nor operation_id
             )
 
@@ -523,7 +523,7 @@ async def test_test_client_send_with_both_channel_and_operation_id_raises() -> N
             ValueError,
             match="Specify either 'channel' or 'operation_id', not both",
         ):
-            await client.send_message(  # type: ignore[call-overload]
+            await client.send_message(  # pyrefly: ignore[no-matching-overload]
                 channel="default",
                 operation_id="some_op",
                 payload=b"{}",

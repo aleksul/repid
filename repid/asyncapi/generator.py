@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from copy import deepcopy
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 from urllib.parse import quote
 
 from repid.asyncapi.models import (
@@ -71,7 +71,7 @@ class _AsyncAPIRouter(Protocol):
 
 class AsyncAPIComponents:
     def __init__(self) -> None:
-        self.schemas: dict[str, dict] = {}
+        self.schemas: dict[str, dict[str, Any]] = {}
         self.messages: dict[str, MessageObject] = {}
         self.security_schemes: dict[str, SecurityScheme] = {}
         self.server_bindings: dict[str, ServerBindingsObject] = {}
@@ -83,7 +83,7 @@ class AsyncAPIComponents:
 
         self._external_docs_lookup: dict[str, str] = {}
 
-    def _unique_key(self, store: dict, base_name: str) -> str:
+    def _unique_key(self, store: dict[str, Any], base_name: str) -> str:
         name = base_name
         counter = 1
         while name in store:
@@ -187,7 +187,7 @@ class AsyncAPIComponents:
             index += 1
         return candidate
 
-    def extract_definitions(self, schema: dict) -> None:
+    def extract_definitions(self, schema: dict[str, Any]) -> None:
         if "$defs" in schema:
             for name, definition in schema.pop("$defs").items():
                 self.schemas[name] = definition

@@ -608,7 +608,7 @@ async def test_message_properties() -> None:
     app = Repid()
     router = Router()
 
-    captured = {}
+    captured: dict[str, Any] = {}
 
     @router.actor
     async def myactor(m: Message) -> None:
@@ -726,12 +726,12 @@ async def test_depends_missing_required_argument() -> None:
 
     with pytest.raises(ValueError, match="Field required"):
         await conv.convert_inputs(
-            message=MessageData(  # type: ignore[arg-type]
+            message=MessageData(  # pyrefly: ignore[bad-argument-type]
                 payload=b"{}",  # empty payload, missing required_arg
                 headers=None,
                 content_type="application/json",
             ),
-            actor=None,  # type: ignore[arg-type]
+            actor=None,  # pyrefly: ignore[bad-argument-type]
             actor_context=_CONVERTER_CONTEXT,
         )
 
@@ -747,12 +747,12 @@ async def test_depends_uses_default_for_missing_argument() -> None:
 
     # Send message without arg_with_default - should use default
     args, kwargs = await conv.convert_inputs(
-        message=MessageData(  # type: ignore[arg-type]
+        message=MessageData(  # pyrefly: ignore[bad-argument-type]
             payload=b"{}",
             headers=None,
             content_type="application/json",
         ),
-        actor=None,  # type: ignore[arg-type]
+        actor=None,  # pyrefly: ignore[bad-argument-type]
         actor_context=_CONVERTER_CONTEXT,
     )
     assert args == []

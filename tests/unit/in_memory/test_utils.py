@@ -6,7 +6,7 @@ async def test_dummy_queue_message_uses_stable_delivery_identity() -> None:
     msg2 = DummyQueue.Message(payload=b"1", headers={"a": "b"}, content_type="json", message_id="1")
 
     deliveries = {msg1, msg2}
-    msg1.headers["a"] = "changed"  # type: ignore[index]
+    msg1.headers["a"] = "changed"  # pyrefly: ignore[unsupported-operation]
 
     assert msg1 is not msg2
     assert msg1 != msg2

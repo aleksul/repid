@@ -6,6 +6,8 @@ import logging
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
+from repid._utils._typing import override
+
 logger = logging.getLogger("repid.asyncapi_server")
 
 if TYPE_CHECKING:
@@ -87,9 +89,12 @@ class _HttpServerProtocol(asyncio.Protocol):
         self.schema = schema
         self.settings = settings
 
+    @override
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
-        self.transport: asyncio.WriteTransport = transport  # type: ignore[assignment]
+        # The asyncio server supplies a write transport.
+        self.transport: asyncio.WriteTransport = transport  # pyrefly: ignore[bad-assignment]
 
+    @override
     def data_received(self, data: bytes) -> None:
         message = data.decode()
 

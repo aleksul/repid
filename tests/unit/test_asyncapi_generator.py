@@ -496,7 +496,7 @@ def test_asyncapi_generator_accepts_partial_info(
 
     schema = app.generate_asyncapi_schema()
 
-    assert schema["info"][expected_key] == expected_value  # type: ignore[literal-required]
+    assert schema["info"][expected_key] == expected_value  # pyrefly: ignore[bad-typed-dict-key]
 
 
 def test_asyncapi_generator_message_registry_operation() -> None:

@@ -10,6 +10,7 @@ import botocore.exceptions
 import pytest
 
 from repid import Repid
+from repid._utils._typing import override
 from repid.connections.abc import MessageAction, ReceivedMessageT, SentMessageT
 from repid.connections.sqs import SqsServer
 from repid.connections.sqs.message import SqsReceivedMessage
@@ -59,23 +60,26 @@ class DummySentMessage(SentMessageT):
 
 
 class MockSubscriberWithProcessException(SqsSubscriber):
-    def _process_message(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ARG002
+    @override
+    def _process_message(self, *_args: Any, **_kwargs: Any) -> Any:
         self._active = False
         raise ValueError("mock create_task exception")
 
 
 class MockSubscriberWithCloseException(SqsSubscriber):
+    @override
     async def close(self) -> None:
         raise ValueError("mock close exception")
 
 
 class MockSubscriberWithMessageException(SqsSubscriber):
+    @override
     async def _process_message(
         self,
         channel: str,
         queue_url: str,
         msg: Any,
-        callback: Any,  # noqa: ARG002
+        callback: Any,  # noqa: ARG002 - match the overridden signature
     ) -> None:
         try:
             SqsReceivedMessage(self._server, channel, queue_url, msg)
@@ -373,10 +377,10 @@ async def test_sqs_server_properties_are_correct(sqs_connection: ServerT) -> Non
         title="MySQS",
         summary="summary",
         description="description",
-        variables={"var": "val"},  # type: ignore[dict-item]
+        variables={"var": "val"},  # pyrefly: ignore[bad-assignment]
         security=[{"sec": "val"}],
-        tags=[{"name": "tag1"}],  # type: ignore[list-item]
-        external_docs={"url": "http://docs"},  # type: ignore[arg-type]
+        tags=[{"name": "tag1"}],  # pyrefly: ignore[bad-argument-type]
+        external_docs={"url": "http://docs"},  # pyrefly: ignore[bad-argument-type]
         bindings={"sqs": "binding"},
         aws_access_key_id="x",
         aws_secret_access_key="x",
@@ -428,7 +432,7 @@ async def test_sqs_server_raises_when_not_connected_for_get_queue_url() -> None:
 async def test_sqs_server_raises_when_not_connected_for_publish() -> None:
     server = SqsServer()
     with pytest.raises(RuntimeError, match=r"SQS client is not connected\."):
-        await server.publish(channel="default", message=None)  # type: ignore[arg-type]
+        await server.publish(channel="default", message=None)  # pyrefly: ignore[bad-argument-type]
 
 
 async def test_sqs_server_raises_when_not_connected_for_subscribe() -> None:
@@ -712,7 +716,7 @@ async def test_sqs_subscriber_raises_if_client_is_none(sqs_connection: ServerT) 
         server._client = None
         try:
             with pytest.raises(RuntimeError, match=r"SQS client is not connected\."):
-                await sub._consume_channel("test_subscriber_state_channel")  # type: ignore[attr-defined]
+                await sub._consume_channel("test_subscriber_state_channel")  # pyrefly: ignore[missing-attribute]
         finally:
             server._client = original_client
             await sub.close()
@@ -759,7 +763,7 @@ async def test_sqs_subscriber_handles_message_instantiation_error(sqs_connection
             {"test_subscriber_state_channel": lambda _: asyncio.sleep(0)},
             concurrency_limit=1,
         )
-        await sub._process_message("default", "http://queue", {}, lambda _: asyncio.sleep(0))
+        await sub._process_message("default", "http://queue", {}, lambda _: asyncio.sleep(0))  # pyrefly: ignore[implicit-any-lambda]
         await sub.close()
 
 
@@ -1070,7 +1074,7 @@ async def test_subscriber_consume_channel_breaks_on_semaphore_wait_when_paused()
             subscriber._active = False
             return True
 
-    subscriber._semaphore = FlipSemaphore()  # type: ignore[assignment]
+    subscriber._semaphore = FlipSemaphore()  # pyrefly: ignore[bad-assignment]
     await subscriber._consume_channel("test")
 
 
@@ -1173,6 +1177,7 @@ async def test_subscriber_consume_channel_uses_server_batch_size() -> None:
     await subscriber._consume_channel("test")
 
     client.receive_message.assert_awaited_once()
+    assert client.receive_message.await_args is not None
     assert client.receive_message.await_args.kwargs["MaxNumberOfMessages"] == 3
 
 
@@ -1238,7 +1243,7 @@ async def test_sqs_message_keep_alive_receipt_invalid() -> None:
     mock_client = AsyncMock()
     error_response = {"Error": {"Code": "ReceiptHandleIsInvalid"}}
     mock_client.change_message_visibility.side_effect = botocore.exceptions.ClientError(
-        error_response,  # type: ignore[arg-type]
+        error_response,
         "ChangeMessageVisibility",
     )
 
@@ -1259,7 +1264,7 @@ async def test_sqs_message_keep_alive_other_error() -> None:
     mock_client = AsyncMock()
     error_response_2 = {"Error": {"Code": "OtherError"}}
     mock_client.change_message_visibility.side_effect = botocore.exceptions.ClientError(
-        error_response_2,  # type: ignore[arg-type]
+        error_response_2,
         "ChangeMessageVisibility",
     )
 

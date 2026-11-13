@@ -200,7 +200,7 @@ async def test_send_message_neither_channel_nor_operation_id() -> None:
             ValueError,
             match="Either 'channel' or 'operation_id' must be specified",
         ):
-            await app.send_message(payload=b"test")  # type: ignore[call-overload]
+            await app.send_message(payload=b"test")  # pyrefly: ignore[no-matching-overload]
 
 
 async def test_send_message_both_channel_and_operation_id() -> None:
@@ -213,8 +213,8 @@ async def test_send_message_both_channel_and_operation_id() -> None:
             ValueError,
             match="Specify either 'channel' or 'operation_id', not both",
         ):
-            await app.send_message(
+            await app.send_message(  # pyrefly: ignore[no-matching-overload]
                 channel="default",
                 operation_id="some_op",
                 payload=b"test",
-            )  # type: ignore[call-overload]
+            )

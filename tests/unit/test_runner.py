@@ -464,10 +464,10 @@ async def test_runner_subscriber_exception_sets_unhealthy() -> None:
         async def close(self) -> None:
             pass
 
-    async def failing_subscribe(*args, **kwargs):  # type: ignore[no-untyped-def]  # noqa: ARG001
+    async def failing_subscribe(*args, **kwargs):  # pyrefly: ignore[implicit-any-parameter, unannotated-return]  # noqa: ARG001
         return FailingSubscriber()
 
-    server.subscribe = failing_subscribe  # type: ignore[method-assign]
+    server.subscribe = failing_subscribe  # pyrefly: ignore[method-assign]
 
     health_check_server = HealthCheckServer()
     router = Router()
@@ -545,7 +545,7 @@ async def test_runner_pause_exception_during_shutdown(
     server = InMemoryServer()
 
     class FailingPauseSubscriber:
-        def __init__(self, original_subscriber) -> None:  # type: ignore[no-untyped-def]
+        def __init__(self, original_subscriber) -> None:  # pyrefly: ignore[implicit-any-parameter]
             self.original_subscriber = original_subscriber
             self.task = original_subscriber.task
 
@@ -560,11 +560,11 @@ async def test_runner_pause_exception_during_shutdown(
 
     original_subscribe = server.subscribe
 
-    async def failing_pause_subscribe(*args, **kwargs):  # type: ignore[no-untyped-def]
+    async def failing_pause_subscribe(*args, **kwargs):  # pyrefly: ignore[implicit-any-parameter, unannotated-return]
         original = await original_subscribe(*args, **kwargs)
         return FailingPauseSubscriber(original)
 
-    server.subscribe = failing_pause_subscribe  # type: ignore[method-assign]
+    server.subscribe = failing_pause_subscribe  # pyrefly: ignore[method-assign]
 
     router = Router()
 
@@ -601,7 +601,7 @@ async def test_runner_close_exception_during_shutdown(
     server = InMemoryServer()
 
     class FailingCloseSubscriber:
-        def __init__(self, original_subscriber) -> None:  # type: ignore[no-untyped-def]
+        def __init__(self, original_subscriber) -> None:  # pyrefly: ignore[implicit-any-parameter]
             self.original_subscriber = original_subscriber
             self.task = original_subscriber.task
 
@@ -616,11 +616,11 @@ async def test_runner_close_exception_during_shutdown(
 
     original_subscribe = server.subscribe
 
-    async def failing_close_subscribe(*args, **kwargs):  # type: ignore[no-untyped-def]
+    async def failing_close_subscribe(*args, **kwargs):  # pyrefly: ignore[implicit-any-parameter, unannotated-return]
         original = await original_subscribe(*args, **kwargs)
         return FailingCloseSubscriber(original)
 
-    server.subscribe = failing_close_subscribe  # type: ignore[method-assign]
+    server.subscribe = failing_close_subscribe  # pyrefly: ignore[method-assign]
 
     router = Router()
 

@@ -1,10 +1,4 @@
 version: 2
-multi-ecosystem-groups:
-  codeql:
-    schedule:
-      interval: monthly
-    commit-message:
-      prefix: ⬆
 updates:
 - package-ecosystem: uv
   directory: /
@@ -14,22 +8,21 @@ updates:
     default-days: 7
   commit-message:
     prefix: ⬆
-  ignore:
-  - dependency-name: google-auth
-  - dependency-name: grpcio
-  - dependency-name: pydantic
-  - dependency-name: redis
+  groups:
+    python-packages:
+      patterns: ['*']
 
-- package-ecosystem: github-actions
+- package-ecosystem: pre-commit
   directory: /
   schedule:
-    interval: daily
+    interval: monthly
   cooldown:
     default-days: 7
   commit-message:
     prefix: ⬆
-  ignore:
-  - dependency-name: github/codeql-action
+  groups:
+    python-packages:
+      patterns: ['*']
 
 - package-ecosystem: github-actions
   directory: /
@@ -37,6 +30,8 @@ updates:
     interval: monthly
   cooldown:
     default-days: 7
-  patterns:
-  - github/codeql-action
-  multi-ecosystem-group: codeql
+  commit-message:
+    prefix: ⬆
+  groups:
+    github-actions:
+      patterns: ['*']

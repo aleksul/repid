@@ -52,7 +52,7 @@ source .venv/bin/activate
 ...or simply execute the needed command with `uv run` prefix, e.g.
 
 ```bash
-uv run mkdocs serve
+uv run --group docs zensical serve
 ```
 
 #### pre-commit

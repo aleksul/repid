@@ -10,7 +10,7 @@ same objects repeatedly.
 
 In your actor, you can declare a dependency as follows:
 
-```python hl_lines="7-8 12"
+```python hl_lines="8-9 13"
 from typing import Annotated
 from repid import Repid, Router, Depends
 
@@ -31,7 +31,7 @@ async def my_actor(my_dependency: Annotated[str, Depends(dependency_function)]) 
 
 Your dependency can also have some dependencies of its own!
 
-```python hl_lines="6-7 10"
+```python hl_lines="7-8 11"
 from typing import Annotated
 from repid import Depends, Router
 
@@ -128,7 +128,7 @@ event loop.
 
 You can also opt to run it in a process pool executor if your function is CPU bound.
 
-```python hl_lines="5"
+```python hl_lines="6"
 def dependency_function() -> int:
     # some CPU-heavy computation here
     return 123
@@ -147,7 +147,7 @@ You can override a dependency globally.
     *not* to use them in production code. Use them exclusively in your test suites to safely mock
     external resources like database connections or API clients.
 
-```python hl_lines="6"
+```python hl_lines="7"
 def dependency_function() -> str:
     return "Hello!"
 

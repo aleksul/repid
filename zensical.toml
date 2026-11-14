@@ -1,0 +1,124 @@
+[project]
+nav = [
+  { "Welcome" = [
+    { "Home" = "index.md" },
+    { "Features" = "features.md" },
+    { "Benchmarks" = "benchmarks.md" },
+    { "Playground" = "playground.md" }
+  ] },
+  { "Getting Started" = [
+    { "Quickstart" = "getting_started/quickstart.md" },
+    { "Supported Brokers" = "getting_started/supported_brokers.md" },
+    { "Glossary" = "getting_started/glossary.md" }
+  ] },
+  { "Core Concepts" = [
+    { "Messages" = "user_guide/messages.md" },
+    { "Actors" = [
+      { "Basics" = "user_guide/actors/index.md" },
+      { "Payload & Headers Parsing" = "user_guide/actors/parsing.md" },
+      { "Routing Strategies" = "user_guide/actors/routing.md" },
+      { "Connecting & Nesting Routers" = "user_guide/actors/routers.md" },
+      { "Execution & Timeouts" = "user_guide/actors/execution.md" },
+      { "Confirmation Modes & Error Handling" = "user_guide/actors/confirmation_and_errors.md" }
+    ] },
+    { "Workers" = [
+      { "Basics" = "user_guide/workers/index.md" },
+      { "Concurrency Limits" = "user_guide/workers/concurrency.md" },
+      { "Built-in Servers" = "user_guide/workers/built_in_servers.md" },
+      { "Lifecycle & Production" = "user_guide/workers/lifecycle.md" }
+    ] },
+    { "Dependency Injection" = "user_guide/dependency_injection.md" },
+    { "Raw Message & Eager Response" = "user_guide/raw_message_and_eager_response.md" },
+    { "Message Registry" = "user_guide/message_registry.md" },
+    { "Server Registry" = "user_guide/server_registry.md" },
+    { "Server Specific Parameters" = "user_guide/server_specific_parameters.md" }
+  ] },
+  { "Ecosystem & Integrations" = [
+    { "AsyncAPI Schema & Server" = "integrations/asyncapi.md" },
+    { "Using Pydantic & FastAPI" = "integrations/fastapi_and_pydantic.md" }
+  ] },
+  { "Best Practices & Patterns" = [
+    { "Testing" = "cookbook/testing.md" },
+    { "Chaining jobs" = "cookbook/chaining_jobs.md" },
+    { "Middlewares" = "cookbook/middlewares.md" }
+  ] },
+  { "Cookbook" = [
+    { "Sentry Middleware" = "cookbook/sentry_middleware.md" },
+    { "OpenTelemetry Middleware" = "cookbook/opentelemetry_middleware.md" },
+    { "RabbitMQ Retries" = "cookbook/rabbitmq_retries.md" },
+    { "Large Payloads" = "cookbook/large_payloads.md" }
+  ] },
+  { "Extending Repid" = [
+    { "Your own brokers" = "advanced_user_guide/your_own_brokers.md" },
+    { "Your own serializer" = "advanced_user_guide/your_own_serializer.md" },
+    { "Your own converter" = "advanced_user_guide/your_own_converter.md" }
+  ] },
+  { "Contributing guide" = "contributing.md" }
+]
+repo_name = "aleksul/repid"
+repo_url = "https://github.com/aleksul/repid"
+site_description = "Repid is a simple, fast, and extensible async task queue framework, with built-in AsyncAPI 3.0 schema generation."
+site_name = "Repid"
+site_url = "https://repid.aleksul.space"
+
+[project.extra]
+analytics.provider = "custom"
+generator = false
+version.provider = "mike"
+
+[project.markdown_extensions]
+admonition = {}
+attr_list = {}
+pymdownx.details = {}
+pymdownx.emoji = {}
+pymdownx.highlight.anchor_linenums = true
+pymdownx.inlinehilite = {}
+pymdownx.keys = {}
+pymdownx.snippets = {}
+pymdownx.superfences.custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" }
+]
+pymdownx.tabbed.alternate_style = true
+
+[project.plugins.glightbox]
+
+[project.plugins.llmstxt]
+full_output = "llms-full.txt"
+markdown_description = "Repid is a simple, fast, and extensible async task queue framework for Python 3.11+, featuring built-in AsyncAPI 3.0 schema generation."
+
+[project.plugins.llmstxt.sections]
+"Best Practices & Patterns" = ["cookbook/testing.md", "cookbook/chaining_jobs.md", "cookbook/middlewares.md"]
+"Cookbook" = ["cookbook/sentry_middleware.md", "cookbook/opentelemetry_middleware.md", "cookbook/rabbitmq_retries.md", "cookbook/large_payloads.md"]
+"Core Concepts" = ["user_guide/*.md", "user_guide/actors/*.md", "user_guide/workers/*.md"]
+"Ecosystem & Integrations" = ["integrations/*.md"]
+"Extending Repid" = ["advanced_user_guide/*.md"]
+"Getting Started" = ["getting_started/*.md"]
+
+[project.plugins.mike]
+alias_type = "symlink"
+canonical_version = "latest"
+
+[project.plugins.search]
+
+[project.theme]
+custom_dir = "docs/overrides"
+favicon = "https://gist.github.com/aleksul/2e4686cf9a4f027909fe43dc33039f10/raw/56935b8183682d1e46d68af70fec52cf647ab756/repid_logo.svg"
+features = ["content.code.annotate", "content.tabs.link"]
+logo = "https://gist.github.com/aleksul/2e4686cf9a4f027909fe43dc33039f10/raw/56935b8183682d1e46d68af70fec52cf647ab756/repid_logo.svg"
+variant = "classic"
+
+[[project.theme.palette]]
+accent = "amber"
+media = "(prefers-color-scheme: light)"
+primary = "deep orange"
+scheme = "default"
+toggle.icon = "material/lightbulb-outline"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+accent = "amber"
+media = "(prefers-color-scheme: dark)"
+primary = "deep orange"
+scheme = "slate"
+toggle.icon = "material/lightbulb"
+toggle.name = "Switch to light mode"

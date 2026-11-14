@@ -4,12 +4,8 @@ requires = ['hatchling', 'hatch-vcs']
 
 [dependency-groups]
 docs = [
-  "mkdocs-material>=9.7.7",
-  "mike>=2.2.0",
-  "mkdocs-glightbox>=0.5.3",
-  "setuptools>=83.0.0",
-  "mkdocs-llmstxt>=0.5.0",
-  "pygments<2.20.0"
+  "zensical>=0.1.1",
+  "mike @ git+https://github.com/squidfunk/mike.git"
 ]
 lint = [
   "pyrefly>=1.4.1",

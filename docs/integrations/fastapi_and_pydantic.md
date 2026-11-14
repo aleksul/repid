@@ -64,7 +64,7 @@ is opened when your web server starts, and closed when it shuts down.
 
 FastAPI's `lifespan` events are perfect for this.
 
-```python hl_lines="11-12"
+```python hl_lines="12-13"
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from repid import Repid, AmqpServer

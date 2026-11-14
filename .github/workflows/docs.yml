@@ -4,7 +4,7 @@ on:
   pull_request:
     paths:
     - docs/**
-    - mkdocs.yml
+    - zensical.toml
     - pyproject.toml
     - uv.lock
     - .github/workflows/docs.yml
@@ -46,7 +46,7 @@ jobs:
       run: uv sync --only-group docs --frozen --python 3.11
 
     - name: Build docs
-      run: uv run --no-sync mkdocs build
+      run: uv run --no-sync zensical build
 
   deploy_docs:
     if: github.event_name != 'pull_request'

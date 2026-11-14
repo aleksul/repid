@@ -44,6 +44,24 @@ For Google Cloud PubSub, install:
 pip install repid[pubsub]
 ```
 
+For NATS, install:
+
+```bash
+pip install repid[nats]
+```
+
+For Amazon SQS, install:
+
+```bash
+pip install repid[sqs]
+```
+
+For Apache Kafka, install:
+
+```bash
+pip install repid[kafka]
+```
+
 Mostly for test purposes or simple local scripts, Repid provides an `InMemoryServer`. You don't need
 any extra dependencies for it.
 

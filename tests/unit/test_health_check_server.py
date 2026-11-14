@@ -1,4 +1,4 @@
-import httpx
+import httpx2
 import pytest
 
 from repid import HealthCheckServer, HealthCheckServerSettings, HealthCheckStatus
@@ -9,7 +9,7 @@ async def test_default_health_check_server() -> None:
 
     await h.start()
 
-    async with httpx.AsyncClient() as client:
+    async with httpx2.AsyncClient() as client:
         response = await client.get("http://localhost:8080/healthz")
         assert response.status_code == 200
 
@@ -38,7 +38,7 @@ async def test_health_check_server(port: int, endpoint_name: str) -> None:
 
     await h.start()
 
-    async with httpx.AsyncClient() as client:
+    async with httpx2.AsyncClient() as client:
         response = await client.get(f"http://localhost:{port}{endpoint_name}")
         assert response.status_code == 200
 
@@ -67,7 +67,7 @@ async def test_health_check_server_incorrect_endpoint(port: int, endpoint_name: 
 
     await h.start()
 
-    async with httpx.AsyncClient() as client:
+    async with httpx2.AsyncClient() as client:
         response = await client.get(f"http://localhost:{port}/wrong")
         assert response.status_code == 404
 

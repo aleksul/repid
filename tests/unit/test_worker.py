@@ -5,7 +5,7 @@ import signal
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
+import httpx2
 import pytest
 
 from repid import Router
@@ -89,7 +89,7 @@ async def test_worker_run_with_health_check_server_lifecycle() -> None:
 
         task = asyncio.create_task(worker.run())
 
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             resposne = await client.get("http://localhost:18126/healthz")
             assert resposne.status_code == 200
 
@@ -135,7 +135,7 @@ async def test_worker_run_with_asyncapi_server_lifecycle() -> None:
 
         task = asyncio.create_task(worker.run())
 
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             response = await client.get("http://localhost:18127")
             assert response.status_code == 200
             assert response.content is not None
@@ -183,7 +183,7 @@ async def test_worker_run_with_both_servers_lifecycle() -> None:
 
         task = asyncio.create_task(worker.run())
 
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             health_response = await client.get("http://localhost:18128/healthz")
             assert health_response.status_code == 200
 

@@ -21,7 +21,7 @@ tests = [
   "pytest-asyncio>=1.4.1",
   "pytest-timeout>=2.4.0",
   "coverage[toml]>=7.16.2",
-  "httpx>=0.28.1"
+  "httpx2>=2.13.0"
 ]
 
 [project]

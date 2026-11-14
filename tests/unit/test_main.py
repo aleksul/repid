@@ -1,4 +1,4 @@
-import httpx
+import httpx2
 import pytest
 
 from repid import Repid, Router
@@ -30,7 +30,7 @@ async def test_asyncapi_server_creation(fake_repid: Repid) -> None:
     async with asyncapi_server:
         assert asyncapi_server._server is not None
         assert asyncapi_server._server.is_serving()
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             response = await client.get("http://localhost:8081/")
             response.raise_for_status()
             assert "<!DOCTYPE html>" in response.text
@@ -38,7 +38,7 @@ async def test_asyncapi_server_creation(fake_repid: Repid) -> None:
 
 async def test_asyncapi_server_404(fake_repid: Repid) -> None:
     asyncapi_server = fake_repid.asyncapi_server()
-    async with asyncapi_server, httpx.AsyncClient() as client:
+    async with asyncapi_server, httpx2.AsyncClient() as client:
         response = await client.get("http://localhost:8081/unknown/path")
         assert response.status_code == 404
         assert "404 Not Found" in response.text

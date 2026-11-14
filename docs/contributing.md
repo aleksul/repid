@@ -9,9 +9,8 @@ Your contributions are invaluable to our community - thank you for being a part 
 1. [Create a fork](https://github.com/aleksul/repid/fork) of repid
 2. Clone your fork
 3. Install [uv](https://docs.astral.sh/uv/getting-started/installation/)
-4. Install dependencies in virtual environment
-5. Configure pre-commit
-6. Make your changes!
+4. Run `make install` to install dependencies and Git hooks
+5. Make your changes!
 
 ### Detailed guide
 
@@ -55,22 +54,18 @@ source .venv/bin/activate
 uv run --group docs zensical serve
 ```
 
-#### pre-commit
+#### prek
 
-`repid` uses [pre-commit](https://pre-commit.com) to run linters and formatters.
+`repid` uses [prek](https://prek.j178.dev/) to run linters and formatters.
 
 If you want to run all linters and formatters, execute the following command:
 
 ```bash
-uv run pre-commit run -a
+uv run --group prek prek run --all-files
 ```
 
 If you want to commit some changes disregarding pre-commit hooks, add `-n` or `--no-verify` flag
 to `git commit` command.
-
-!!! note "CI is important"
-    Keep in mind that when you will submit your pull request, all the hooks
-    must pass in CI anyway, or, unfortunately, we will have to decline your contribution.
 
 #### Make your changes
 

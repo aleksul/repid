@@ -13,8 +13,8 @@ lint = [
   "types-grpcio>=1.85.0.20261028",
   "types-aiobotocore[sqs]>=3.9.2"
 ]
-pre-commit = [
-  "pre-commit>=4.6.2"
+prek = [
+  "prek>=0.5.10"
 ]
 tests = [
   "pytest>=9.2.0",

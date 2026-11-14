@@ -6,7 +6,7 @@
 
 install: .uv
 	uv sync --frozen --all-extras --all-groups --python 3.11
-	uv run pre-commit install --install-hooks
+	uv run --group prek prek install --prepare-hooks
 
 rebuild-lockfiles: .uv
 	uv lock --upgrade

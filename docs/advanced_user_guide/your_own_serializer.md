@@ -42,7 +42,7 @@ app = Repid(
 
 **Per-Message:**
 
-```python hl_lines="9"
+```python hl_lines="10"
 from repid import Repid
 
 app = Repid()

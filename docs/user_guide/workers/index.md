@@ -8,7 +8,7 @@ your actors for processing.
 To start processing messages, you call `run_worker()` on your Repid application instance. Keep in
 mind that it blocks for the whole time of the worker execution, like a `while True`.
 
-```python title="worker.py" hl_lines="17"
+```python title="worker.py" hl_lines="20"
 import asyncio
 from repid import Repid, Router, AmqpServer
 

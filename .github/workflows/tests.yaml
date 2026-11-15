@@ -157,8 +157,6 @@ jobs:
     needs: [unit-tests, integration-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    outputs:
-      percentage: ${{ steps.coverage.outputs.percentage }}
 
     steps:
     - uses: actions/checkout@v7.0.1
@@ -183,44 +181,3 @@ jobs:
         uv run --no-sync coverage combine coverage
         uv run --no-sync coverage report --format=markdown --skip-covered --show-missing \
           >> "$GITHUB_STEP_SUMMARY"
-
-    - name: Get coverage percentage for badge
-      id: coverage
-      if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-      run: |
-        uv run --no-sync coverage json
-        percentage=$(uv run --no-sync python -c \
-          'import json; print(json.load(open("coverage.json"))["totals"]["percent_covered_display"])')
-        echo "percentage=$percentage" >> "$GITHUB_OUTPUT"
-
-  coverage-badge:
-    needs: coverage-combine
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    steps:
-    - name: Generate Coverage Badge
-      env:
-        COVERAGE: ${{ needs.coverage-combine.outputs.percentage }}
-      run: |
-        if [ "$COVERAGE" -ge 95 ]; then
-          color=brightgreen
-        elif [ "$COVERAGE" -ge 80 ]; then
-          color=yellowgreen
-        else
-          color=red
-        fi
-        mkdir -p badges
-        curl --fail --silent --show-error --retry 3 \
-          "https://img.shields.io/badge/coverage-${COVERAGE}%25-${color}" -o badges/coverage.svg
-
-    - name: Publish Coverage Badge
-      uses: peaceiris/actions-gh-pages@v4.1.0
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./badges
-        publish_branch: gh-pages
-        destination_dir: badges
-        keep_files: true

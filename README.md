@@ -7,7 +7,7 @@
 </a>
 
 [![PyPI version](https://img.shields.io/pypi/v/repid.svg)](https://pypi.org/project/repid/)
-[![Coverage](https://repid.aleksul.space/badges/coverage.svg)](https://github.com/aleksul/repid/actions)
+[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)](https://github.com/aleksul/repid/actions/workflows/tests.yaml)
 [![Tests](https://github.com/aleksul/repid/actions/workflows/tests.yaml/badge.svg)](https://github.com/aleksul/repid/actions/workflows/tests.yaml)
 [![PyPI pyversions](https://img.shields.io/pypi/pyversions/repid.svg)](https://pypi.python.org/pypi/repid/)
 [![Read documentation](https://img.shields.io/badge/read-documentation-informational.svg)](https://repid.aleksul.space)

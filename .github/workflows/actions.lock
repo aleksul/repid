@@ -28,7 +28,6 @@ workflows:
         - 'actions/setup-node@v7.1.0'
         - 'actions/upload-artifact@v7.0.2'
         - 'astral-sh/setup-uv@v10.3.3'
-        - 'peaceiris/actions-gh-pages@v4.1.0'
     '.github/workflows/typecheck.yml':
         - 'actions/checkout@v7.0.1'
         - 'astral-sh/setup-uv@v10.3.3'
@@ -81,11 +80,6 @@ dependencies:
         commit: 'sha1-33d7b85da1a04171e211befe2c739303b9a4c066'
         owner_id: 9919
         repo_id: 259445878
-    'peaceiris/actions-gh-pages@v4.1.0':
-        ref: 'v4.1.0'
-        commit: 'sha1-84c30a85c19949d7eee79c4ff27748b70285e453'
-        owner_id: 30958501
-        repo_id: 187915200
     'pypa/gh-action-pypi-publish@v1.14.3':
         ref: 'v1.14.3'
         commit: 'sha1-7245906fb61fa33a13554f9d5fb856fe61758086'

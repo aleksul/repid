@@ -7,10 +7,9 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from repid import Repid
+from repid import Concurrency, Repid
 from repid.connections.abc import ReceivedMessageT, SentMessageT
 from repid.connections.kafka.subscriber import KafkaSubscriber
-from repid.data.concurrency import Concurrency
 from tests.channel_limits import channel_limits
 
 pytestmark = pytest.mark.integration_target(name="kafka")
@@ -95,7 +94,9 @@ async def test_kafka_reject(kafka_repid: Repid, kafka_connection: ServerT) -> No
         requeued_msg: ReceivedMessageT | None = None
         requeued_event = asyncio.Event()
 
-        async def on_requeued_message(msg: ReceivedMessageT) -> None:
+        async def on_requeued_message(
+            msg: ReceivedMessageT,
+        ) -> None:
             nonlocal requeued_msg
             requeued_msg = msg
             requeued_event.set()
@@ -155,7 +156,9 @@ async def test_kafka_nack_to_dlq(kafka_repid: Repid, kafka_connection: ServerT) 
         dlq_received_msg: ReceivedMessageT | None = None
         dlq_event = asyncio.Event()
 
-        async def on_dlq_message(msg: ReceivedMessageT) -> None:
+        async def on_dlq_message(
+            msg: ReceivedMessageT,
+        ) -> None:
             nonlocal dlq_received_msg
             dlq_received_msg = msg
             dlq_event.set()
@@ -268,16 +271,16 @@ async def test_kafka_message_properties_and_double_actions(  # noqa: PLR0915
             event.set()
 
         subscriber = await kafka_connection.subscribe(
-            channel_concurrency={},
+            channel_concurrency=channel_limits((channel_name,)),
             channels_to_callbacks={channel_name: on_message},
         )
 
         assert subscriber.is_active
         assert subscriber.task is not None
         await subscriber.pause()
-        await subscriber.pause()  # early return
+        await subscriber.pause()
         await subscriber.resume()
-        await subscriber.resume()  # early return
+        await subscriber.resume()
 
         await asyncio.wait_for(event.wait(), timeout=10.0)
 

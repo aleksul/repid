@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable, Coroutine, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, overload
 
@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from repid.connections.abc import BaseMessageT, ReceivedMessageT
     from repid.converter import ConverterT
     from repid.data import Channel, ExternalDocs, Tag
+    from repid.data.concurrency import Concurrency
     from repid.data.message_schema import ActorMessageMetadata
 
 
@@ -178,9 +179,11 @@ class Router:
     def _materialize(self) -> _MaterializedRouter:
         actors: list[ActorData] = []
         channels: dict[str, Channel] = {}
+        concurrency: dict[str, Concurrency] = {}
         self._materialize_into(
             actors=actors,
             channels=channels,
+            concurrency=concurrency,
             defaults=_RouterDefaults.empty(),
         )
 
@@ -192,7 +195,13 @@ class Router:
 
         return _MaterializedRouter(
             actors=actors,
-            channels=list(channels.values()),
+            channels=[
+                replace(channel, concurrency=budget)
+                if channel.concurrency is None
+                and (budget := concurrency.get(channel.address)) is not None
+                else channel
+                for channel in channels.values()
+            ],
             _actors_per_channel_address=actors_per_channel_address,
         )
 
@@ -201,24 +210,29 @@ class Router:
         *,
         actors: list[ActorData],
         channels: dict[str, Channel],
+        concurrency: dict[str, Concurrency],
         defaults: _RouterDefaults,
     ) -> None:
+        if isinstance(self.channel, Channel):
+            self._add_channel_concurrency(concurrency, self.channel)
         current_defaults = self._merge_defaults(defaults)
         for entry in self._entries:
             if isinstance(entry, _IncludedRouter):
                 entry.router._materialize_into(
                     actors=actors,
                     channels=channels,
+                    concurrency=concurrency,
                     defaults=current_defaults,
                 )
             else:
                 actor_data, channel = self._materialize_actor(entry, current_defaults)
                 actors.append(actor_data)
+                self._add_channel_concurrency(concurrency, channel)
                 self._add_channel(channels, channel)
 
     def _merge_defaults(self, defaults: _RouterDefaults) -> _RouterDefaults:
         return _RouterDefaults(
-            channel=(defaults.channel if isinstance(self.channel, _NotSet) else self.channel),
+            channel=defaults.channel if isinstance(self.channel, _NotSet) else self.channel,
             middlewares=(
                 defaults.middlewares
                 if self.middlewares is None
@@ -242,6 +256,13 @@ class Router:
                 defaults.converter if isinstance(self.converter, _NotSet) else self.converter
             ),
         )
+
+    @staticmethod
+    def _add_channel_concurrency(concurrency: dict[str, Concurrency], channel: Channel) -> None:
+        if channel.concurrency is not None and (
+            concurrency.setdefault(channel.address, channel.concurrency) != channel.concurrency
+        ):
+            raise ValueError(f"Conflicting concurrency for channel {channel.address!r}")
 
     @staticmethod
     def _add_channel(channels: dict[str, Channel], channel: Channel) -> None:

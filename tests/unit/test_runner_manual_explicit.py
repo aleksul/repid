@@ -33,7 +33,6 @@ async def explicit_invalid_actor() -> Literal["ack", "nack", "reject", "no_actio
     return "something else"  # pyrefly: ignore[bad-return]
 
 
-@pytest.mark.asyncio
 async def test_manual_explicit_ack() -> None:
     app = Repid()
     app.include_router(router)
@@ -46,7 +45,6 @@ async def test_manual_explicit_ack() -> None:
         assert client._processed_messages[0].action == "acked"
 
 
-@pytest.mark.asyncio
 async def test_manual_explicit_nack() -> None:
     app = Repid()
     app.include_router(router)
@@ -59,7 +57,6 @@ async def test_manual_explicit_nack() -> None:
         assert client._processed_messages[0].action == "nacked"
 
 
-@pytest.mark.asyncio
 async def test_manual_explicit_reject() -> None:
     app = Repid()
     app.include_router(router)
@@ -72,7 +69,6 @@ async def test_manual_explicit_reject() -> None:
         assert client._processed_messages[0].action == "rejected"
 
 
-@pytest.mark.asyncio
 async def test_manual_explicit_no_action() -> None:
     app = Repid()
     app.include_router(router)
@@ -85,7 +81,6 @@ async def test_manual_explicit_no_action() -> None:
         assert client._processed_messages[0].action is None
 
 
-@pytest.mark.asyncio
 async def test_manual_explicit_invalid() -> None:
     app = Repid()
     app.include_router(router)

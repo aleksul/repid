@@ -144,7 +144,6 @@ async def test_message_dependency_send_message() -> None:
 
         assert len(client._sent_messages) == 2
 
-        # Process the second message manually
         while not client._message_queue.empty():
             _, msg = await client._message_queue.get()
             await client._process_message(msg)
@@ -178,14 +177,12 @@ async def test_message_dependency_reply_fallback() -> None:
         _ = data
         return b""
 
-    server = Mock()
-    server.capabilities = {"supports_native_reply": False}
-    server.publish = AsyncMock()
-
-    msg_mock = Mock()
-    msg_mock.reply = AsyncMock(side_effect=NotImplementedError)
-    msg_mock.ack = AsyncMock()
-    msg_mock.reply_to = "fallback_channel"
+    server = Mock(capabilities={"supports_native_reply": False}, publish=AsyncMock())
+    msg_mock = Mock(
+        reply=AsyncMock(side_effect=NotImplementedError),
+        ack=AsyncMock(),
+        reply_to="fallback_channel",
+    )
 
     publish = AsyncMock()
 
@@ -196,15 +193,12 @@ async def test_message_dependency_reply_fallback() -> None:
         publish=publish,
     )
 
-    # This should trigger the fallback
     await enhanced.reply(payload=b"test-fallback")
 
-    # Should publish then ack
     server.publish.assert_called_once()
     publish.assert_not_awaited()
     msg_mock.ack.assert_called_once()
 
-    # If no reply_to and no channel, raises ValueError
     msg_mock.reply_to = None
     with pytest.raises(ValueError, match="Reply channel is not set"):
         await enhanced.reply(payload=b"test-fallback")
@@ -293,14 +287,12 @@ async def test_depends_with_default_arg_not_in_payload() -> None:
     app.include_router(router)
 
     async with TestClient(app) as client:
-        # Only provide x, not y
         await client.send_message_json(
             channel="default",
             payload={"x": "hello"},
             headers={"topic": "myactor"},
         )
 
-    # Should use the default value for y
     assert received == "hello_default_value"
 
 
@@ -318,14 +310,12 @@ async def test_depends_with_basic_converter_missing_arg() -> None:
     app.include_router(router)
 
     async with TestClient(app, raise_on_actor_error=False) as client:
-        # Don't provide x
         await client.send_message_json(
             channel="default",
             payload={},
             headers={"topic": "myactor"},
         )
 
-        # Should have raised an error
         processed = client.get_processed_messages()
         assert len(processed) == 1
         assert processed[0].exception is not None
@@ -448,7 +438,6 @@ async def test_async_dependency() -> None:
 async def test_dependency_injection_complex() -> None:
     router = Router()
 
-    # Capture values to assert later
     captured_values = {}
 
     async def sub_dependency_function(
@@ -495,7 +484,6 @@ async def test_dependency_injection_complex() -> None:
             headers={"topic": "useless", "other_name": "1234567", "another_one": "42"},
         )
 
-    # Assertions
     assert captured_values["sub_dependency"]["other"] == 123
     assert captured_values["sub_dependency"]["ommitted_param"] == "default"
     assert captured_values["sub_dependency"]["third_header"] == 3
@@ -688,7 +676,6 @@ async def test_message_send_message_raw() -> None:
     async with TestClient(app) as client:
         await client.send_message_json(channel="default", payload={}, headers={"topic": "myactor"})
 
-        # Should have 2 messages: original + one sent by actor
         assert len(client._sent_messages) == 2
 
 
@@ -745,7 +732,6 @@ async def test_depends_uses_default_for_missing_argument() -> None:
 
     conv = DefaultConverter(_fn_with_default_dep_arg, correlation_id=None, fn_locals=locals())
 
-    # Send message without arg_with_default - should use default
     args, kwargs = await conv.convert_inputs(
         message=MessageData(  # pyrefly: ignore[bad-argument-type]
             payload=b"{}",
@@ -760,11 +746,9 @@ async def test_depends_uses_default_for_missing_argument() -> None:
 
 
 def test_get_dependency_skips_class_metadata() -> None:
-    # Using Header class instead of Header() instance should return None
     result = get_dependency(Annotated[str, Header])
     assert result is None
 
-    # Using Header() instance should return the instance
     header_instance = Header()
     result = get_dependency(Annotated[str, header_instance])
     assert result is header_instance

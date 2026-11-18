@@ -62,7 +62,6 @@ def test_generated_schema_validity_with_official_parser(
     tmp_path: Path,
     asyncapi_validator: tuple[str, Path],
 ) -> None:
-    # 1. Construct a complex Repid app
     app = Repid(
         title="Complex API",
         version="1.0.0",
@@ -91,7 +90,6 @@ def test_generated_schema_validity_with_official_parser(
         ),
     )
 
-    # Add Servers
     app.servers.register_server(
         "in-memory",
         InMemoryServer(
@@ -115,7 +113,6 @@ def test_generated_schema_validity_with_official_parser(
         ),
     )
 
-    # Add Router with Actors
     router = Router()
 
     class MyModel(BaseModel):
@@ -174,7 +171,6 @@ def test_generated_schema_validity_with_official_parser(
 
     app.include_router(router)
 
-    # Add Manual Operations
     app.messages.register_operation(
         operation_id="manual_op",
         channel="manual-channel",

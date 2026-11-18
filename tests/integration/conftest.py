@@ -1,5 +1,5 @@
 import os
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -29,7 +29,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
 
 @pytest.fixture(scope="session")
-def broker_for() -> Iterator[BrokerFor]:
+def broker_for() -> Generator[BrokerFor, None, None]:
     prepared_target = os.environ.get("REPID_TEST_BROKER")
     containers: dict[str, BrokerContainer] = {}
     with ExitStack() as stack:
@@ -106,7 +106,7 @@ def sqs_connection(broker_for: BrokerFor) -> SqsServer:
 
 @pytest.fixture(
     params=[
-        pytest.param(target, marks=pytest.mark.integration_target(name=target))
+        pytest.param(target, id=target, marks=pytest.mark.integration_target(name=target))
         for target in BROKERS
     ],
 )

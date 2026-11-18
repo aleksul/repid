@@ -76,14 +76,12 @@ async def test_create_channel_secure() -> None:
         )
         assert channel is mock_channel
 
-        # Verify call chain
         creds_mock.ensure_valid.assert_called_once()
         mock_ssl.assert_called_once()
         mock_meta.assert_called_once()
         mock_composite.assert_called_once()
         mock_secure.assert_called_once()
 
-        # Now test the plugin callback logic
         assert auth_plugin_instance is not None
         callback_mock = MagicMock()
         auth_plugin_instance(None, callback_mock)

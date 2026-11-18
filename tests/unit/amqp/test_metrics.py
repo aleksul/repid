@@ -27,7 +27,6 @@ async def test_metrics_collector() -> None:
     assert metrics.reconnections == 1
     assert metrics.connected_at == 200.0
 
-    # Test to_dict
     metrics_dict = metrics.to_dict()
     assert metrics_dict["frames_sent"] == 2
     assert metrics_dict["connection_state"] == "START"
@@ -65,7 +64,6 @@ async def test_metrics_collector_state_changed() -> None:
 async def test_metrics_collector_state_changed_invalid_state() -> None:
     collector = MetricsCollector()
 
-    # Non-ConnectionState value should not update the metric
     await collector.handle_event(
         EventData(ConnectionEvent.STATE_CHANGED).with_details(state="not-a-state"),
     )

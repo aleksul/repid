@@ -277,7 +277,6 @@ async def test_connection_state_machine_is_open() -> None:
     csm = ConnectionStateMachine()
     assert not csm.is_open()
 
-    # Transition to opened state
     await csm.transition("send_header")
     await csm.transition("recv_header")
     await csm.transition("send_open")
@@ -313,11 +312,9 @@ async def test_connection_context_manager() -> None:
         ),
         patch.object(conn._transport, "close", new_callable=AsyncMock),
     ):
-        # Test context manager
         async with conn:
             assert conn.is_connected
 
-        # Should be closed after exiting context
         assert conn._stop_event.is_set()
 
 
@@ -362,14 +359,11 @@ async def test_connection_sasl_plain_authentication() -> None:
             ],
         ),
     ):
-        # Perform SASL auth
         await conn._do_sasl_auth()
 
-        # Verify SASL INIT was sent
         calls = mock_send.call_args_list
         assert any(isinstance(args[0][1], SASLInit) for args in calls)
 
-        # Check PLAIN credentials were sent
         init_call = next(args for args in calls if isinstance(args[0][1], SASLInit))
         sasl_init = init_call[0][1]
         assert sasl_init.mechanism == "PLAIN"
@@ -377,7 +371,6 @@ async def test_connection_sasl_plain_authentication() -> None:
 
 
 async def test_connection_sasl_external_with_ssl() -> None:
-    # Create SSL context
     ssl_context = ssl.create_default_context()
 
     config = ConnectionConfig(
@@ -419,10 +412,8 @@ async def test_connection_sasl_external_with_ssl() -> None:
             ],
         ),
     ):
-        # Perform SASL auth
         await conn._do_sasl_auth()
 
-        # Should choose EXTERNAL when SSL is available
         calls = mock_send.call_args_list
         init_call = next(args for args in calls if isinstance(args[0][1], SASLInit))
         sasl_init = init_call[0][1]
@@ -466,10 +457,8 @@ async def test_connection_sasl_anonymous() -> None:
             ],
         ),
     ):
-        # Perform SASL auth
         await conn._do_sasl_auth()
 
-        # Should use ANONYMOUS
         calls = mock_send.call_args_list
         init_call = next(args for args in calls if isinstance(args[0][1], SASLInit))
         sasl_init = init_call[0][1]
@@ -701,7 +690,6 @@ async def test_connection_read_loop_handles_connection_closed() -> None:
     config = ConnectionConfig(host="localhost", port=5672)
     conn = AmqpConnection(config)
 
-    # Set state to OPENED
     conn._state_machine._state = ConnectionState.OPENED
 
     with patch.object(
@@ -710,7 +698,6 @@ async def test_connection_read_loop_handles_connection_closed() -> None:
         new_callable=AsyncMock,
         side_effect=ConnectionClosedError("EOF"),
     ):
-        # Run read loop
         await conn._read_loop()
 
         # Should exit cleanly without raising
@@ -720,7 +707,6 @@ async def test_connection_read_loop_handles_generic_error() -> None:
     config = ConnectionConfig(host="localhost", port=5672)
     conn = AmqpConnection(config)
 
-    # Set state to OPENED
     conn._state_machine._state = ConnectionState.OPENED
 
     with patch.object(
@@ -729,7 +715,6 @@ async def test_connection_read_loop_handles_generic_error() -> None:
         new_callable=AsyncMock,
         side_effect=RuntimeError("Error"),
     ):
-        # Run read loop
         await conn._read_loop()
 
         # Should exit cleanly
@@ -758,7 +743,6 @@ async def test_connection_read_loop_cancelled() -> None:
     config = ConnectionConfig(host="localhost", port=5672)
     conn = AmqpConnection(config)
 
-    # Set state to OPENED
     conn._state_machine._state = ConnectionState.OPENED
 
     with patch.object(
@@ -767,7 +751,6 @@ async def test_connection_read_loop_cancelled() -> None:
         new_callable=AsyncMock,
         side_effect=asyncio.CancelledError(),
     ):
-        # Run read loop - should catch and suppress CancelledError
         await conn._read_loop()
 
         # Should exit cleanly without raising
@@ -777,17 +760,14 @@ async def test_connection_handle_close_frame() -> None:
     config = ConnectionConfig(host="localhost", port=5672)
     conn = AmqpConnection(config)
 
-    # Set state to OPENED
     conn._state_machine._state = ConnectionState.OPENED
 
     with (
         patch.object(conn._transport, "send_performative", new_callable=AsyncMock) as mock_send,
         patch.object(conn._transport, "close", new_callable=AsyncMock),
     ):
-        # Handle CLOSE frame
         await conn._handle_close(CloseFrame())
 
-        # Should send CLOSE response
         assert any(isinstance(args[0][1], CloseFrame) for args in mock_send.call_args_list)
 
 
@@ -853,7 +833,6 @@ async def test_connection_create_session_not_connected() -> None:
     config = ConnectionConfig(host="localhost", port=5672)
     conn = AmqpConnection(config)
 
-    # Connection is not in OPENED state
     assert not conn.is_connected
 
     with pytest.raises(ConnectionError, match="Connection is not open"):
@@ -864,11 +843,9 @@ async def test_connection_create_session_no_free_channels() -> None:
     config = ConnectionConfig(host="localhost", port=5672)
     conn = AmqpConnection(config)
 
-    # Set to OPENED state
     conn._state_machine._state = ConnectionState.OPENED
     conn._remote_channel_max = 0  # Only channel 0 available
 
-    # Fill the only available channel
     fake_session = FakeSession(connection=FakeConnection(), channel=0)
     conn._sessions[0] = fake_session  # pyrefly: ignore[unsupported-operation]
 
@@ -901,13 +878,10 @@ async def test_connection_handle_unexpected_close_skips_if_connected() -> None:
     config = ConnectionConfig(host="localhost", port=5672)
     conn = AmqpConnection(config)
 
-    # Set state to OPENED
     conn._state_machine._state = ConnectionState.OPENED
 
-    # Call _handle_unexpected_close - should return early
     await conn._handle_unexpected_close()
 
-    # Should not have reset state
     assert conn._state_machine.state == ConnectionState.OPENED
 
 
@@ -915,14 +889,11 @@ async def test_connection_close_already_terminal() -> None:
     config = ConnectionConfig(host="localhost", port=5672)
     conn = AmqpConnection(config)
 
-    # Set to terminal state
     conn._state_machine._state = ConnectionState.END
 
     with patch.object(conn._transport, "close", new_callable=AsyncMock) as mock_close:
-        # Should return immediately
         await conn.close()
 
-        # Transport should not be closed again
         mock_close.assert_not_called()
 
 
@@ -930,7 +901,6 @@ async def test_connection_close_send_frame_error() -> None:
     config = ConnectionConfig(host="localhost", port=5672)
     conn = AmqpConnection(config)
 
-    # Set to OPENED state
     conn._state_machine._state = ConnectionState.OPENED
 
     with (
@@ -942,9 +912,7 @@ async def test_connection_close_send_frame_error() -> None:
         ),
         patch.object(conn._transport, "close", new_callable=AsyncMock) as mock_close,
     ):
-        # Should handle error gracefully
         await conn.close()
-        # Transport should still be closed
         mock_close.assert_called()
 
 
@@ -952,14 +920,11 @@ async def test_connection_remove_session() -> None:
     config = ConnectionConfig(host="localhost", port=5672)
     conn = AmqpConnection(config)
 
-    # Add fake session
     fake_session = FakeSession(connection=FakeConnection(), channel=1)
     conn._sessions[1] = fake_session  # pyrefly: ignore[unsupported-operation]
 
-    # Remove session
     conn._remove_session(1)
 
-    # Should be removed
     assert 1 not in conn._sessions
 
 
@@ -981,7 +946,6 @@ async def test_connection_create_classmethod() -> None:
         max_frame_size=4096,
     )
 
-    # Should create ConnectionConfig with provided params
     assert conn._config.host == "testhost"
     assert conn._config.port == 1234
     assert conn._config.username == "user"
@@ -1145,14 +1109,11 @@ async def test_connection_do_connect_starts_read_loop() -> None:
             return_value=(0, OpenFrame(container_id="server")),
         ),
     ):
-        # Do connect
         await conn._do_connect()
 
-        # Read task should be created
         assert conn._read_task is not None
         assert not conn._read_task.done()
 
-        # Clean up
         conn._stop_event.set()
         conn._read_task.cancel()
 
@@ -1161,10 +1122,8 @@ async def test_connection_close_with_sessions() -> None:
     config = ConnectionConfig(host="localhost", port=5672)
     conn = AmqpConnection(config)
 
-    # Set to OPENED state
     conn._state_machine._state = ConnectionState.OPENED
 
-    # Add fake session
     fake_session = FakeSession(connection=FakeConnection(), channel=1)
     conn._sessions[1] = fake_session  # pyrefly: ignore[unsupported-operation]
 
@@ -1172,7 +1131,6 @@ async def test_connection_close_with_sessions() -> None:
         patch.object(conn._transport, "send_performative", new_callable=AsyncMock),
         patch.object(conn._transport, "close", new_callable=AsyncMock),
     ):
-        # Close connection
         await conn.close()
 
         # Sessions should be cleared (end() was called)
@@ -1186,10 +1144,8 @@ async def test_connection_handle_unexpected_close_invalidates_sessions() -> None
     )
     conn = AmqpConnection(config)
 
-    # Set state to non-open (connection lost)
     conn._state_machine._state = ConnectionState.START
 
-    # Add fake session with invalidate method
     fake_session = FakeSession(connection=FakeConnection(), channel=1)
     conn._sessions[1] = fake_session  # pyrefly: ignore[unsupported-operation]
 
@@ -1216,13 +1172,10 @@ async def test_connection_handle_unexpected_close_invalidates_sessions() -> None
             return_value=(0, OpenFrame(container_id="server")),
         ),
     ):
-        # Handle unexpected close
         await conn._handle_unexpected_close()
 
-        # Sessions should be cleared
         assert 1 not in conn._sessions
 
-        # Clean up
         conn._stop_event.set()
         if conn._read_task:
             conn._read_task.cancel()
@@ -1236,7 +1189,6 @@ async def test_connection_handle_unexpected_close_reconnect_failed() -> None:
     )
     conn = AmqpConnection(config)
 
-    # Set state to non-open
     conn._state_machine._state = ConnectionState.START
 
     with (
@@ -1248,10 +1200,8 @@ async def test_connection_handle_unexpected_close_reconnect_failed() -> None:
         ) as mock_connect,
         patch.object(conn._transport, "close", new_callable=AsyncMock),
     ):
-        # Handle unexpected close - should catch and log error
         await conn._handle_unexpected_close()
 
-        # Should have attempted reconnection
         mock_connect.assert_called()
 
 
@@ -1259,10 +1209,8 @@ async def test_connection_handle_performative_no_session() -> None:
     config = ConnectionConfig(host="localhost", port=5672)
     conn = AmqpConnection(config)
 
-    # No sessions exist
     assert len(conn._sessions) == 0
 
-    # Handle a frame for channel 1 (use valid BeginFrame)
     await conn._handle_performative(
         1,
         BeginFrame(next_outgoing_id=0, incoming_window=100, outgoing_window=100),
@@ -1275,7 +1223,6 @@ async def test_connection_send_performative_not_usable() -> None:
     config = ConnectionConfig(host="localhost", port=5672)
     conn = AmqpConnection(config)
 
-    # Connection is in START state (not usable)
     assert not conn.is_usable
 
     with pytest.raises(ConnectionError, match="Connection is not usable"):
@@ -1286,7 +1233,6 @@ async def test_connection_create_session_success() -> None:
     config = ConnectionConfig(host="localhost", port=5672)
     conn = AmqpConnection(config)
 
-    # Set to OPENED state
     conn._state_machine._state = ConnectionState.OPENED
     conn._remote_channel_max = 10
 
@@ -1302,7 +1248,6 @@ async def test_connection_create_session_success() -> None:
     ):
         session = await conn.create_session()
 
-        # Should have created a session and tracked it
         assert session is not None
         assert len(conn._sessions) > 0
 
@@ -1716,11 +1661,8 @@ async def test_connection_heartbeat_loop_sleeps() -> None:
     conn._remote_idle_timeout = 2000  # 2 seconds, interval = 1.0
     conn._state_machine._state = ConnectionState.OPENED
 
-    # Mock time.monotonic to simulate recent write
-    # 1st call: time_since_last_write = 0.5 - 0.0 = 0.5 (sleep_time = 0.5)
-    # 2nd call: time_since_last_write = 0.5 - 0.0 = 0.5 (< interval) -> continue
-    # 3rd call: time_since_last_write = 0.5 - 0.0 = 0.5 (sleep_time = 0.5) -> break loop
-
+    # last_write_time stays at 0.0 and monotonic() returns 0.5, so every check sees a recent
+    # write (0.5 < interval) and sleeps instead of sending; the third call stops the loop.
     calls = 0
 
     def monotonic_side_effect() -> float:

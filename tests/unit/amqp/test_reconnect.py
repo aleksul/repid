@@ -56,12 +56,10 @@ async def test_reconnect_strategy_reset() -> None:
     config = ReconnectConfig(enabled=True, max_attempts=5, initial_delay=1.0)
     strategy = ReconnectStrategy(config)
 
-    # Make some attempts
     strategy.record_attempt()
     strategy.record_attempt()
     assert strategy.attempts == 2
 
-    # Reset should clear attempts
     strategy.reset()
     assert strategy.attempts == 0
     assert strategy._next_delay == config.initial_delay

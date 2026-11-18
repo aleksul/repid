@@ -120,14 +120,12 @@ async def test_receiver_process_message_types() -> None:
         args = link._callback.call_args[0]
         assert args[1] == {"h": "v"}
 
-        # Sequence sections are encoded as JSON
         msg_seq = Message(sequence=[["x", 1]])
         mock_conv.return_value = msg_seq
         link._incoming_transfers = [TransferFrame(handle=0, delivery_id=4, delivery_tag=b"4")]
         await link._process_message()
         link._callback.assert_called_with(b'[["x", 1]]', None, 4, b"4", link, None)
 
-        # Empty body is delivered as empty bytes
         msg_empty = Message()
         mock_conv.return_value = msg_empty
         link._incoming_transfers = [TransferFrame(handle=0, delivery_id=5, delivery_tag=b"5")]
@@ -138,7 +136,6 @@ async def test_receiver_process_message_types() -> None:
 async def test_transport_configure_keepalive_no_writer() -> None:
     config = TransportConfig("localhost", 5672)
     transport = AmqpTransport(config)
-    # _writer is None by default
     transport._configure_keepalive()
     # verify no error and return (implicit coverage)
 
@@ -185,18 +182,15 @@ async def test_sender_link_attach(sender: SenderLink) -> None:
 
 
 async def test_sender_link_send_message(sender: SenderLink) -> None:
-    # Setup link as attached and ready
     sender._state_machine.transition_sync("send_attach")
     sender._state_machine.transition_sync("recv_attach")
 
-    # Grant credit
     sender._link_credit = 10
     sender._credit_available.set()
 
     payload = b"hello world"
     await sender.send(payload)
 
-    # Should send transfer frame
     assert len(cast(Any, sender.session.connection).sent) == 1
     frame = cast(Any, sender.session.connection).sent[0][1]
     assert isinstance(frame, TransferFrame)
@@ -205,22 +199,17 @@ async def test_sender_link_send_message(sender: SenderLink) -> None:
 
 
 async def test_sender_link_send_waits_for_credit(sender: SenderLink) -> None:
-    # Setup link as attached and ready
     sender._state_machine.transition_sync("send_attach")
     sender._state_machine.transition_sync("recv_attach")
 
-    # Initially 0 credit
     assert sender.link_credit == 0
     assert not sender._credit_available.is_set()
 
-    # Start sending in background
     send_task = asyncio.create_task(sender.send(b"hello"))
 
-    # Yield to let send_task wait
     await asyncio.sleep(0.01)
     assert not send_task.done()
 
-    # Grant credit
     flow = FlowFrame(
         next_incoming_id=0,
         incoming_window=100,
@@ -232,14 +221,11 @@ async def test_sender_link_send_waits_for_credit(sender: SenderLink) -> None:
     )
     await sender._handle_flow(flow)
 
-    # Now send should complete
     await send_task
 
-    # Credit should be consumed
     assert sender.link_credit == 0
     assert not sender._credit_available.is_set()
 
-    # Should send transfer frame
     assert len(cast(Any, sender.session.connection).sent) == 1
     frame = cast(Any, sender.session.connection).sent[0][1]
     assert isinstance(frame, TransferFrame)
@@ -381,37 +367,30 @@ async def test_sender_link_send_timeout_waiting_for_session_window(sender: Sende
 
 
 async def test_sender_link_send_timeout_waiting_for_credit(sender: SenderLink) -> None:
-    # Setup link as attached and ready
     sender._state_machine.transition_sync("send_attach")
     sender._state_machine.transition_sync("recv_attach")
 
-    # Initially 0 credit
     assert sender.link_credit == 0
 
-    # Send with short timeout
     with pytest.raises(LinkError, match="Timeout waiting for link credit"):
         await sender.send(b"hello", _timeout=0.01)
 
 
 async def test_sender_link_send_large_message(sender: SenderLink) -> None:
-    # Setup link as attached and ready
     sender._state_machine.transition_sync("send_attach")
     sender._state_machine.transition_sync("recv_attach")
 
-    # Grant credit
     sender._link_credit = 10
     sender._credit_available.set()
 
-    # Set small max frame size on connection to force fragmentation
+    # Small max frame size forces fragmentation
     sender.session.connection.max_frame_size = 64  # pyrefly: ignore[read-only]
 
     payload = b"x" * 100
     await sender.send(payload)
 
-    # Should be multiple frames
     assert len(cast(Any, sender.session.connection).sent) > 1
 
-    # Check frames
     for _, frame in cast(Any, sender.session.connection).sent[:-1]:
         assert isinstance(frame, TransferFrame)
         assert frame.more is True
@@ -422,14 +401,11 @@ async def test_sender_link_send_large_message(sender: SenderLink) -> None:
 
 
 async def test_sender_link_flow_control(sender: SenderLink) -> None:
-    # Setup link
     sender._state_machine.transition_sync("send_attach")
     sender._state_machine.transition_sync("recv_attach")
 
-    # Initially 0 credit
     assert sender.link_credit == 0
 
-    # Receive flow
     flow = FlowFrame(
         next_incoming_id=0,
         incoming_window=100,
@@ -443,11 +419,6 @@ async def test_sender_link_flow_control(sender: SenderLink) -> None:
 
     assert sender.link_credit == 10
 
-    # Send consumes credit? Currently SenderLink implementation says:
-    # "For now, we just send" (ignoring credit for sending, but tracking update)
-    # But later updates should respect consumed credit
-
-    # Update flow with delivery count change
     flow.delivery_count = 0
     flow.link_credit = 5
     await sender._handle_flow(flow)
@@ -466,7 +437,6 @@ async def test_receiver_link_attach(receiver: ReceiverLink) -> None:
     assert receiver.state == LinkState.ATTACH_SENT
     assert len(cast(Any, receiver.session.connection).sent) == 1
 
-    # Receive attach
     attach_response = AttachFrame(
         name="test-receiver",
         handle=1,
@@ -478,7 +448,6 @@ async def test_receiver_link_attach(receiver: ReceiverLink) -> None:
 
     assert receiver.state == LinkState.ATTACHED
 
-    # Should have sent initial flow
     connection = cast(Any, receiver.session.connection)
     assert len(connection.sent) == 2
     assert isinstance(connection.sent[1][1], FlowFrame)
@@ -517,7 +486,6 @@ async def test_receiver_link_receive_message(receiver: ReceiverLink) -> None:
 
     receiver._callback = on_message
 
-    # Pre-calculate transfer frame
     msg = Message(data=[b"test-data"])
     frames = list(message_to_transfer_frames(msg, 512, 0, b"0", True))
 
@@ -659,12 +627,10 @@ async def test_receiver_link_multi_frame_uses_first_transfer_delivery_metadata(
 
 
 async def test_receiver_link_flow_echo(receiver: ReceiverLink) -> None:
-    # Setup
     receiver._state_machine.transition_sync("send_attach")
     receiver._state_machine.transition_sync("recv_attach")
     cast(Any, receiver.session.connection).sent.clear()
 
-    # Receive flow with echo=True
     flow = FlowFrame(
         next_incoming_id=0,
         incoming_window=100,
@@ -704,7 +670,6 @@ async def test_receiver_link_credit_replenish(receiver: ReceiverLink) -> None:
 
     receiver._callback = defer_credit
 
-    # Process message
     msg = Message(data=[b"test"])
     frames = list(message_to_transfer_frames(msg, 512, 0, delivery_tag=b"0", delivery_id=0))
 
@@ -761,7 +726,6 @@ async def test_receiver_process_message_json_body(receiver: ReceiverLink) -> Non
     received = []
     receiver._callback = lambda body, *_: received.append(body)
 
-    # Body is dict (json) - must be bytes
     data = json.dumps({"key": "value"}).encode()
     msg = Message(data=[data])
     frames = list(message_to_transfer_frames(msg, 512, 0, b"0", True))
@@ -789,13 +753,11 @@ async def test_receiver_process_message_error(receiver: ReceiverLink) -> None:
     receiver._state_machine.transition_sync("recv_attach")
     receiver.session.connection.sent.clear()  # pyrefly: ignore[missing-attribute]
 
-    # Callback raises exception
     receiver._callback = Mock(side_effect=ValueError("Callback error"))
 
     msg = Message(data=[b"data"])
     frames = list(message_to_transfer_frames(msg, 512, 0, delivery_tag=b"0", delivery_id=0))
 
-    # Should catch exception and clear transfers
     await receiver._handle_transfer(frames[0])
 
     assert len(receiver._incoming_transfers) == 0
@@ -805,7 +767,6 @@ async def test_receiver_process_message_error(receiver: ReceiverLink) -> None:
 
 
 async def test_link_detach(sender: SenderLink) -> None:
-    # Setup
     sender._state_machine.transition_sync("send_attach")
     sender._state_machine.transition_sync("recv_attach")
 
@@ -815,7 +776,6 @@ async def test_link_detach(sender: SenderLink) -> None:
     assert len(cast(Any, sender.session.connection).sent) == 1
     assert isinstance(cast(Any, sender.session.connection).sent[0][1], DetachFrame)
 
-    # Receive detach response
     await sender._handle_detach(DetachFrame(handle=0, closed=True))
 
     assert sender.state == LinkState.DETACHED
@@ -823,14 +783,11 @@ async def test_link_detach(sender: SenderLink) -> None:
 
 
 async def test_link_detach_remote_initiated(sender: SenderLink) -> None:
-    # Setup
     sender._state_machine.transition_sync("send_attach")
     sender._state_machine.transition_sync("recv_attach")
 
-    # Remote sends detach
     await sender._handle_detach(DetachFrame(handle=0, closed=True))
 
-    # Should send detach response
     assert len(cast(Any, sender.session.connection).sent) == 1
     assert isinstance(cast(Any, sender.session.connection).sent[0][1], DetachFrame)
 
@@ -849,7 +806,6 @@ async def test_link_detach_error(sender: SenderLink) -> None:
     sender._state_machine.transition_sync("send_attach")
     sender._state_machine.transition_sync("recv_attach")
 
-    # Mock send_performative to raise error
     with patch.object(sender.session.connection, "send_performative", Mock(side_effect=OSError)):
         await sender.detach()
     # Should swallow error
@@ -867,7 +823,6 @@ async def test_link_invalidate(sender: SenderLink) -> None:
     assert sender.state == LinkState.DETACHED
     assert sender._invalidated
 
-    # wait_ready should raise LinkError
     with pytest.raises(LinkError, match="invalidated"):
         await wait_task
 
@@ -883,7 +838,6 @@ async def test_subscription(receiver: ReceiverLink) -> None:
     assert sub.link is receiver
     assert not sub.is_active  # Connection not connected in fixture usually
 
-    # Mock connection connected
     receiver.session.connection.is_connected = True  # pyrefly: ignore[read-only]
     receiver._state_machine.transition_sync("send_attach")
     receiver._state_machine.transition_sync("recv_attach")  # make usable

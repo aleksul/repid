@@ -437,12 +437,14 @@ class LinkStateMachine(StateMachine[LinkState]):
         (LinkState.DETACHED, "recv_attach"): LinkState.ATTACH_RCVD,
         # From ATTACH_SENT
         (LinkState.ATTACH_SENT, "recv_attach"): LinkState.ATTACHED,
+        (LinkState.ATTACH_SENT, "send_detach"): LinkState.DETACH_SENT,
         # From ATTACH_RCVD
         (LinkState.ATTACH_RCVD, "send_attach"): LinkState.ATTACHED,
         # From ATTACHED
         (LinkState.ATTACHED, "send_detach"): LinkState.DETACH_SENT,
         (LinkState.ATTACHED, "recv_detach"): LinkState.DETACH_RCVD,
         # From DETACH_SENT
+        (LinkState.DETACH_SENT, "recv_attach"): LinkState.DETACH_SENT,
         (LinkState.DETACH_SENT, "recv_detach"): LinkState.DETACHED,
         # From DETACH_RCVD
         (LinkState.DETACH_RCVD, "send_detach"): LinkState.DETACHED,

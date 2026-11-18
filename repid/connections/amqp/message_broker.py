@@ -15,13 +15,17 @@ from repid.connections.amqp.protocol import (
     ManagedSession,
 )
 from repid.connections.amqp.subscriber import AmqpSubscriber
+from repid.data.concurrency import Concurrency
 
 logger = logging.getLogger("repid.connections.amqp")
+
+# Link credit is a uint; without a message limit, grant the most it can express.
+_MAX_LINK_CREDIT = 2**32 - 1
 
 if TYPE_CHECKING:
     from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
-    from repid.data import Concurrency, ExternalDocs, Tag
+    from repid.data import ExternalDocs, Tag
 
 
 class AmqpServer:
@@ -322,20 +326,8 @@ class AmqpServer:
         self,
         *,
         channels_to_callbacks: dict[str, MessageCallbackT],
-        channel_concurrency: dict[str, Concurrency] | None = None,
-        concurrency_limit: int | None = None,
+        channel_concurrency: dict[str, Concurrency],
     ) -> SubscriberT:
-        # Preserve the adapter's message-count intake until it adopts budget hints.
-        if channel_concurrency:
-            concurrency_limit = min(
-                (
-                    limits.messages
-                    for limits in channel_concurrency.values()
-                    if limits.messages is not None
-                ),
-                default=None,
-            )
-
         logger.debug("channel.subscribe", extra={"channels": list(channels_to_callbacks.keys())})
 
         if not self.is_connected or self._managed_session is None:
@@ -344,7 +336,13 @@ class AmqpServer:
         # Create and store subscriber
         subscriber = await AmqpSubscriber.create(
             queues_to_callbacks=channels_to_callbacks,
-            concurrency_limit=concurrency_limit,
+            prefetch_by_queue={
+                channel: min(
+                    channel_concurrency.get(channel, Concurrency()).messages or _MAX_LINK_CREDIT,
+                    _MAX_LINK_CREDIT,
+                )
+                for channel in channels_to_callbacks
+            },
             managed_session=self._managed_session,
             naming_strategy=self._subscribe_naming_strategy,
             publish_fn=self.publish,

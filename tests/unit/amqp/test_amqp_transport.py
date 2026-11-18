@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import socket
 import struct
+import sys
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -15,9 +16,7 @@ from repid.connections.amqp._uamqp.performatives import (
     OpenFrame,
     SASLMechanism,
 )
-from repid.connections.amqp.protocol.events import (
-    EventEmitter,
-)
+from repid.connections.amqp.protocol.events import EventEmitter
 from repid.connections.amqp.protocol.transport import (
     AMQP_HEADER,
     SASL_HEADER,
@@ -30,6 +29,36 @@ from repid.connections.amqp.protocol.transport import (
 )
 
 from .utils import FakeStreamReader, FakeStreamWriter
+
+
+async def test_amqp_transport_exchange_updates_diagnostics() -> None:
+    frame = EmptyFrame()
+    encoded = performative_to_bytes(frame, 3)
+    reader = FakeStreamReader(bytearray(encoded))
+    writer = FakeStreamWriter()
+    transport = AmqpTransport(TransportConfig(host="broker.example", port=5673))
+    transport.set_events(EventEmitter())
+
+    with patch.object(
+        asyncio,
+        "open_connection",
+        new_callable=AsyncMock,
+        return_value=(reader, writer),
+    ) as connect:
+        await transport.connect()
+        connect.assert_awaited_once_with(transport.host, transport.port, ssl=None)
+        await transport.send_performative(3, frame)
+        channel, response = await transport.read_frame()
+
+    assert channel == 3
+    assert isinstance(response, EmptyFrame)
+    assert bytes(writer.data) == encoded
+    assert transport.metrics.bytes_sent == transport.metrics.bytes_received == len(encoded)
+    assert transport.metrics.frames_sent == transport.metrics.frames_received == 1
+    assert transport.metrics.last_read_time > 0
+    assert transport.metrics.last_write_time > 0
+    await transport.close()
+    assert writer.closed
 
 
 async def test_amqp_transport_read_exactly_not_connected() -> None:
@@ -77,57 +106,47 @@ def test_amqp_transport_validate_sasl_header() -> None:
     config = TransportConfig(host="localhost", port=5672)
     transport = AmqpTransport(config)
 
-    # Valid SASL header
     assert transport.validate_sasl_header(SASL_HEADER) is True
 
-    # Invalid header
     assert transport.validate_sasl_header(b"INVALID\x00") is False
 
 
-async def test_amqp_transport_context_manager() -> None:
+async def test_amqp_transport_context_manager_connect_failure() -> None:
     config = TransportConfig(host="localhost", port=5672, connect_timeout=0.01)
 
-    # Test __aenter__ and __aexit__ paths
-    # Since we can't actually connect to localhost:5672, this will raise TransportError
-    # but it will still exercise the context manager code
-    with pytest.raises((ConnectionTimeoutError, TransportError, OSError)):
+    with (
+        patch.object(asyncio, "open_connection", side_effect=OSError("connection refused")),
+        pytest.raises(TransportError, match="Could not connect"),
+    ):
         async with AmqpTransport(config):
             pass
 
 
-async def test_amqp_transport_context_manager_success(monkeypatch: Any) -> None:
+async def test_amqp_transport_context_manager_success() -> None:
     config = TransportConfig(host="localhost", port=5672)
     transport = AmqpTransport(config)
 
-    # Mock the reader and writer to simulate successful connection
     mock_reader = AsyncMock()
-    mock_writer = MagicMock()
-    mock_writer.close = MagicMock()
-    mock_writer.wait_closed = AsyncMock()
+    mock_writer = MagicMock(close=MagicMock(), wait_closed=AsyncMock())
 
-    # Mock connect to set reader/writer
     async def mock_connect() -> None:
         transport._reader = mock_reader
         transport._writer = mock_writer
 
-    monkeypatch.setattr(transport, "connect", mock_connect)
+    with patch.object(transport, "connect", mock_connect):
+        async with transport as t:
+            assert t is transport
+            assert transport._reader is mock_reader
+            assert transport._writer is mock_writer
 
-    # Test context manager
-    async with transport as t:
-        assert t is transport
-        assert transport._reader is mock_reader
-        assert transport._writer is mock_writer
-
-    # After exit, close should have been called
-    mock_writer.close.assert_called_once()
-    mock_writer.wait_closed.assert_called_once()
+        mock_writer.close.assert_called_once()
+        mock_writer.wait_closed.assert_called_once()
 
 
 async def test_amqp_transport_read_frame_incomplete_header() -> None:
     config = TransportConfig(host="localhost", port=5672)
     transport = AmqpTransport(config)
 
-    # Mock reader that raises IncompleteReadError
     mock_reader = AsyncMock()
     mock_reader.readexactly.side_effect = asyncio.IncompleteReadError(b"", 8)
 
@@ -294,34 +313,35 @@ async def test_amqp_transport_read_frame_rejects_amqp_in_sasl_frame() -> None:
         await transport.read_frame()
 
 
-async def test_transport_properties() -> None:
-    config = TransportConfig(host="example.com", port=5672)
-    transport = AmqpTransport(config)
-
-    assert transport.host == "example.com"
-    assert transport.port == 5672
-    assert transport.metrics is not None
-
-
-async def test_transport_set_events() -> None:
-    config = TransportConfig(host="localhost", port=5672)
-    transport = AmqpTransport(config)
-    emitter = EventEmitter()
-
-    transport.set_events(emitter)
-    assert transport._events == emitter
-
-
+@patch.object(asyncio, "open_connection", new=AsyncMock(side_effect=TimeoutError))
 async def test_transport_connect_timeout() -> None:
-    config = TransportConfig(host="192.0.2.1", port=5672, connect_timeout=0.01)
+    config = TransportConfig(host="localhost", port=5672, connect_timeout=0.01)
     transport = AmqpTransport(config)
 
     with pytest.raises(ConnectionTimeoutError, match="Connection timed out"):
         await transport.connect()
 
 
-@patch(
-    "asyncio.open_connection",
+async def test_pending_frame_is_never_sent_on_reconnected_transport() -> None:
+    transport = AmqpTransport(TransportConfig(host="localhost", port=5672))
+    old_writer = MagicMock()
+    new_writer = MagicMock()
+    transport._writer = old_writer
+
+    async with transport._write_lock:
+        task = asyncio.create_task(transport.send_performative(1, EmptyFrame()))
+        await asyncio.sleep(0)
+        transport._writer = new_writer
+
+    with pytest.raises(ConnectionClosedError, match="Not connected"):
+        await task
+    old_writer.write.assert_not_called()
+    new_writer.write.assert_not_called()
+
+
+@patch.object(
+    asyncio,
+    "open_connection",
     new=AsyncMock(
         side_effect=socket.gaierror(socket.EAI_NONAME, "Name or service not known"),
     ),
@@ -338,55 +358,53 @@ async def test_transport_connect_error() -> None:
         await transport.connect()
 
 
-async def test_transport_connect_read_write_and_decode(monkeypatch: Any) -> None:
+async def test_transport_connect_read_write_and_decode() -> None:
     writer = FakeStreamWriter()
     frame = performative_to_bytes(OpenFrame(container_id="x"), 1)
-    # read_protocol_header reads 8 bytes, then read_frame reads the full frame
-    # So we need: 8 bytes for protocol header + full frame
     reader = FakeStreamReader(bytearray(AMQP_HEADER + frame))
 
     async def fake_open_connection(*_args: Any, **_kwargs: Any) -> tuple[Any, Any]:
         return reader, writer
 
-    monkeypatch.setattr(asyncio, "open_connection", fake_open_connection)
+    with patch.object(asyncio, "open_connection", fake_open_connection):
+        transport = AmqpTransport(TransportConfig(host="localhost", port=5672))
+        await transport.connect()
 
-    transport = AmqpTransport(TransportConfig(host="localhost", port=5672))
-    await transport.connect()
+        await transport.send_amqp_header()
+        assert writer.data == AMQP_HEADER
+        await transport.send_sasl_header()
+        assert writer.data.endswith(SASL_HEADER)
 
-    await transport.send_amqp_header()
-    assert writer.data == AMQP_HEADER
-    await transport.send_sasl_header()
-    assert writer.data.endswith(SASL_HEADER)
+        header = await transport.read_protocol_header()
+        assert header == AMQP_HEADER
 
-    header = await transport.read_protocol_header()
-    assert header == AMQP_HEADER
+        channel, performative = await transport.read_frame()
+        assert channel == 1
+        assert isinstance(performative, OpenFrame)
 
-    channel, performative = await transport.read_frame()
-    assert channel == 1
-    assert isinstance(performative, OpenFrame)
+        await transport.send_performative(1, CloseFrame())
+        assert transport.metrics.frames_sent == 1
 
-    await transport.send_performative(1, CloseFrame())
-    assert transport.metrics.frames_sent == 1
-
-    await transport.close()
-    assert transport.is_connected is False
+        await transport.close()
+        assert transport.is_connected is False
 
 
-async def test_transport_errors(monkeypatch: Any) -> None:
+async def test_transport_errors() -> None:
     async def fake_timeout(*_args: Any, **_kwargs: Any) -> tuple[Any, Any]:
         raise TimeoutError
 
-    monkeypatch.setattr(asyncio, "open_connection", fake_timeout)
+    with patch.object(asyncio, "open_connection", fake_timeout):
+        transport = AmqpTransport(
+            TransportConfig(host="localhost", port=5672, connect_timeout=0.01),
+        )
+        with pytest.raises(ConnectionTimeoutError):
+            await transport.connect()
 
-    transport = AmqpTransport(TransportConfig(host="localhost", port=5672, connect_timeout=0.01))
-    with pytest.raises(ConnectionTimeoutError):
-        await transport.connect()
-
-    with (
-        patch.object(transport, "_reader", FakeStreamReader(bytearray(b"abc"))),
-        pytest.raises(ConnectionClosedError),
-    ):
-        await transport.read_exactly(10)
+        with (
+            patch.object(transport, "_reader", FakeStreamReader(bytearray(b"abc"))),
+            pytest.raises(ConnectionClosedError),
+        ):
+            await transport.read_exactly(10)
 
 
 def test_amqp_transport_keepalive_linux() -> None:
@@ -405,14 +423,13 @@ def test_amqp_transport_keepalive_linux() -> None:
     with (
         patch.object(transport, "_writer", mock_writer),
         patch.object(mock_writer, "get_extra_info", Mock(return_value=mock_socket)),
-        patch("sys.platform", "linux"),
-        # We need to ensure socket constants exist if they don't on the running platform
-        patch("socket.SOL_SOCKET", 1, create=True),
-        patch("socket.SO_KEEPALIVE", 2, create=True),
-        patch("socket.IPPROTO_TCP", 6, create=True),
-        patch("socket.TCP_KEEPIDLE", 4, create=True),
-        patch("socket.TCP_KEEPINTVL", 5, create=True),
-        patch("socket.TCP_KEEPCNT", 6, create=True),
+        patch.object(sys, "platform", "linux"),
+        patch.object(socket, "SOL_SOCKET", 1, create=True),
+        patch.object(socket, "SO_KEEPALIVE", 2, create=True),
+        patch.object(socket, "IPPROTO_TCP", 6, create=True),
+        patch.object(socket, "TCP_KEEPIDLE", 4, create=True),
+        patch.object(socket, "TCP_KEEPINTVL", 5, create=True),
+        patch.object(socket, "TCP_KEEPCNT", 6, create=True),
     ):
         transport._configure_keepalive()
 
@@ -433,11 +450,11 @@ def test_amqp_transport_keepalive_darwin() -> None:
     with (
         patch.object(transport, "_writer", mock_writer),
         patch.object(mock_writer, "get_extra_info", Mock(return_value=mock_socket)),
-        patch("sys.platform", "darwin"),
-        patch("socket.SOL_SOCKET", 1, create=True),
-        patch("socket.SO_KEEPALIVE", 2, create=True),
-        patch("socket.IPPROTO_TCP", 6, create=True),
-        patch("socket.TCP_KEEPALIVE", 16, create=True),
+        patch.object(sys, "platform", "darwin"),
+        patch.object(socket, "SOL_SOCKET", 1, create=True),
+        patch.object(socket, "SO_KEEPALIVE", 2, create=True),
+        patch.object(socket, "IPPROTO_TCP", 6, create=True),
+        patch.object(socket, "TCP_KEEPALIVE", 16, create=True),
     ):
         transport._configure_keepalive()
 

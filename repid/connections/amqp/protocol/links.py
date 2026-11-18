@@ -15,8 +15,8 @@ import inspect
 import json
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from collections.abc import Callable, Coroutine, Mapping
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from repid._utils._typing import override
 from repid.connections.amqp._uamqp._decode import transfer_frames_to_message
@@ -40,6 +40,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger("repid.connections.amqp.protocol")
 
 ReceiverSettlementState = Accepted | Rejected | Released
+_ReceivedHeaders: TypeAlias = Mapping[str | bytes, object]
+_ReceiverCallback: TypeAlias = Callable[
+    [bytes, _ReceivedHeaders | None, int, bytes, "ReceiverLink", Properties | None],
+    Coroutine[object, None, None] | None,
+]
 
 
 class LinkError(Exception):
@@ -174,14 +179,14 @@ class Link(ABC):
             return
 
         # Send DETACH if possible
-        if self._state_machine.is_usable():
+        if self._state_machine.is_usable() or self.state is LinkState.ATTACH_SENT:
             try:
                 detach_frame = DetachFrame(handle=self._handle, closed=True)
+                await self._state_machine.transition("send_detach")
                 await self._session.connection.send_performative(
                     self._session.channel,
                     detach_frame,
                 )
-                await self._state_machine.transition("send_detach")
             except (TimeoutError, OSError):
                 logger.warning("link.detach_frame.error", exc_info=True)
 
@@ -237,11 +242,11 @@ class Link(ABC):
         # Send DETACH response if we haven't already
         if self._state_machine.state == LinkState.DETACH_RCVD:
             with contextlib.suppress(OSError, asyncio.TimeoutError, ValueError):
+                await self._state_machine.transition("send_detach")
                 await self._session.connection.send_performative(
                     self._session.channel,
                     DetachFrame(handle=self._handle, closed=True),
                 )
-                await self._state_machine.transition("send_detach")
 
         self._session._remove_link(self)  # pyrefly: ignore[bad-argument-type]
 
@@ -521,10 +526,7 @@ class ReceiverLink(Link):
         name: str,
         address: str,
         handle: int,
-        callback: Callable[
-            [bytes, dict[str, Any] | None, int, bytes, ReceiverLink, Properties | None],
-            Any,
-        ],
+        callback: _ReceiverCallback,
         prefetch: int = 100,
     ) -> None:
         super().__init__(session, name, address, handle, role=True)
@@ -535,6 +537,8 @@ class ReceiverLink(Link):
         self._delivery_count = 0
         self._link_credit = prefetch
         self._prefetch = prefetch
+        self._closing = False
+        self._delivery_tasks: set[asyncio.Task[None]] = set()
 
         # Multi-frame transfer handling
         self._incoming_transfers: list[TransferFrame] = []
@@ -582,13 +586,48 @@ class ReceiverLink(Link):
             self._delivery_count = _attach.initial_delivery_count
 
         # Send initial FLOW to grant credit
-        await self._send_flow()
+        if not self._closing:
+            await self._send_flow()
 
     async def _handle_flow(self, flow: FlowFrame) -> None:
         """Handle FLOW frame (echo request)."""
         # Receivers typically only respond to drain/echo requests
-        if flow.echo:
+        if flow.echo and not self._closing:
             await self._send_flow()
+
+    @override
+    async def detach(self, _error: Exception | None = None) -> None:
+        self._closing = True
+        try:
+            await super().detach(_error)
+        finally:
+            self._cancel_delivery_tasks()
+
+    @override
+    async def _handle_detach(self, _detach: DetachFrame) -> None:
+        self._closing = True
+        try:
+            await super()._handle_detach(_detach)
+        finally:
+            self._cancel_delivery_tasks()
+
+    @override
+    def invalidate(self) -> None:
+        self._closing = True
+        super().invalidate()
+        self._cancel_delivery_tasks()
+
+    def track_delivery_task(self, task: asyncio.Task[None]) -> None:
+        if self._closing:
+            task.cancel()
+        else:
+            self._delivery_tasks.add(task)
+            task.add_done_callback(self._delivery_tasks.discard)
+
+    def _cancel_delivery_tasks(self) -> None:
+        for task in self._delivery_tasks:
+            if task is not asyncio.current_task() and not task.cancelling():
+                task.cancel()
 
     async def _send_flow(self) -> None:
         """Send FLOW frame to grant credit."""
@@ -655,9 +694,10 @@ class ReceiverLink(Link):
             delivery_tag = first_transfer.delivery_tag or b""
 
             body = self._body_to_bytes(msg.body)
-            headers = (
-                dict(msg.application_properties) if msg.application_properties is not None else None
-            )
+            headers: dict[str | bytes, object] | None = None
+            if msg.application_properties is not None:
+                headers = {}
+                headers.update(msg.application_properties)
 
             # Call the callback
             self._delivery_settled_by_callback = False
@@ -685,7 +725,7 @@ class ReceiverLink(Link):
         self._delivery_settled_by_callback = True
 
     async def settle_delivery(self, delivery_id: int, state: ReceiverSettlementState) -> None:
-        if not self.is_delivery_settled(delivery_id):
+        if not self._closing and self.is_attached and not self.is_delivery_settled(delivery_id):
             await self._send_disposition(delivery_id, state)
         await self.release_delivery_credit(delivery_id)
 
@@ -740,7 +780,7 @@ class ReceiverLink(Link):
 
             if self._link_credit < self._prefetch:
                 self._link_credit += 1
-                if self.is_usable:
+                if self.is_attached and not self._closing:
                     await self._send_flow()
 
     async def set_credit(self, credit: int) -> None:

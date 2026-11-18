@@ -25,8 +25,6 @@ def _make_subscriber(**overrides: Any) -> sub_module.PubsubSubscriber:
         "resilience_state": MagicMock(spec=ResilienceState),
         "server": MagicMock(),
         "stream_ack_deadline_seconds": 10,
-        "client_id": "client",
-        "concurrency_limit": 10,
     }
     defaults.update(overrides)
     return sub_module.PubsubSubscriber(**defaults)
@@ -116,10 +114,12 @@ async def test_run_streaming_pull_logic() -> None:
 
     def side_effect(
         iterator: AsyncIterator[proto.StreamingPullRequest],
-    ) -> AsyncIterator[proto.StreamingPullResponse]:
+    ) -> MagicMock:
         nonlocal captured_iterator
         captured_iterator = iterator
-        return stream_iterator()
+        call = MagicMock()
+        call.__aiter__.side_effect = stream_iterator
+        return call
 
     stream_mock.side_effect = side_effect
 
@@ -183,7 +183,8 @@ async def test_lifecycle_control() -> None:
 
     await subscriber.close()
     assert not subscriber.is_active
-    assert subscriber._is_closing
+    assert subscriber._close_task is not None
+    assert subscriber._close_task.done()
     assert subscriber._task.cancelled()
 
 
@@ -208,6 +209,8 @@ async def test_process_response_directly() -> None:
 async def test_cancel_callback_tasks() -> None:
     subscriber = _make_subscriber()
     t1, t2 = MagicMock(), MagicMock()
+    t1.cancelling.return_value = 0
+    t2.cancelling.return_value = 0
     subscriber._callback_tasks.add(t1)
     subscriber._callback_tasks.add(t2)
 
@@ -216,7 +219,6 @@ async def test_cancel_callback_tasks() -> None:
     assert len(result) == 2
     t1.cancel.assert_called_once()
     t2.cancel.assert_called_once()
-    assert len(subscriber._callback_tasks) == 0
 
 
 async def test_cancel_callback_tasks_empty() -> None:

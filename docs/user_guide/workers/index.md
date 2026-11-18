@@ -44,8 +44,8 @@ if __name__ == "__main__":
 In distributed orchestrated systems (like Kubernetes or Docker Swarm), it is a common practice to
 periodically restart worker processes to prevent long-term memory leaks or zombie connections.
 
-You can configure the worker to gracefully exit after processing a certain number of messages (by
-default, it runs indefinitely):
+You can configure the worker to gracefully exit after processing a certain number of messages.
+The default, `messages_limit=None`, lets the worker run indefinitely:
 
 ```python
 # Worker will exit successfully after processing exactly 1000 messages

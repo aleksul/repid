@@ -3,17 +3,15 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
 from aiokafka import OffsetAndMetadata
 from aiokafka.structs import TopicPartition
 
-from repid.connections.abc import SubscriberT
+from repid.connections.abc import MessageCallbackT, SubscriberT
 from repid.connections.kafka.message import KafkaReceivedMessage
 
 if TYPE_CHECKING:
-    from repid.connections.abc import ReceivedMessageT
     from repid.connections.kafka.message_broker import KafkaServer
     from repid.connections.kafka.protocols import AIOKafkaConsumerProtocol, ConsumerRecordProtocol
 
@@ -25,7 +23,7 @@ class KafkaSubscriber(SubscriberT):
         self,
         server: KafkaServer,
         consumer: AIOKafkaConsumerProtocol,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
+        channels_to_callbacks: dict[str, MessageCallbackT],
         concurrency_limit: int | None = None,
     ) -> None:
         self._server = server

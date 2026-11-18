@@ -9,6 +9,8 @@ import pytest
 from repid.connections.abc import MessageAction
 from repid.connections.nats import NatsServer
 from repid.connections.nats.message_broker import NatsReceivedMessage, NatsSubscriber
+from repid.data.concurrency import Concurrency
+from tests.channel_limits import channel_limits
 
 pytestmark = pytest.mark.integration_target(name="nats")
 
@@ -67,7 +69,10 @@ async def test_nats_publish_subscribe(nats_connection: NatsServer) -> None:
             await msg.ack()  # Double ack
             event.set()
 
-        sub = await nats_connection.subscribe(channels_to_callbacks={"another": cb})
+        sub = await nats_connection.subscribe(
+            channel_concurrency={},
+            channels_to_callbacks={"another": cb},
+        )
         await asyncio.wait_for(event.wait(), timeout=5.0)
         assert len(hit) == 1
 
@@ -98,6 +103,7 @@ async def test_nats_reject(nats_connection: NatsServer) -> None:
 
         await nats_connection.publish(channel="test_reject_channel", message=MockSentMsg())
         sub_reject = await nats_connection.subscribe(
+            channel_concurrency={},
             channels_to_callbacks={"test_reject_channel": cb_reject},
         )
         await asyncio.wait_for(event_reject.wait(), timeout=5.0)
@@ -120,6 +126,7 @@ async def test_nats_nack(nats_connection: NatsServer) -> None:
 
         await nats_connection.publish(channel="test_nack_channel", message=MockSentMsg())
         sub_nack = await nats_connection.subscribe(
+            channel_concurrency={},
             channels_to_callbacks={"test_nack_channel": cb_nack},
         )
         await asyncio.wait_for(event_nack.wait(), timeout=5.0)
@@ -139,6 +146,7 @@ async def test_nats_reply(nats_connection: NatsServer) -> None:
 
         await nats_connection.publish(channel="test_reply_channel", message=MockSentMsg())
         sub_reply = await nats_connection.subscribe(
+            channel_concurrency={},
             channels_to_callbacks={"test_reply_channel": cb_reply},
         )
         await asyncio.wait_for(event_reply.wait(), timeout=5.0)
@@ -161,7 +169,7 @@ async def test_nats_exception(nats_connection: NatsServer) -> None:
         await nats_connection.publish(channel="test_exc_channel", message=MockSentMsg())
         sub_exc = await nats_connection.subscribe(
             channels_to_callbacks={"test_exc_channel": cb_exc},
-            concurrency_limit=1,
+            channel_concurrency=channel_limits(("test_exc_channel",), Concurrency(messages=1)),
         )
         await asyncio.wait_for(event_exc.wait(), timeout=5.0)
         assert hit_exc
@@ -184,7 +192,10 @@ async def test_nats_subscribe_already_connected(nats_connection: NatsServer) -> 
     async def cb(msg: Any) -> None:
         pass
 
-    sub_dummy = await server.subscribe(channels_to_callbacks={"another_edge_case": cb})
+    sub_dummy = await server.subscribe(
+        channel_concurrency={},
+        channels_to_callbacks={"another_edge_case": cb},
+    )
     await sub_dummy.close()
     await server.disconnect()
 
@@ -214,7 +225,10 @@ async def test_nats_message_without_headers_and_content_type(
         event.set()
 
     # Call subscribe BEFORE publish to cover `if not self.is_connected` inside `subscribe`
-    sub = await server.subscribe(channels_to_callbacks={"test_nack_channel_2": cb})
+    sub = await server.subscribe(
+        channel_concurrency={},
+        channels_to_callbacks={"test_nack_channel_2": cb},
+    )
 
     await server.publish(channel="test_nack_channel_2", message=MockSentMsgNoHeaders())
     await asyncio.wait_for(event.wait(), timeout=5.0)
@@ -401,7 +415,10 @@ async def test_nats_publish_when_not_connected() -> None:
 async def test_nats_subscribe_when_not_connected() -> None:
     server = NatsServer("nats://localhost:4222", dlq_topic_strategy=None)
     with suppress(ConnectionError):
-        await server.subscribe(channels_to_callbacks={"test": AsyncMock()})
+        await server.subscribe(
+            channel_concurrency={},
+            channels_to_callbacks={"test": AsyncMock()},
+        )
 
 
 async def test_nats_subscribe_connection_error_when_no_js() -> None:
@@ -415,7 +432,10 @@ async def test_nats_subscribe_connection_error_when_no_js() -> None:
             match=r"NATS connection is not initialized\. Call connect\(\) first\.",
         ),
     ):
-        await server.subscribe(channels_to_callbacks={"test": AsyncMock()})
+        await server.subscribe(
+            channel_concurrency={},
+            channels_to_callbacks={"test": AsyncMock()},
+        )
 
 
 async def test_nats_subscribe_callback_exception_calls_term() -> None:
@@ -426,7 +446,7 @@ async def test_nats_subscribe_callback_exception_calls_term() -> None:
     with patch.object(NatsServer, "is_connected", new_callable=PropertyMock, return_value=True):
         sub_test = await server.subscribe(
             channels_to_callbacks={"test": AsyncMock(side_effect=ValueError)},
-            concurrency_limit=None,
+            channel_concurrency={},
         )
         await asyncio.sleep(0.1)
 

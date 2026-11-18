@@ -6,7 +6,7 @@ import json
 import logging
 import math
 import uuid
-from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from functools import partial
@@ -24,6 +24,7 @@ from redis.exceptions import TimeoutError as RedisTimeoutError
 from repid.connections.abc import (
     CapabilitiesT,
     MessageAction,
+    MessageCallbackT,
     ReceivedMessageT,
     SentMessageT,
     ServerT,
@@ -43,7 +44,7 @@ class _PendingEntryT(TypedDict):
 if TYPE_CHECKING:
     from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
-    from repid.data import ExternalDocs, Tag
+    from repid.data import Concurrency, ExternalDocs, Tag
 
 
 def _default_stream_name_strategy(channel: str) -> str:
@@ -358,7 +359,7 @@ class RedisSubscriber(SubscriberT):
         *,
         redis_client: Redis,
         channels: dict[str, ChannelConfig],
-        callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
+        callbacks: dict[str, MessageCallbackT],
         consumer_name: str,
         concurrency_limit: int | None,
         server: RedisServer,
@@ -704,7 +705,7 @@ class RedisSubscriber(SubscriberT):
         messages: list[tuple[bytes | str, dict[bytes | str, bytes | str] | None]],
         channel: str,
         stream_name: str,
-        callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+        callback: MessageCallbackT,
     ) -> None:
         """Process messages from a single stream."""
         cfg = self._channels[channel]
@@ -759,7 +760,7 @@ class RedisSubscriber(SubscriberT):
 
     async def _run_callback(
         self,
-        callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+        callback: MessageCallbackT,
         message: RedisReceivedMessage,
         message_id: str,
     ) -> None:
@@ -813,7 +814,7 @@ class RedisSubscriber(SubscriberT):
         self,
         cfg: ChannelConfig,
         channel: str,
-        callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+        callback: MessageCallbackT,
     ) -> None:
         """Reclaim stale pending messages for one channel using XAUTOCLAIM.
 
@@ -1104,10 +1105,23 @@ class RedisServer(ServerT):
     async def subscribe(
         self,
         *,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
+        channels_to_callbacks: dict[str, MessageCallbackT],
+        channel_concurrency: dict[str, Concurrency] | None = None,
         concurrency_limit: int | None = None,
     ) -> SubscriberT:
         """Subscribe to channels using Redis Streams consumer groups."""
+
+        # Preserve the adapter's message-count intake until it adopts budget hints.
+        if channel_concurrency:
+            concurrency_limit = min(
+                (
+                    limits.messages
+                    for limits in channel_concurrency.values()
+                    if limits.messages is not None
+                ),
+                default=None,
+            )
+
         if self._redis is None:
             raise ConnectionError("Not connected to Redis server")
 

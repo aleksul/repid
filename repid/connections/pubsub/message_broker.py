@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import grpc.aio
 
-from repid.connections.abc import CapabilitiesT, ReceivedMessageT, SentMessageT, SubscriberT
+from repid.connections.abc import CapabilitiesT, MessageCallbackT, SentMessageT, SubscriberT
 
 from .helpers import ChannelOverride
 from .protocol import (
@@ -31,7 +31,7 @@ from .protocol import (
 if TYPE_CHECKING:
     from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
-    from repid.data import ExternalDocs, Tag
+    from repid.data import Concurrency, ExternalDocs, Tag
 
 logger = logging.getLogger("repid.connections.pubsub")
 
@@ -374,7 +374,8 @@ class PubsubServer:
     async def subscribe(
         self,
         *,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
+        channels_to_callbacks: dict[str, MessageCallbackT],
+        channel_concurrency: dict[str, Concurrency] | None = None,
         concurrency_limit: int | None = None,
     ) -> SubscriberT:
         """Subscribe to Pub/Sub channels.
@@ -389,6 +390,18 @@ class PubsubServer:
         Raises:
             ConnectionError: If not connected.
         """
+
+        # Preserve the adapter's message-count intake until it adopts budget hints.
+        if channel_concurrency:
+            concurrency_limit = min(
+                (
+                    limits.messages
+                    for limits in channel_concurrency.values()
+                    if limits.messages is not None
+                ),
+                default=None,
+            )
+
         if not self.is_connected or self._channel is None:
             raise ConnectionError("PubSub server is not connected.")
 

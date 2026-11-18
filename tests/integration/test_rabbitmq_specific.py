@@ -32,7 +32,10 @@ async def test_server_side_cancel(
             callback_event.set()
             await msg.ack()
 
-        subscriber = await conn.subscribe(channels_to_callbacks={"default": dummy_callback})
+        subscriber = await conn.subscribe(
+            channel_concurrency={},
+            channels_to_callbacks={"default": dummy_callback},
+        )
 
         consumers = rabbitmq_container.exec("rabbitmqctl", "list_consumers")
         pid: str = (
@@ -71,7 +74,10 @@ async def test_message_id_is_set_to_uuid4(rabbitmq_connection: AmqpServer) -> No
             done.set()
             await msg.ack()
 
-        subscriber = await conn.subscribe(channels_to_callbacks={"default": capture_callback})
+        subscriber = await conn.subscribe(
+            channel_concurrency={},
+            channels_to_callbacks={"default": capture_callback},
+        )
 
         await repid_app.send_message(channel="default", payload=b"")
         await asyncio.wait_for(done.wait(), timeout=10.0)
@@ -97,7 +103,10 @@ async def test_message_id_is_preserved_when_set_by_user(rabbitmq_connection: Amq
             done.set()
             await msg.ack()
 
-        subscriber = await conn.subscribe(channels_to_callbacks={"default": capture_callback})
+        subscriber = await conn.subscribe(
+            channel_concurrency={},
+            channels_to_callbacks={"default": capture_callback},
+        )
 
         await repid_app.send_message(
             channel="default",

@@ -15,6 +15,8 @@ from repid.connections.abc import MessageAction, ReceivedMessageT, SentMessageT
 from repid.connections.sqs import SqsServer
 from repid.connections.sqs.message import SqsReceivedMessage
 from repid.connections.sqs.subscriber import SqsSubscriber
+from repid.data.concurrency import Concurrency
+from tests.channel_limits import channel_limits
 
 pytestmark = pytest.mark.integration_target(name="sqs")
 
@@ -141,7 +143,7 @@ async def test_sqs_nack_routes_message_to_dlq(sqs_repid: Repid, sqs_connection: 
 
         subscriber = await sqs_connection.subscribe(
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            channel_concurrency=channel_limits((channel_name,), Concurrency(messages=1)),
         )
 
         await asyncio.wait_for(event.wait(), timeout=15.0)
@@ -162,7 +164,7 @@ async def test_sqs_nack_routes_message_to_dlq(sqs_repid: Repid, sqs_connection: 
 
         dlq_subscriber = await sqs_connection.subscribe(
             channels_to_callbacks={dlq_channel_name: on_dlq_message},
-            concurrency_limit=1,
+            channel_concurrency=channel_limits((dlq_channel_name,), Concurrency(messages=1)),
         )
 
         await asyncio.wait_for(dlq_event.wait(), timeout=15.0)
@@ -199,7 +201,7 @@ async def test_sqs_reply_sends_message_to_reply_channel(
 
         subscriber = await sqs_connection.subscribe(
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            channel_concurrency=channel_limits((channel_name,), Concurrency(messages=1)),
         )
 
         await asyncio.wait_for(event.wait(), timeout=15.0)
@@ -240,7 +242,7 @@ async def test_sqs_publish_preserves_empty_payload(
 
         subscriber = await sqs_connection.subscribe(
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            channel_concurrency=channel_limits((channel_name,), Concurrency(messages=1)),
         )
 
         await asyncio.wait_for(event.wait(), timeout=15.0)
@@ -275,7 +277,7 @@ async def test_sqs_reply_preserves_empty_payload(sqs_repid: Repid, sqs_connectio
 
         subscriber = await sqs_connection.subscribe(
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            channel_concurrency=channel_limits((channel_name,), Concurrency(messages=1)),
         )
 
         await asyncio.wait_for(event.wait(), timeout=15.0)
@@ -307,7 +309,7 @@ async def test_sqs_multiple_actions_are_ignored(sqs_repid: Repid, sqs_connection
 
         subscriber = await sqs_connection.subscribe(
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            channel_concurrency=channel_limits((channel_name,), Concurrency(messages=1)),
         )
 
         await asyncio.wait_for(event.wait(), timeout=15.0)
@@ -345,7 +347,7 @@ async def test_sqs_subscriber_handles_callback_exception(
 
         subscriber = await sqs_connection.subscribe(
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            channel_concurrency=channel_limits((channel_name,), Concurrency(messages=1)),
         )
 
         await asyncio.wait_for(event.wait(), timeout=15.0)
@@ -362,7 +364,7 @@ async def test_sqs_subscriber_closes_gracefully(
     async with sqs_repid.servers.default.connection():
         subscriber = await sqs_connection.subscribe(
             channels_to_callbacks={channel_name: lambda msg: asyncio.sleep(0)},  # noqa: ARG005
-            concurrency_limit=1,
+            channel_concurrency=channel_limits((channel_name,), Concurrency(messages=1)),
         )
 
         await asyncio.sleep(0.1)
@@ -438,7 +440,10 @@ async def test_sqs_server_raises_when_not_connected_for_publish() -> None:
 async def test_sqs_server_raises_when_not_connected_for_subscribe() -> None:
     server = SqsServer()
     with pytest.raises(RuntimeError, match=r"SQS client is not connected\."):
-        await server.subscribe(channels_to_callbacks={})
+        await server.subscribe(
+            channel_concurrency={},
+            channels_to_callbacks={},
+        )
 
 
 async def test_sqs_message_properties_parsing(sqs_connection: ServerT) -> None:
@@ -528,6 +533,7 @@ async def test_sqs_subscriber_active_state(sqs_connection: ServerT) -> None:
         sub = cast(
             SqsSubscriber,
             await server.subscribe(
+                channel_concurrency={},
                 channels_to_callbacks={
                     "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
@@ -543,6 +549,7 @@ async def test_sqs_subscriber_task_property(sqs_connection: ServerT) -> None:
         sub = cast(
             SqsSubscriber,
             await server.subscribe(
+                channel_concurrency={},
                 channels_to_callbacks={
                     "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
@@ -559,6 +566,7 @@ async def test_sqs_subscriber_start_consuming_when_already_active(sqs_connection
         sub = cast(
             SqsSubscriber,
             await server.subscribe(
+                channel_concurrency={},
                 channels_to_callbacks={
                     "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
@@ -574,6 +582,7 @@ async def test_sqs_subscriber_resume_when_active(sqs_connection: ServerT) -> Non
         sub = cast(
             SqsSubscriber,
             await server.subscribe(
+                channel_concurrency={},
                 channels_to_callbacks={
                     "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
@@ -589,6 +598,7 @@ async def test_sqs_subscriber_pause_and_resume(sqs_connection: ServerT) -> None:
         sub = cast(
             SqsSubscriber,
             await server.subscribe(
+                channel_concurrency={},
                 channels_to_callbacks={
                     "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
@@ -607,6 +617,7 @@ async def test_sqs_subscriber_process_message_handles_callback_exception(
         sub = cast(
             SqsSubscriber,
             await server.subscribe(
+                channel_concurrency={},
                 channels_to_callbacks={
                     "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
@@ -631,6 +642,7 @@ async def test_sqs_subscriber_task_raises_when_not_active(sqs_connection: Server
         sub = cast(
             SqsSubscriber,
             await server.subscribe(
+                channel_concurrency={},
                 channels_to_callbacks={
                     "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
@@ -648,6 +660,7 @@ async def test_sqs_subscriber_handles_receive_exception(sqs_connection: ServerT)
         sub = cast(
             SqsSubscriber,
             await server.subscribe(
+                channel_concurrency={},
                 channels_to_callbacks={
                     "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
@@ -672,6 +685,7 @@ async def test_sqs_subscriber_handles_consume_cancellation(sqs_connection: Serve
         sub = cast(
             SqsSubscriber,
             await server.subscribe(
+                channel_concurrency={},
                 channels_to_callbacks={
                     "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
@@ -691,6 +705,7 @@ async def test_sqs_subscriber_handles_pause_cancellation(sqs_connection: ServerT
         sub = cast(
             SqsSubscriber,
             await server.subscribe(
+                channel_concurrency={},
                 channels_to_callbacks={
                     "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
                 },
@@ -707,6 +722,7 @@ async def test_sqs_subscriber_raises_if_client_is_none(sqs_connection: ServerT) 
     server = cast(SqsServer, sqs_connection)
     async with server.connection():
         sub = await server.subscribe(
+            channel_concurrency={},
             channels_to_callbacks={
                 "test_subscriber_state_channel": lambda m: asyncio.sleep(0),  # noqa: ARG005
             },

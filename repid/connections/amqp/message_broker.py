@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlparse
 from uuid import uuid4
 
-from repid.connections.abc import CapabilitiesT, SentMessageT, SubscriberT
+from repid.connections.abc import CapabilitiesT, MessageCallbackT, SentMessageT, SubscriberT
 from repid.connections.amqp._uamqp.message import Properties
 from repid.connections.amqp.protocol import (
     AmqpConnection,
@@ -21,8 +21,7 @@ logger = logging.getLogger("repid.connections.amqp")
 if TYPE_CHECKING:
     from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
-    from repid.connections.abc import ReceivedMessageT
-    from repid.data import ExternalDocs, Tag
+    from repid.data import Concurrency, ExternalDocs, Tag
 
 
 class AmqpServer:
@@ -322,9 +321,21 @@ class AmqpServer:
     async def subscribe(
         self,
         *,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
+        channels_to_callbacks: dict[str, MessageCallbackT],
+        channel_concurrency: dict[str, Concurrency] | None = None,
         concurrency_limit: int | None = None,
     ) -> SubscriberT:
+        # Preserve the adapter's message-count intake until it adopts budget hints.
+        if channel_concurrency:
+            concurrency_limit = min(
+                (
+                    limits.messages
+                    for limits in channel_concurrency.values()
+                    if limits.messages is not None
+                ),
+                default=None,
+            )
+
         logger.debug("channel.subscribe", extra={"channels": list(channels_to_callbacks.keys())})
 
         if not self.is_connected or self._managed_session is None:

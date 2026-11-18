@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 if TYPE_CHECKING:
     from repid.connections.abc import ReceivedMessageT
     from repid.data import ActorData, MessageData
+    from repid.data.actor import _ActorCall
 
 ActorMiddlewareReturnsT = TypeVar("ActorMiddlewareReturnsT")
 ProducerMiddlewareReturnsT = TypeVar("ProducerMiddlewareReturnsT")
@@ -52,24 +53,19 @@ class _ProducerMiddlewareLastLeaf(Protocol):
 
 def _compile_actor_middleware_pipeline(
     middlewares: Sequence[ActorMiddlewareT] | None,
-) -> Callable[
-    [Callable[[ReceivedMessageT, ActorData], Coroutine[Any, Any, Any]]],
-    Callable[[ReceivedMessageT, ActorData], Coroutine[Any, Any, Any]],
-]:
+) -> Callable[[_ActorCall], _ActorCall]:
     """Compile middlewares into a call-next chain factory.
 
     Returns a function that, given a leaf (call_next), produces a coroutine function
-    with signature (message, actor) -> Any that runs all middlewares around the leaf.
+    with signature (message, actor) that runs all middlewares around the leaf.
     """
     mws: list[ActorMiddlewareT] = list(middlewares or [])
 
-    def assemble(
-        leaf: Callable[[ReceivedMessageT, ActorData], Coroutine[Any, Any, Any]],
-    ) -> Callable[[ReceivedMessageT, ActorData], Coroutine[Any, Any, Any]]:
-        async def last(msg: ReceivedMessageT, act: ActorData) -> Any:
+    def assemble(leaf: _ActorCall) -> _ActorCall:
+        async def last(msg: ReceivedMessageT, act: ActorData) -> object:
             return await leaf(msg, act)
 
-        next_fn: Callable[[ReceivedMessageT, ActorData], Coroutine[Any, Any, Any]] = last
+        next_fn: _ActorCall = last
 
         for mw in reversed(mws):
             prev = next_fn
@@ -78,9 +74,9 @@ def _compile_actor_middleware_pipeline(
                 msg: ReceivedMessageT,
                 act: ActorData,
                 _mw: ActorMiddlewareT = mw,
-                _nxt: Callable[[ReceivedMessageT, ActorData], Coroutine[Any, Any, Any]] = prev,
-            ) -> Any:
-                result = _mw(_nxt, msg, act)
+                _nxt: _ActorCall = prev,
+            ) -> object:
+                result: object = _mw(_nxt, msg, act)
                 return await result if isawaitable(result) else result
 
             next_fn = layer

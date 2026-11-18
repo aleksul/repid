@@ -683,6 +683,18 @@ async def test_test_message_reply_without_channel_does_not_set_action() -> None:
     assert msg.action is None
 
 
+def test_test_message_has_no_keep_alive_interval() -> None:
+    msg = TestMessage(
+        operation_id=None,
+        payload=b"{}",
+        headers=None,
+        content_type=None,
+        channel="default",
+        reply_to=None,
+    )
+    assert msg.keep_alive_interval is None
+
+
 async def test_test_client_message_properties_expose_reply_to() -> None:
     app = Repid()
     router = Router()

@@ -50,7 +50,10 @@ async def test_close_interrupts_notifications_without_admin_permissions(
             async with server.connection():
                 subscriber = cast(
                     RedisSubscriber,
-                    await server.subscribe(channels_to_callbacks=dict.fromkeys(channels, callback)),
+                    await server.subscribe(
+                        channel_concurrency={},
+                        channels_to_callbacks=dict.fromkeys(channels, callback),
+                    ),
                 )
 
                 async def wait_for_blocked_notifications() -> None:
@@ -142,6 +145,7 @@ async def test_recover_assigned_messages_after_lost_read_reply(
                 subscriber = cast(
                     RedisSubscriber,
                     await server.subscribe(
+                        channel_concurrency={},
                         channels_to_callbacks={channel: callback},
                     ),
                 )
@@ -152,6 +156,7 @@ async def test_recover_assigned_messages_after_lost_read_reply(
                     subscriber = cast(
                         RedisSubscriber,
                         await server.subscribe(
+                            channel_concurrency={},
                             channels_to_callbacks={channel: callback},
                         ),
                     )
@@ -294,6 +299,7 @@ async def test_stale_reclaim_retries_completed_unsettled_delivery(
                 subscriber = cast(
                     RedisSubscriber,
                     await server.subscribe(
+                        channel_concurrency={},
                         channels_to_callbacks={channel: callback},
                     ),
                 )

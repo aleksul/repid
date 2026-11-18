@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Callable, Coroutine, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
@@ -12,6 +12,7 @@ import nats
 from repid.connections.abc import (
     CapabilitiesT,
     MessageAction,
+    MessageCallbackT,
     ReceivedMessageT,
     SentMessageT,
     ServerT,
@@ -26,7 +27,7 @@ if TYPE_CHECKING:
 
     from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
-    from repid.data import ExternalDocs, Tag
+    from repid.data import Concurrency, ExternalDocs, Tag
 
 logger = logging.getLogger("repid.connections.nats")
 
@@ -203,7 +204,7 @@ class NatsSubscriber(SubscriberT):
     def __init__(
         self,
         server: NatsServer,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
+        channels_to_callbacks: dict[str, MessageCallbackT],
         concurrency_limit: int | None = None,
     ) -> None:
         self._server = server
@@ -245,7 +246,7 @@ class NatsSubscriber(SubscriberT):
     async def _subscribe_channel(
         self,
         channel: str,
-        callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+        callback: MessageCallbackT,
     ) -> None:
         ack_wait: float | None = None
         if self._server._js is not None:
@@ -481,9 +482,21 @@ class NatsServer(ServerT):
     async def subscribe(
         self,
         *,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
+        channels_to_callbacks: dict[str, MessageCallbackT],
+        channel_concurrency: dict[str, Concurrency] | None = None,
         concurrency_limit: int | None = None,
     ) -> SubscriberT:
+        # Preserve the adapter's message-count intake until it adopts budget hints.
+        if channel_concurrency:
+            concurrency_limit = min(
+                (
+                    limits.messages
+                    for limits in channel_concurrency.values()
+                    if limits.messages is not None
+                ),
+                default=None,
+            )
+
         if not self.is_connected or self._js is None:
             raise ConnectionError("NATS connection is not initialized. Call connect() first.")
 

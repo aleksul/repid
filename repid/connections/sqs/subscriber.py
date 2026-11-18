@@ -3,10 +3,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
-from repid.connections.abc import ReceivedMessageT, SubscriberT
+from repid.connections.abc import MessageCallbackT, SubscriberT
 from repid.connections.sqs.message import SqsReceivedMessage
 
 if TYPE_CHECKING:
@@ -19,7 +18,7 @@ class SqsSubscriber(SubscriberT):
     def __init__(
         self,
         server: SqsServer,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
+        channels_to_callbacks: dict[str, MessageCallbackT],
         concurrency_limit: int | None = None,
     ) -> None:
         if concurrency_limit is not None and concurrency_limit <= 0:
@@ -248,7 +247,7 @@ class SqsSubscriber(SubscriberT):
         channel: str,
         queue_url: str,
         msg: Any,
-        callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]],
+        callback: MessageCallbackT,
     ) -> None:
         try:
             message = SqsReceivedMessage(

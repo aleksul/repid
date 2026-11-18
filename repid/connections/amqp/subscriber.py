@@ -10,7 +10,7 @@ from repid.connections.amqp.helpers import AmqpReceivedMessage
 from repid.connections.amqp.protocol import ManagedSession, ReceiverLink
 
 if TYPE_CHECKING:
-    from repid.connections.abc import ReceivedMessageT
+    from repid.connections.abc import MessageCallbackT
 
 
 class AmqpSubscriber:
@@ -30,7 +30,7 @@ class AmqpSubscriber:
         *,
         managed_session: ManagedSession,
         links: list[ReceiverLink],
-        queues_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
+        queues_to_callbacks: dict[str, MessageCallbackT],
         concurrency_limit: int | None = None,
         paused_event: asyncio.Event,
         naming_strategy: Callable[[str], str],
@@ -79,7 +79,7 @@ class AmqpSubscriber:
         cls,
         *,
         managed_session: ManagedSession,
-        queues_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
+        queues_to_callbacks: dict[str, MessageCallbackT],
         concurrency_limit: int | None = None,
         naming_strategy: Callable[[str], str],
         publish_fn: Callable[..., Coroutine[Any, Any, None]],
@@ -115,7 +115,7 @@ class AmqpSubscriber:
                 link_ref: ReceiverLink,
                 properties: Properties | None = None,
                 queue: str = queue,
-                callback: Callable[[ReceivedMessageT], Coroutine[None, None, None]] = callback,
+                callback: MessageCallbackT = callback,
                 paused_event: asyncio.Event = paused_event,
                 managed_session: ManagedSession = managed_session,
             ) -> None:

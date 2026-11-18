@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from repid.connections.abc import BaseMessageT, ReceivedMessageT
     from repid.converter import ConverterT
     from repid.data import Channel, ExternalDocs, Tag
+    from repid.data.actor import _ActorCall
     from repid.data.concurrency import Concurrency
     from repid.data.message_schema import ActorMessageMetadata
 
@@ -52,14 +53,14 @@ def catch_all_routing_strategy(*, actor_name: str, **_: Any) -> Callable[[BaseMe
     return strategy
 
 
-YourFunc = TypeVar("YourFunc", bound=Callable[..., Any])
-ExplicitFunc = TypeVar("ExplicitFunc", bound=Callable[..., Coroutine[Any, Any, ManualActionT]])
+YourFunc = TypeVar("YourFunc", bound=Callable[..., object])
+ExplicitFunc = TypeVar("ExplicitFunc", bound=Callable[..., Coroutine[object, None, ManualActionT]])
 
 
 @dataclass(slots=True, kw_only=True, frozen=True)
 class _ActorDefinition:
     router: Router
-    fn: Callable[..., Coroutine[Any, Any, Any]]
+    fn: Callable[..., object]
     name: str | None
     confirmation_mode: Literal["auto", "always_ack", "ack_first", "manual", "manual_explicit"]
     routing_strategy: RoutingStrategyT
@@ -319,15 +320,12 @@ class Router:
         composer = _compile_actor_middleware_pipeline(all_middlewares)
 
         async def middleware_pipeline(
-            call_next: Callable[[ReceivedMessageT, ActorData], Coroutine[Any, Any, Any]],
+            call_next: _ActorCall,
             message: ReceivedMessageT,
             actor: ActorData,
-            _composer: Callable[..., Any] = composer,
-            _all_middlewares: list[ActorMiddlewareT] = all_middlewares,
-        ) -> Any:
-            if _all_middlewares:
-                final = _composer(call_next)
-                return await final(message, actor)
+        ) -> object:
+            if all_middlewares:
+                return await composer(call_next)(message, actor)
             return await call_next(message, actor)
 
         timeout_val = (

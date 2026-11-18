@@ -10,7 +10,7 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import ResponseError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
-from repid import Router
+from repid import Concurrency, Router
 from repid._runner import _Runner
 from repid.connections.abc import MessageAction, ReceivedMessageT
 from repid.connections.redis import message_broker
@@ -964,9 +964,8 @@ async def test_redis_paused_deliveries_wait_for_resume(pause_before_schedule: bo
 
 
 @pytest.mark.parametrize("concurrency", [1, 2])
-async def test_redis_runner_drains_batch_after_concurrency_pause(
+async def test_redis_runner_drains_batch_with_local_concurrency(
     concurrency: int,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = _redis_client_mock()
     message_count = concurrency * 2 + 1
@@ -983,21 +982,17 @@ async def test_redis_runner_drains_batch_after_concurrency_pause(
     ]
     server = RedisServer("redis://localhost")
     server._redis = client
-    paused = asyncio.Event()
     release = asyncio.Event()
-    finished = 0
-    pause = RedisSubscriber.pause
-
-    async def record_pause(subscriber: RedisSubscriber) -> None:
-        await pause(subscriber)
-        paused.set()
-
-    monkeypatch.setattr(RedisSubscriber, "pause", record_pause)
+    saturated = asyncio.Event()
+    started = finished = 0
     router = Router()
 
     @router.actor
     async def job() -> None:
-        nonlocal finished
+        nonlocal started, finished
+        started += 1
+        if started == concurrency:
+            saturated.set()
         await release.wait()
         finished += 1
 
@@ -1008,7 +1003,7 @@ async def test_redis_runner_drains_batch_after_concurrency_pause(
             default_serializer=default_serializer,
         ),
         max_tasks=message_count,
-        tasks_concurrency_limit=concurrency,
+        concurrency=Concurrency(messages=concurrency),
     )
     running = asyncio.create_task(
         runner.run(
@@ -1017,7 +1012,7 @@ async def test_redis_runner_drains_batch_after_concurrency_pause(
         ),
     )
     try:
-        await asyncio.wait_for(paused.wait(), timeout=1)
+        await asyncio.wait_for(saturated.wait(), timeout=1)
         release.set()
         await asyncio.wait_for(asyncio.shield(running), timeout=1)
         assert finished == message_count

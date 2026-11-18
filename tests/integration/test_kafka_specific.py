@@ -10,6 +10,8 @@ import pytest
 from repid import Repid
 from repid.connections.abc import ReceivedMessageT, SentMessageT
 from repid.connections.kafka.subscriber import KafkaSubscriber
+from repid.data.concurrency import Concurrency
+from tests.channel_limits import channel_limits
 
 pytestmark = pytest.mark.integration_target(name="kafka")
 
@@ -77,7 +79,7 @@ async def test_kafka_reject(kafka_repid: Repid, kafka_connection: ServerT) -> No
 
         subscriber = await kafka_connection.subscribe(
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            channel_concurrency=channel_limits((channel_name,), Concurrency(messages=1)),
         )
 
         await asyncio.wait_for(event.wait(), timeout=10.0)
@@ -100,7 +102,7 @@ async def test_kafka_reject(kafka_repid: Repid, kafka_connection: ServerT) -> No
 
         requeued_subscriber = await kafka_connection.subscribe(
             channels_to_callbacks={channel_name: on_requeued_message},
-            concurrency_limit=1,
+            channel_concurrency=channel_limits((channel_name,), Concurrency(messages=1)),
         )
 
         await asyncio.wait_for(requeued_event.wait(), timeout=10.0)
@@ -138,7 +140,7 @@ async def test_kafka_nack_to_dlq(kafka_repid: Repid, kafka_connection: ServerT) 
 
         subscriber = await kafka_connection.subscribe(
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            channel_concurrency=channel_limits((channel_name,), Concurrency(messages=1)),
         )
 
         await asyncio.wait_for(event.wait(), timeout=10.0)
@@ -160,7 +162,7 @@ async def test_kafka_nack_to_dlq(kafka_repid: Repid, kafka_connection: ServerT) 
 
         dlq_subscriber = await kafka_connection.subscribe(
             channels_to_callbacks={dlq_channel_name: on_dlq_message},
-            concurrency_limit=1,
+            channel_concurrency=channel_limits((dlq_channel_name,), Concurrency(messages=1)),
         )
 
         await asyncio.wait_for(dlq_event.wait(), timeout=10.0)
@@ -194,7 +196,7 @@ async def test_kafka_reply(kafka_repid: Repid, kafka_connection: ServerT) -> Non
 
         subscriber = await kafka_connection.subscribe(
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            channel_concurrency=channel_limits((channel_name,), Concurrency(messages=1)),
         )
 
         await asyncio.wait_for(event.wait(), timeout=10.0)
@@ -266,6 +268,7 @@ async def test_kafka_message_properties_and_double_actions(  # noqa: PLR0915
             event.set()
 
         subscriber = await kafka_connection.subscribe(
+            channel_concurrency={},
             channels_to_callbacks={channel_name: on_message},
         )
 
@@ -321,7 +324,7 @@ async def test_kafka_subscriber_callback_exception(
 
         subscriber = await kafka_connection.subscribe(
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            channel_concurrency=channel_limits((channel_name,), Concurrency(messages=1)),
         )
 
         await asyncio.wait_for(event.wait(), timeout=10.0)
@@ -354,7 +357,7 @@ async def test_kafka_subscriber_close_exception_and_cancellation(
 
         subscriber = await kafka_connection.subscribe(
             channels_to_callbacks={channel_name: on_message},
-            concurrency_limit=1,
+            channel_concurrency=channel_limits((channel_name,), Concurrency(messages=1)),
         )
 
         await asyncio.wait_for(event.wait(), timeout=10.0)

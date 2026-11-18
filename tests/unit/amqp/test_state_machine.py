@@ -45,7 +45,6 @@ async def test_state_machine_listeners() -> None:
 
     sm.remove_listener(listener)
     await sm.transition("recv_header")
-    # Should still be 1 since listener was removed
     assert len(transitions) == 1
 
 
@@ -66,7 +65,6 @@ async def test_state_machine_listener_exception() -> None:
         raise ValueError("Test error")
 
     sm.add_listener(bad_listener)
-    # Should not raise despite listener error
     await sm.transition("send_header")
 
 
@@ -76,32 +74,26 @@ async def test_state_machine_remove_nonexistent_listener() -> None:
     def listener(_t: StateTransition[Any]) -> None:
         pass
 
-    # Should not raise when removing non-existent listener
     sm.remove_listener(listener)
 
 
 async def test_state_machine_can_transition() -> None:
     sm = ConnectionStateMachine()
 
-    # Valid transition from START
     assert sm.can_transition("send_header")
 
-    # Invalid transition from START
     assert not sm.can_transition("send_close")
 
 
 async def test_link_state_machine_is_usable() -> None:
     lsm = LinkStateMachine()
-    # In DETACHED state initially
     assert not lsm.is_usable()
 
-    # Transition to ATTACHED
     await lsm.transition("send_attach")
     await lsm.transition("recv_attach")
     assert lsm.is_usable()
     assert lsm.is_attached()
 
-    # Detach
     await lsm.transition("send_detach")
     assert not lsm.is_usable()
     assert not lsm.is_attached()

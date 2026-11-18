@@ -68,10 +68,8 @@ def test_amqp_transport_validate_amqp_header() -> None:
     config = TransportConfig(host="localhost", port=5672)
     transport = AmqpTransport(config)
 
-    # Valid AMQP header
     assert transport.validate_amqp_header(AMQP_HEADER) is True
 
-    # Invalid header
     assert transport.validate_amqp_header(b"INVALID\x00") is False
 
 
@@ -143,9 +141,8 @@ async def test_amqp_transport_read_frame_invalid_size() -> None:
     config = TransportConfig(host="localhost", port=5672)
     transport = AmqpTransport(config)
 
-    # Mock reader that returns header with invalid size (less than 8)
     mock_reader = AsyncMock()
-    # Frame size = 7 (invalid, must be >= 8)
+    # Frame size 7 is invalid: it must cover the 8-byte header
     mock_reader.readexactly.return_value = struct.pack(">IBBH", 7, 2, 0, 0)
 
     transport._reader = mock_reader
@@ -221,10 +218,7 @@ async def test_amqp_transport_read_frame_incomplete_body() -> None:
     config = TransportConfig(host="localhost", port=5672)
     transport = AmqpTransport(config)
 
-    # Mock reader
     mock_reader = AsyncMock()
-    # First call returns valid header (frame size = 16)
-    # Second call raises IncompleteReadError when reading body
     mock_reader.readexactly.side_effect = [
         struct.pack(">IBBH", 16, 2, 0, 0),  # Header
         asyncio.IncompleteReadError(b"", 8),  # Body incomplete
@@ -240,11 +234,9 @@ async def test_amqp_transport_read_frame_empty_body() -> None:
     config = TransportConfig(host="localhost", port=5672)
     transport = AmqpTransport(config)
 
-    # Create a valid OPEN frame
     open_frame = OpenFrame(container_id="test")
     frame_bytes = performative_to_bytes(open_frame, channel=0)
 
-    # Mock reader to return the frame
     mock_reader = AsyncMock()
     header = frame_bytes[:8]
     body = frame_bytes[8:]
@@ -256,7 +248,6 @@ async def test_amqp_transport_read_frame_empty_body() -> None:
 
     transport._reader = mock_reader
 
-    # Should successfully read the frame
     channel, performative = await transport.read_frame()
     assert channel == 0
     assert isinstance(performative, OpenFrame)
@@ -266,14 +257,11 @@ async def test_amqp_transport_read_frame_header_only() -> None:
     config = TransportConfig(host="localhost", port=5672)
     transport = AmqpTransport(config)
 
-    # Create header indicating size=8 (header only, no body)
-    # This will trigger the else branch where payload = b""
     mock_reader = AsyncMock()
     mock_reader.readexactly.return_value = struct.pack(">IBBH", 8, 2, 0, 0)
 
     transport._reader = mock_reader
 
-    # Should return EmptyFrame
     channel, performative = await transport.read_frame()
     assert channel == 0
     assert isinstance(performative, EmptyFrame)

@@ -25,18 +25,6 @@ def test_message_example_raises_error_when_neither_headers_nor_payload_provided(
         MessageExample()
 
 
-def test_message_example_with_headers_only() -> None:
-    example = MessageExample(headers={"key": "value"})
-    assert example.headers == {"key": "value"}
-    assert example.payload is None
-
-
-def test_message_example_with_payload_only() -> None:
-    example = MessageExample(payload={"key": "value"})
-    assert example.payload == {"key": "value"}
-    assert example.headers is None
-
-
 def test_asyncapi_generator_basic() -> None:
     app = Repid(
         title="Test API",

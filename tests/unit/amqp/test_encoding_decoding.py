@@ -45,7 +45,6 @@ from repid.connections.amqp._uamqp.performatives import (
 
 
 def test_performative_encoding_various_types() -> None:
-    # Test encoding various performative types
     open_frame = OpenFrame(
         container_id="test-container",
         hostname="localhost",
@@ -279,7 +278,6 @@ def test_encode_boolean() -> None:
     out = bytearray()
     encode._encode_boolean(out, True)
     assert out == b"\x56\x01"  # 0x56 is boolean, 0x41 is true, 0x42 is false.
-    # Wait, _encode_boolean implementation chooses encoding based on with_constructor=True -> 0x56
 
     out = bytearray()
     encode._encode_boolean(out, True, with_constructor=False)
@@ -455,15 +453,14 @@ def test_encode_binary() -> None:
     encode._encode_binary(out, b"123", use_smallest=False)
     assert out == b"\xb0\x00\x00\x00\x03123"
 
-    # Mock large binary failure
     with (
-        patch("struct.pack", side_effect=struct.error),
+        patch.object(struct, "pack", side_effect=struct.error),
         pytest.raises(
             ValueError,
             match="Binary data to long to encode",
         ),
     ):
-        # Force large path
+        # Over 255 bytes forces the 32-bit size encoding
         encode._encode_binary(bytearray(), b"x" * 300)
 
 
@@ -477,7 +474,7 @@ def test_encode_string() -> None:
     assert out == b"\xb1\x00\x00\x00\x03abc"
 
     with (
-        patch("struct.pack", side_effect=struct.error),
+        patch.object(struct, "pack", side_effect=struct.error),
         pytest.raises(
             ValueError,
             match=r"String value too long to encode\.",
@@ -496,7 +493,7 @@ def test_encode_symbol() -> None:
     assert out == b"\xb3\x00\x00\x00\x03abc"
 
     with (
-        patch("struct.pack", side_effect=struct.error),
+        patch.object(struct, "pack", side_effect=struct.error),
         pytest.raises(
             ValueError,
             match=r"Symbol value too long to encode\.",
@@ -585,13 +582,14 @@ def test_encode_list() -> None:
     assert out[0] == 0xD0
 
     with (
-        patch(
-            "repid.connections.amqp._uamqp._encode.struct.pack",
+        patch.object(
+            encode.struct,
+            "pack",
             side_effect=struct.error,
         ),
         pytest.raises(ValueError, match=r".+"),
     ):
-        # Force large path then fail
+        # Over 255 elements forces the 32-bit size encoding
         encode._encode_list(bytearray(), [1] * 300)
 
 
@@ -612,7 +610,7 @@ def test_encode_map() -> None:
 
     original_pack = struct.pack
 
-    with patch("repid.connections.amqp._uamqp._encode.struct.pack") as mock_pack:
+    with patch.object(encode.struct, "pack") as mock_pack:
 
         def side_effect(fmt: str, *args: Any) -> bytes:
             if fmt == ">L" and len(args) == 1 and args[0] >= 4:  # Map header packing
@@ -622,7 +620,6 @@ def test_encode_map() -> None:
         mock_pack.side_effect = side_effect
 
         with pytest.raises(ValueError, match="Map is too large"):
-            # Force large path
             encode._encode_map(bytearray(), {"a": 1}, use_smallest=False)
 
 
@@ -647,7 +644,6 @@ def test_encode_array() -> None:
     with pytest.raises(TypeError, match="All elements in an array must be the same type"):
         encode._encode_array(bytearray(), [1, "a"])
 
-    # Test mixed types where both have "TYPE" (hit line 560)
     # Type check logic: item1=1 (int), item2 (dict).
     # item2["TYPE"] mismatch int -> raise TypeErr.
     # Caught. isinstance(item2, int) -> False.
@@ -657,8 +653,9 @@ def test_encode_array() -> None:
         encode._encode_array(bytearray(), [item1, item2])
 
     with (
-        patch(
-            "repid.connections.amqp._uamqp._encode.struct.pack",
+        patch.object(
+            encode.struct,
+            "pack",
             side_effect=struct.error,
         ),
         pytest.raises(ValueError, match=r".+"),
@@ -678,7 +675,6 @@ def test_encode_unknown() -> None:
     with pytest.raises(TypeError, match="Unable to encode unknown value"):
         encode._encode_unknown(bytearray(), object())
 
-    # Branch coverage for int logic
     out = bytearray()
     encode._encode_unknown(out, 123)  # int
     assert out[0] == 0x54  # smallint
@@ -695,7 +691,6 @@ def test_encode_performative_body() -> None:
 
 
 def test_encode_array_with_type_hint() -> None:
-    # Test _check_element_type with item having TYPE
 
     # Item with TYPE
     item1 = {TYPE: AMQPTypes.int.value, VALUE: 1}
@@ -727,7 +722,6 @@ def test_encode_performative_body_large() -> None:
 
 
 def test_encode_unknown_coverage() -> None:
-    # Ensure we hit branches in _encode_unknown
     # bytes
     out = bytearray()
     encode._encode_unknown(out, b"123")
@@ -793,7 +787,6 @@ def test_message_to_transfer_frames_full() -> None:
 
 
 def test_message_to_transfer_frames_split() -> None:
-    # Test splitting message into multiple frames
     msg = Message(data=[b"x" * 1000])
     frames = list(encode.message_to_transfer_frames(msg, max_frame_size=200, handle=1))
     assert len(frames) > 1
@@ -814,7 +807,6 @@ def test_message_to_transfer_frames() -> None:
     msg = Message(value="val")
     frames = list(encode.message_to_transfer_frames(msg, max_frame_size=1024, handle=1))
 
-    # Test small frame size exception
     with pytest.raises(ValueError, match="Frame size too small"):
         list(encode.message_to_transfer_frames(msg, max_frame_size=10, handle=1))
 

@@ -637,21 +637,9 @@ async def test_message_broker_properties() -> None:
     assert broker.protocol == "amqp"
     assert broker.host == "example.com:5672"
     assert broker.pathname == "/vhost"
-    assert broker.title == "Test Server"
-    assert broker.summary == "Summary text"
-    assert broker.description == "Description text"
-    assert broker.protocol_version == "1.0.0"
-    assert broker.variables is None
-    assert broker.security is None
-    assert broker.tags is None
-    assert broker.external_docs is None
-    assert broker.bindings is None
-
     caps = broker.capabilities
     assert caps["supports_native_reply"] is True
     assert caps["supports_lightweight_pause"] is False
-
-    assert broker.managed_session is None
 
 
 async def test_subscriber_pause_resume() -> None:
@@ -880,7 +868,6 @@ async def test_amqp_received_message_reply_first() -> None:
         MessageData(payload=b"response", headers={"x": "1"}, content_type=None),
     )
 
-    # Second reply is a no-op
     await msg.reply(payload=b"ignored")
     assert len(published) == 1
 

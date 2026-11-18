@@ -100,10 +100,8 @@ async def test_managed_session_on_reconnected() -> None:
     connection = FakeManagedConnection(is_connected=True, session_factory=session_factory)
     managed = ManagedSession(cast(AmqpConnection, connection))
 
-    # Call the handler directly
     await managed._on_reconnected()
 
-    # Session should still be None until get_session is called
     assert managed._session is None
 
 
@@ -118,11 +116,9 @@ async def test_managed_session_invalidate_with_pools() -> None:
     connection = FakeManagedConnection(is_connected=True, session_factory=session_factory)
     managed = ManagedSession(cast(AmqpConnection, connection))
 
-    # Access pools to create them
     _ = managed.sender_pool
     _ = managed.receiver_pool
 
-    # Invalidate should clear pools
     managed.invalidate()
 
     assert managed._session is None
@@ -139,14 +135,11 @@ async def test_managed_session_on_disconnected() -> None:
     connection = FakeManagedConnection(is_connected=True, session_factory=session_factory)
     managed = ManagedSession(cast(AmqpConnection, connection))
 
-    # Create a session
     session = await managed.get_session()
     assert session is not None
 
-    # Trigger disconnected event
     await managed._on_disconnected()
 
-    # Session should be invalidated
     assert managed._session is None
 
 
@@ -161,11 +154,9 @@ async def test_managed_session_close_with_pools() -> None:
     connection = FakeManagedConnection(is_connected=True, session_factory=session_factory)
     managed = ManagedSession(cast(AmqpConnection, connection))
 
-    # Access pools to create them
     _ = managed.sender_pool
     _ = managed.receiver_pool
 
-    # Close should clean up event handlers and pools
     await managed.close()
 
 
@@ -180,8 +171,6 @@ async def test_managed_session_close_with_sender_pool() -> None:
     connection = FakeManagedConnection(is_connected=True, session_factory=session_factory)
     managed = ManagedSession(cast(AmqpConnection, connection))
 
-    # Access only sender pool
     _ = managed.sender_pool
 
-    # Close should clean up
     await managed.close()

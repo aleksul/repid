@@ -36,7 +36,6 @@ async def test_session_end_already_terminal() -> None:
     session = Session(cast(AmqpConnection, connection), channel=1)
     session._state_machine._state = SessionState.UNMAPPED
 
-    # Should not raise when already terminal
     await session.end()
     assert session._state_machine.is_terminal()
 
@@ -56,11 +55,9 @@ async def test_session_end_link_detach_error() -> None:
     await session._state_machine.transition("send_begin")
     await session._state_machine.transition("recv_begin")
 
-    # Add a link that will fail to detach
     link = FakeLinkWithDetachError()
     session._links["test-link"] = link  # pyrefly: ignore[unsupported-operation]
 
-    # Should handle detach error gracefully
     await session.end()
     assert len(connection.sent) > 0
 
@@ -73,7 +70,6 @@ async def test_session_handle_unknown_performative() -> None:
     connection = FakeConnection()
     session = Session(cast(AmqpConnection, connection), channel=1)
 
-    # Should log warning but not raise
     await session.handle_performative(UnknownPerformative())
 
 
@@ -81,11 +77,9 @@ async def test_session_handle_attach_missing_handle() -> None:
     connection = FakeConnection()
     session = Session(cast(AmqpConnection, connection), channel=1)
 
-    # Create attach frame with invalid data to test missing handle case
     attach = AttachFrame(name="test-link", handle=0, role=True)
     attach.handle = None  # pyrefly: ignore[bad-assignment]
 
-    # Should log error and return early
     await session._handle_attach(attach)
 
 
@@ -94,7 +88,6 @@ async def test_session_handle_attach_unknown_link() -> None:
     session = Session(cast(AmqpConnection, connection), channel=1)
 
     attach = AttachFrame(name="unknown-link", handle=5, role=True)
-    # Should log warning for unknown link
     await session._handle_attach(attach)
 
 
@@ -172,7 +165,6 @@ async def test_session_create_receiver_link_alias(monkeypatch: Any) -> None:
     await session._state_machine.transition("send_begin")
     await session._state_machine.transition("recv_begin")
 
-    # Monkeypatch ReceiverLink to avoid full initialization
     def fake_receiver_link(
         _session: Any,
         name: str,
@@ -231,7 +223,6 @@ async def test_session_end_send_frame_error() -> None:
     await session._state_machine.transition("send_begin")
     await session._state_machine.transition("recv_begin")
 
-    # Should handle send error gracefully
     await session.end()
 
 
@@ -248,17 +239,14 @@ async def test_session_handle_attach_bytes_name() -> None:
     connection = FakeConnection()
     session = Session(cast(AmqpConnection, connection), channel=1)
 
-    # Add link to session
     link = MockLink()
     session._links["test-link"] = link  # pyrefly: ignore[unsupported-operation]
 
-    # Create attach with bytes name (will be decoded)
     attach = AttachFrame(name="test-link", handle=5, role=True)
     attach.name = b"test-link"  # pyrefly: ignore[bad-assignment]
 
     await session._handle_attach(attach)
 
-    # Should have set remote handle
     assert 5 in session._links_by_remote_handle
 
 
@@ -347,10 +335,7 @@ async def test_session_create_receiver_not_mapped(monkeypatch: Any) -> None:
     connection = FakeConnection()
     session = Session(cast(AmqpConnection, connection), channel=1)
 
-    # Start in BEGIN_SENT state (not yet mapped)
     await session._state_machine.transition("send_begin")
-
-    # Monkeypatch ReceiverLink
 
     def fake_receiver_link(
         _session: Any,
@@ -443,8 +428,6 @@ async def test_session_create_receiver_default_name(monkeypatch: Any) -> None:
     await session._state_machine.transition("send_begin")
     await session._state_machine.transition("recv_begin")
 
-    # Monkeypatch ReceiverLink
-
     def fake_receiver_link(
         _session: Any,
         name: str,
@@ -468,9 +451,8 @@ async def test_session_create_sender_not_usable_race() -> None:
     await session._state_machine.transition("send_begin")
     await session._state_machine.transition("recv_begin")
 
-    # Force state to UNMAPPED (simulates invalidation after mapping)
-    # This makes is_mapped=False (skips wait_ready due to _ready being set)
-    # and is_usable=False (triggers the error)
+    # Simulate invalidation after mapping: wait_ready passes because _ready is set,
+    # but is_usable is False, which triggers the error.
     session._ready.set()  # Set ready so wait_ready succeeds immediately
     session._state_machine.reset(SessionState.UNMAPPED)
 
@@ -494,7 +476,6 @@ async def test_session_create_receiver_not_usable_race() -> None:
     await session._state_machine.transition("send_begin")
     await session._state_machine.transition("recv_begin")
 
-    # Force state to UNMAPPED (simulates invalidation after mapping)
     session._ready.set()  # Set ready so wait_ready succeeds immediately
     session._state_machine.reset(SessionState.UNMAPPED)
 
@@ -606,7 +587,6 @@ async def test_session_handle_attach_detach_flow_disposition() -> None:
         def invalidate(self) -> None:
             self.detached = True
 
-    # Test attach handler
     attach = AttachFrame(name="test-link", handle=5, role=False, source=None, target=None)
     link = FakeLinkForAttach()
     session._links["test-link"] = cast(SenderLink | ReceiverLink, link)
@@ -614,7 +594,6 @@ async def test_session_handle_attach_detach_flow_disposition() -> None:
     assert link._remote_handle == 5
     assert session._links_by_remote_handle[5] == link
 
-    # Test flow handler with session-level flow
     flow = FlowFrame(
         next_incoming_id=10,
         incoming_window=100,
@@ -623,7 +602,6 @@ async def test_session_handle_attach_detach_flow_disposition() -> None:
     )
     await session.handle_performative(flow)
 
-    # Test flow handler with link-level flow
     flow_link = FlowFrame(
         handle=5,
         next_incoming_id=10,
@@ -633,20 +611,16 @@ async def test_session_handle_attach_detach_flow_disposition() -> None:
     )
     await session.handle_performative(flow_link)
 
-    # Test disposition handler
     disposition = DispositionFrame(role=True, first=1, settled=True)
     await session.handle_performative(disposition)
 
-    # Test detach handler
     detach = DetachFrame(handle=5)
     await session.handle_performative(detach)
     assert link.detached
 
-    # Test attach with unknown link (warning path)
     attach_unknown = AttachFrame(name="unknown", handle=10, role=False, source=None, target=None)
     await session.handle_performative(attach_unknown)
 
-    # Test detach with unknown handle (warning path)
     detach_unknown = DetachFrame(handle=99)
     await session.handle_performative(detach_unknown)
 
@@ -690,9 +664,6 @@ async def test_session_handle_transfer_and_invalidate(monkeypatch: Any) -> None:
 
     fake_receiver = FakeReceiverForTest()
 
-    # Import to get the ReceiverLink class for mocking isinstance
-
-    # Mock isinstance to return True for our fake receiver
     original_isinstance = isinstance
 
     def mock_isinstance(obj: Any, classinfo: Any) -> bool:

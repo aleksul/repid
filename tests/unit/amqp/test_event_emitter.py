@@ -23,7 +23,6 @@ async def test_event_emitter_off_all() -> None:
 
     emitter.off_all(handler)
     emitter.emit_sync(EventData(ConnectionEvent.CONNECTED))
-    # Should still be 1 since handler was removed
     assert len(called) == 1
 
 
@@ -35,7 +34,6 @@ async def test_event_emitter_async_handler_error() -> None:
 
     emitter.on(ConnectionEvent.CONNECTED, bad_handler)
 
-    # Should not raise despite handler error
     await emitter.emit(EventData(ConnectionEvent.CONNECTED))
 
 
@@ -47,7 +45,6 @@ async def test_event_emitter_sync_handler_error() -> None:
 
     emitter.on(ConnectionEvent.CONNECTED, bad_handler)
 
-    # Should not raise despite handler error
     emitter.emit_sync(EventData(ConnectionEvent.CONNECTED))
 
 
@@ -64,7 +61,6 @@ async def test_event_emitter_clear() -> None:
     emitter.clear()
 
     emitter.emit_sync(EventData(ConnectionEvent.CONNECTED))
-    # Should be empty since all handlers were cleared
     assert len(called) == 0
 
 
@@ -77,9 +73,7 @@ async def test_event_emitter_sync_with_no_running_loop() -> None:
 
     emitter.on(ConnectionEvent.CONNECTED, async_handler)
 
-    # emit_sync should handle async handler (closes coroutine)
     emitter.emit_sync(EventData(ConnectionEvent.CONNECTED))
-    # Called should be empty since coroutine was closed
     assert len(called) == 0
 
 
@@ -91,8 +85,7 @@ async def test_event_emitter_coroutine_without_loop() -> None:
 
     emitter.on(ConnectionEvent.CONNECTED, async_handler)
 
-    # emit_sync should close coroutine when no loop is running
-    # Run in a thread to avoid having an event loop
+    # emit_sync must close the coroutine when no loop is running, so call it from a thread
     result = []
 
     def run_in_thread() -> None:

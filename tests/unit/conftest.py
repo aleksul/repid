@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 
 import pytest
 
@@ -17,7 +17,7 @@ def fake_repid() -> Repid:
 
 
 @pytest.fixture
-async def fake_connection(fake_repid: Repid) -> AsyncIterator[InMemoryServer]:
+async def fake_connection(fake_repid: Repid) -> AsyncGenerator[InMemoryServer, None]:
     server = fake_repid.servers.get_server("default")
     assert server is not None
     assert isinstance(server, InMemoryServer)

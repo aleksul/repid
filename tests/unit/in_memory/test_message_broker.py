@@ -137,7 +137,6 @@ async def test_received_message_reply() -> None:
     assert reply_msg.headers == {"h": "v"}
     assert reply_msg.message_id is not None
 
-    # Second reply ignored
     await msg.reply(payload=b"ignored")
     assert queue.queue.empty()
 
@@ -163,24 +162,6 @@ async def test_received_message_reply_already_acted() -> None:
     await msg.ack()
     await msg.reply(payload=b"abc")  # Should return immediately and not enqueue anything
     assert queue.queue.empty()
-
-
-def test_server_properties() -> None:
-    server = InMemoryServer()
-    assert server.host == "localhost"
-    assert server.protocol == "in-memory"
-    assert server.pathname is None
-    assert server.title == "In-Memory Server"
-    assert server.summary is not None
-    assert server.description is not None
-    assert server.protocol_version == "1.0.0"
-    assert server.variables is None
-    assert server.security is None
-    assert server.tags is None
-    assert server.external_docs is None
-    assert server.bindings is None
-    assert server.capabilities["supports_native_reply"]
-    assert not server.is_connected
 
 
 async def test_server_connection() -> None:

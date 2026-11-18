@@ -21,13 +21,14 @@ from repid.connections.sqs.constants import (
     EMPTY_PAYLOAD_BODY_PLACEHOLDER,
 )
 from repid.connections.sqs.subscriber import SqsSubscriber
+from repid.data.concurrency import Concurrency
 
 if TYPE_CHECKING:
     from types_aiobotocore_sqs.client import SQSClient
 
     from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
-    from repid.data import Concurrency, ExternalDocs, Tag
+    from repid.data import ExternalDocs, Tag
 
 logger = logging.getLogger("repid.connections.sqs")
 SQS_MAX_BATCH_SIZE = 10
@@ -242,20 +243,8 @@ class SqsServer(ServerT):
         self,
         *,
         channels_to_callbacks: dict[str, MessageCallbackT],
-        channel_concurrency: dict[str, Concurrency] | None = None,
-        concurrency_limit: int | None = None,
+        channel_concurrency: dict[str, Concurrency],
     ) -> SubscriberT:
-        # Preserve the adapter's message-count intake until it adopts budget hints.
-        if channel_concurrency:
-            concurrency_limit = min(
-                (
-                    limits.messages
-                    for limits in channel_concurrency.values()
-                    if limits.messages is not None
-                ),
-                default=None,
-            )
-
         logger.debug("channel.subscribe", extra={"channels": list(channels_to_callbacks.keys())})
 
         if self._client is None:
@@ -264,8 +253,7 @@ class SqsServer(ServerT):
         sub = SqsSubscriber(
             server=self,
             channels_to_callbacks=channels_to_callbacks,
-            concurrency_limit=concurrency_limit,
+            channel_concurrency=channel_concurrency,
         )
         self._active_subscribers.add(sub)
-        sub.task.add_done_callback(lambda _: self._active_subscribers.discard(sub))
         return sub

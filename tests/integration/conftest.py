@@ -12,7 +12,13 @@ from repid.connections.nats import NatsServer
 from repid.connections.pubsub import PubsubServer
 from repid.connections.redis import RedisServer
 from repid.connections.sqs import SqsServer
-from tests.integration.brokers import BROKERS, INTEGRATION_TARGETS, BrokerContainer, start_broker
+from tests.integration.brokers import (
+    BROKERS,
+    INTEGRATION_TARGETS,
+    BrokerContainer,
+    remove_orphaned_brokers,
+    start_broker,
+)
 
 BrokerFor = Callable[[str], BrokerContainer]
 
@@ -32,6 +38,9 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 def broker_for() -> Generator[BrokerFor, None, None]:
     prepared_target = os.environ.get("REPID_TEST_BROKER")
     containers: dict[str, BrokerContainer] = {}
+    if prepared_target is None:
+        # Teardown never runs for a killed session; free what it left behind.
+        remove_orphaned_brokers()
     with ExitStack() as stack:
 
         def get_broker(target: str) -> BrokerContainer:
@@ -45,7 +54,7 @@ def broker_for() -> Generator[BrokerFor, None, None]:
                     int(os.environ["REPID_TEST_PORT"]),
                 )
             if target not in containers:
-                broker = start_broker(target)
+                broker = start_broker(target, owned=True)
                 stack.callback(broker.stop)
                 containers[target] = broker
             return containers[target]

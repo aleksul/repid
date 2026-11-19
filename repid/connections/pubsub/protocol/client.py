@@ -20,6 +20,7 @@ class SerializableRequest(Protocol):
 PUBLISH_METHOD = "/google.pubsub.v1.Publisher/Publish"
 ACKNOWLEDGE_METHOD = "/google.pubsub.v1.Subscriber/Acknowledge"
 MODIFY_ACK_DEADLINE_METHOD = "/google.pubsub.v1.Subscriber/ModifyAckDeadline"
+_CONTROL_RPC_TIMEOUT = 10
 
 
 class PubsubProtocolClient:
@@ -91,6 +92,7 @@ class PubsubProtocolClient:
                 method=ACKNOWLEDGE_METHOD,
                 request=request,
                 response_deserializer=self._deserialize_empty_response,
+                timeout=_CONTROL_RPC_TIMEOUT,
             ),
             operation_name="acknowledge",
         )
@@ -118,6 +120,7 @@ class PubsubProtocolClient:
                 method=MODIFY_ACK_DEADLINE_METHOD,
                 request=request,
                 response_deserializer=self._deserialize_empty_response,
+                timeout=_CONTROL_RPC_TIMEOUT,
             ),
             operation_name="modify_ack_deadline",
         )

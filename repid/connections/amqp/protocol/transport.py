@@ -506,12 +506,13 @@ class AmqpTransport:
                 f"Frame too large: {len(frame_bytes)} > {self._outbound_max_frame_size}",
             )
 
+        writer = self._writer
         async with self._write_lock:
-            if self._writer is None:
+            if writer is None or writer is not self._writer:
                 raise ConnectionClosedError("Not connected")
 
-            self._writer.write(frame_bytes)
-            await self._writer.drain()
+            writer.write(frame_bytes)
+            await writer.drain()
 
             self._metrics.bytes_sent += len(frame_bytes)
             self._metrics.frames_sent += 1

@@ -13,13 +13,14 @@ Here is a simplified overview of what you need to implement:
 
 ```python
 import asyncio
-from typing import Mapping, Sequence, Callable, Coroutine, Any
-from collections.abc import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager
+from typing import Mapping, Sequence, Any
+from repid import Concurrency
 from repid.connections.abc import (
     ServerT,
     SubscriberT,
     SentMessageT,
-    ReceivedMessageT,
+    MessageCallbackT,
     CapabilitiesT,
 )
 
@@ -42,6 +43,7 @@ class MyCustomServer:
         return {
             "supports_native_reply": False,
             "supports_lightweight_pause": False,
+            "supports_keep_alive": False,
         }
 
     # 3. Connection Lifecycle
@@ -77,12 +79,42 @@ class MyCustomServer:
     async def subscribe(
         self,
         *,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        channels_to_callbacks: dict[str, MessageCallbackT],
+        channel_concurrency: dict[str, Concurrency],
     ) -> SubscriberT:
         # Start consuming from the requested channels and map them to their callbacks
         # Return an object that implements `SubscriberT` (can manage pauses, resumes, closures)
         ...
+```
+
+### Concurrency
+
+Repid enforces concurrency limits itself. `channel_concurrency` gives you the effective limit
+for each channel, so you can mirror it in native settings such as prefetch.
+
+### Callbacks
+
+Always `await` the callback. It may block until the worker has room, so don't let one channel
+stall the others. After the callback starts, Repid handles ack, nack and reject.
+
+### Keep-alive (optional)
+
+If your broker uses leases, set `supports_keep_alive` and implement `keep_alive()`.
+Repid calls it every `keep_alive_interval` seconds until it's done with the message.
+Return `False` once renewal is pointless (message settled or lease expired), otherwise `None`.
+
+Repid only starts renewing once the callback is called. If your subscriber holds a message
+before that (for example, while paused), renew it with `repid.LeaseRenewal`; the worker takes
+the renewal over without a gap:
+
+```python
+renewal = LeaseRenewal(message)
+renewal.renew_at(message.keep_alive_interval)
+try:
+    with renewal.handoff():
+        await callback(message)
+finally:
+    await renewal.close_if_unclaimed()
 ```
 
 ## Creating a Subscriber

@@ -1,6 +1,6 @@
 import asyncio
 import contextlib
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -8,8 +8,10 @@ import grpc
 import grpc.aio
 import pytest
 
+from repid.connections.abc import ReceivedMessageT
 from repid.connections.pubsub.message_broker import PubsubServer
 from repid.connections.pubsub.protocol._helpers import ChannelConfig, QueuedDelivery
+from repid.connections.pubsub.protocol.control_batcher import PubsubControlBatcher
 from repid.connections.pubsub.protocol.credentials import InsecureCredentials
 from repid.connections.pubsub.protocol.proto import (
     PubsubMessage,
@@ -17,8 +19,10 @@ from repid.connections.pubsub.protocol.proto import (
     StreamingPullRequest,
     StreamingPullResponse,
 )
+from repid.connections.pubsub.protocol.received_message import PubsubReceivedMessage
 from repid.connections.pubsub.protocol.resilience import ResilienceState
 from repid.connections.pubsub.protocol.subscriber import PubsubSubscriber
+from repid.data.concurrency import Concurrency
 
 
 def _make_subscriber(**overrides: Any) -> PubsubSubscriber:
@@ -30,8 +34,6 @@ def _make_subscriber(**overrides: Any) -> PubsubSubscriber:
         "resilience_state": MagicMock(spec=ResilienceState),
         "server": MagicMock(spec=PubsubServer),
         "stream_ack_deadline_seconds": 10,
-        "client_id": "test-client",
-        "concurrency_limit": 1,
     }
     defaults.update(overrides)
     return PubsubSubscriber(**defaults)
@@ -58,7 +60,6 @@ async def test_create_starts_background_tasks() -> None:
         server=MagicMock(spec=PubsubServer),
         stream_ack_deadline_seconds=10,
         client_id="id",
-        concurrency_limit=1,
     )
     assert sub.is_active
     assert sub._task is not None
@@ -72,9 +73,6 @@ async def test_start_empty_config_sets_inactive() -> None:
     sub._start_background_tasks()
     assert not sub.is_active
     assert sub._task is None
-
-
-# --- _is_expected_stream_close ---
 
 
 def test_is_expected_stream_close_true() -> None:
@@ -107,9 +105,6 @@ def test_is_expected_stream_close_wrong_details() -> None:
     assert PubsubSubscriber._is_expected_stream_close(error) is False
 
 
-# --- _create_received_message ---
-
-
 def test_create_received_message() -> None:
     server = MagicMock(spec=PubsubServer)
     sub = _make_subscriber(server=server)
@@ -120,15 +115,13 @@ def test_create_received_message() -> None:
 
     result = sub._create_received_message(received, config)
 
+    assert result is not None
     assert result._raw_message is raw_msg
     assert result._ack_id == "ack-1"
     assert result._delivery_attempt == 2
     assert result._subscription_path == "sub/path"
     assert result._channel_name == "my-ch"
     assert result._server is server
-
-
-# --- _process_response ---
 
 
 async def test_process_response_filters_none_messages() -> None:
@@ -158,16 +151,12 @@ async def test_process_response_empty() -> None:
     assert sub._delivery_queue.qsize() == 0
 
 
-# --- _request_iterator ---
-
-
 async def test_request_iterator_initial_request() -> None:
+    config = _make_config(subscription_path="sub/1", concurrency=Concurrency(messages=5))
     sub = _make_subscriber(
         stream_ack_deadline_seconds=20,
         client_id="cid",
-        concurrency_limit=5,
     )
-    config = _make_config(subscription_path="sub/1")
 
     it = sub._request_iterator(config)
     initial = await anext(it)
@@ -178,6 +167,26 @@ async def test_request_iterator_initial_request() -> None:
     assert initial.max_outstanding_messages == 5
 
     await cast(AsyncGenerator[StreamingPullRequest, None], it).aclose()
+
+
+async def test_request_iterator_keeps_client_id_per_logical_stream() -> None:
+    first = _make_config()
+    second = _make_config()
+    sub = _make_subscriber(channel_configs=[first, second])
+
+    async def initial_request(config: ChannelConfig) -> StreamingPullRequest:
+        iterator = cast(
+            AsyncGenerator[StreamingPullRequest, None],
+            sub._request_iterator(config),
+        )
+        try:
+            return await anext(iterator)
+        finally:
+            await iterator.aclose()
+
+    first_request = await initial_request(first)
+    assert first_request.client_id == (await initial_request(first)).client_id
+    assert first_request.client_id != (await initial_request(second)).client_id
 
 
 async def test_request_iterator_stops_on_shutdown() -> None:
@@ -232,9 +241,6 @@ async def test_request_iterator_sends_heartbeats() -> None:
     await cast(AsyncGenerator[StreamingPullRequest, None], it).aclose()
 
 
-# --- _execute_callback ---
-
-
 async def test_execute_callback_success() -> None:
     sub = _make_subscriber()
     msg = MagicMock()
@@ -250,8 +256,7 @@ async def test_execute_callback_success() -> None:
 
 async def test_execute_callback_exception_nacks_unacted_message() -> None:
     sub = _make_subscriber()
-    msg = MagicMock()
-    msg.is_acted_on = False
+    msg = MagicMock(is_acted_on=False)
     sub._in_flight_messages.add(msg)
     delivery = QueuedDelivery(
         callback=AsyncMock(side_effect=ValueError("boom")),
@@ -265,8 +270,7 @@ async def test_execute_callback_exception_nacks_unacted_message() -> None:
 
 async def test_execute_callback_exception_skips_nack_when_acted_on() -> None:
     sub = _make_subscriber()
-    msg = MagicMock()
-    msg.is_acted_on = True
+    msg = MagicMock(is_acted_on=True)
     sub._in_flight_messages.add(msg)
     delivery = QueuedDelivery(
         callback=AsyncMock(side_effect=ValueError("boom")),
@@ -280,8 +284,7 @@ async def test_execute_callback_exception_skips_nack_when_acted_on() -> None:
 
 async def test_execute_callback_cancelled_rejects_unacted_message() -> None:
     sub = _make_subscriber()
-    msg = MagicMock()
-    msg.is_acted_on = False
+    msg = MagicMock(is_acted_on=False)
     sub._in_flight_messages.add(msg)
     delivery = QueuedDelivery(
         callback=AsyncMock(side_effect=asyncio.CancelledError),
@@ -295,8 +298,7 @@ async def test_execute_callback_cancelled_rejects_unacted_message() -> None:
 
 async def test_execute_callback_cancelled_skips_reject_when_acted_on() -> None:
     sub = _make_subscriber()
-    msg = MagicMock()
-    msg.is_acted_on = True
+    msg = MagicMock(is_acted_on=True)
     sub._in_flight_messages.add(msg)
     delivery = QueuedDelivery(
         callback=AsyncMock(side_effect=asyncio.CancelledError),
@@ -305,9 +307,6 @@ async def test_execute_callback_cancelled_skips_reject_when_acted_on() -> None:
     with pytest.raises(asyncio.CancelledError):
         await sub._execute_callback(delivery)
     msg.reject.assert_not_called()
-
-
-# --- _dispatch_loop ---
 
 
 async def test_dispatch_loop_dispatches_and_cancels() -> None:
@@ -325,9 +324,6 @@ async def test_dispatch_loop_dispatches_and_cancels() -> None:
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-
-
-# --- Lifecycle: pause / resume / task ---
 
 
 async def test_pause_resume_lifecycle() -> None:
@@ -375,9 +371,6 @@ async def test_task_property_returns_task() -> None:
         await sub._task  # pyrefly: ignore[not-async]
 
 
-# --- _cancel_callback_tasks ---
-
-
 def test_cancel_callback_tasks_empty() -> None:
     sub = _make_subscriber()
     result = sub._cancel_callback_tasks()
@@ -387,6 +380,8 @@ def test_cancel_callback_tasks_empty() -> None:
 def test_cancel_callback_tasks_cancels_all() -> None:
     sub = _make_subscriber()
     t1, t2 = MagicMock(), MagicMock()
+    t1.cancelling.return_value = 0
+    t2.cancelling.return_value = 1
     sub._callback_tasks.add(t1)
     sub._callback_tasks.add(t2)
 
@@ -394,17 +389,14 @@ def test_cancel_callback_tasks_cancels_all() -> None:
 
     assert len(result) == 2
     t1.cancel.assert_called_once()
-    t2.cancel.assert_called_once()
-    assert len(sub._callback_tasks) == 0
-
-
-# --- close ---
+    t2.cancel.assert_not_called()
 
 
 async def test_close_basic() -> None:
     sub = _make_subscriber()
     await sub.close()
-    assert sub._is_closing
+    assert sub._close_task is not None
+    assert sub._close_task.done()
     assert not sub.is_active
     assert sub._shutdown_event.is_set()
 
@@ -412,7 +404,6 @@ async def test_close_basic() -> None:
 async def test_close_idempotent() -> None:
     sub = _make_subscriber()
     await sub.close()
-    # Second close is a no-op
     with patch.object(sub._pause_event, "clear") as mock_clear:
         await sub.close()
         mock_clear.assert_not_called()
@@ -428,42 +419,121 @@ async def test_close_cancels_main_task() -> None:
 async def test_close_cancels_pending_callbacks() -> None:
     sub = _make_subscriber()
     t = MagicMock()
+    t.cancelling.return_value = 0
     sub._callback_tasks.add(t)
 
-    with patch("asyncio.wait", return_value=(set(), set())):
+    with patch.object(asyncio, "wait", return_value=(set(), set())):
         await sub.close()
 
     t.cancel.assert_called_once()
     assert len(sub._callback_tasks) == 0
 
 
+async def test_concurrent_close_waits_for_unsettled_receipts() -> None:
+    sub = _make_subscriber()
+    rejecting = asyncio.Event()
+    rejected = asyncio.Event()
+
+    async def reject() -> None:
+        rejecting.set()
+        await rejected.wait()
+
+    msg = MagicMock(reject=AsyncMock(side_effect=reject), is_acted_on=False)
+    sub._in_flight_messages.add(msg)
+    closing = asyncio.create_task(sub.close())
+    second_close: asyncio.Task[None] | None = None
+    try:
+        await asyncio.wait_for(rejecting.wait(), 1)
+        second_close = asyncio.create_task(sub.close())
+        await asyncio.sleep(0)
+        assert not second_close.done()
+    finally:
+        rejected.set()
+        await closing
+        if second_close is not None:
+            await second_close
+
+
 async def test_close_rejects_delivery_queue_messages() -> None:
     sub = _make_subscriber()
-    msg = MagicMock()
-    msg.is_acted_on = False
+    msg = MagicMock(reject=AsyncMock(), is_acted_on=False)
     delivery = QueuedDelivery(callback=AsyncMock(), message=msg)
     await sub._delivery_queue.put(delivery)
 
     await sub.close()
 
-    msg.reject.assert_called_once()
+    msg.reject.assert_awaited_once()
+
+
+async def test_close_batches_buffered_rejections() -> None:
+    client = MagicMock(modify_ack_deadline=AsyncMock())
+    batcher = PubsubControlBatcher(client, flush_interval=10, max_batch_ids=2)
+    await batcher.start()
+    sub = _make_subscriber(server=MagicMock(_control_batcher=batcher))
+    await sub._process_response(
+        StreamingPullResponse(
+            received_messages=[
+                ReceivedMessage(message=PubsubMessage(), ack_id="first"),
+                ReceivedMessage(message=PubsubMessage(), ack_id="second"),
+            ],
+        ),
+        _make_config(),
+    )
+    try:
+        await asyncio.wait_for(sub.close(), 1)
+        client.modify_ack_deadline.assert_awaited_once()
+        subscription, ids, seconds = client.modify_ack_deadline.await_args.args
+        assert subscription == "projects/p/subscriptions/s"
+        assert set(ids) == {"first", "second"}
+        assert seconds == 1
+    finally:
+        await batcher.stop()
+
+
+@pytest.mark.parametrize("close_from_callback", [True, False])
+async def test_callback_can_close_its_own_subscriber(close_from_callback: bool) -> None:
+    batcher = MagicMock(add_modify_deadline=AsyncMock())
+    sub = _make_subscriber(server=MagicMock(_control_batcher=batcher))
+    started = asyncio.Event()
+    closed = asyncio.Event()
+
+    async def callback(_message: PubsubReceivedMessage) -> None:
+        started.set()
+        try:
+            if not close_from_callback:
+                await asyncio.Future()
+        finally:
+            await sub.close()
+            closed.set()
+
+    config = _make_config(callback=callback)
+    await sub._process_response(
+        StreamingPullResponse(
+            received_messages=[ReceivedMessage(message=PubsubMessage(), ack_id="a")],
+        ),
+        config,
+    )
+    sub._task = asyncio.create_task(sub._dispatch_loop())
+    await asyncio.wait_for(started.wait(), 1)
+    if not close_from_callback:
+        await asyncio.wait_for(sub.close(), 1)
+    await asyncio.wait_for(closed.wait(), 1)
+    batcher.add_modify_deadline.assert_awaited_once_with(config.subscription_path, "a", 1)
 
 
 async def test_close_rejects_in_flight_unacted_messages() -> None:
     sub = _make_subscriber()
-    msg = MagicMock()
-    msg.is_acted_on = False
+    msg = MagicMock(reject=AsyncMock(), is_acted_on=False)
     sub._in_flight_messages.add(msg)
 
     await sub.close()
 
-    msg.reject.assert_called_once()
+    msg.reject.assert_awaited_once()
 
 
 async def test_close_skips_reject_for_acted_in_flight() -> None:
     sub = _make_subscriber()
-    msg = MagicMock()
-    msg.is_acted_on = True
+    msg = MagicMock(is_acted_on=True)
     sub._in_flight_messages.add(msg)
 
     await sub.close()
@@ -501,9 +571,6 @@ async def test_close_waits_for_callbacks_before_rejecting_in_flight() -> None:
 
     assert msg.acted
     msg.reject.assert_not_called()
-
-
-# --- _streaming_pull_loop ---
 
 
 async def test_streaming_pull_loop_normal_execution() -> None:
@@ -651,7 +718,18 @@ async def test_streaming_pull_loop_generic_exception() -> None:
     assert call_count == 2
 
 
-# --- _run_streaming_pull ---
+def _mock_stream_call(
+    responses: Callable[
+        [AsyncIterator[StreamingPullRequest]],
+        AsyncIterator[StreamingPullResponse],
+    ],
+) -> Callable[[AsyncIterator[StreamingPullRequest]], MagicMock]:
+    def make_call(requests: AsyncIterator[StreamingPullRequest]) -> MagicMock:
+        call = MagicMock()
+        call.__aiter__.side_effect = lambda: responses(requests)
+        return call
+
+    return make_call
 
 
 async def test_run_streaming_pull_processes_messages() -> None:
@@ -671,8 +749,8 @@ async def test_run_streaming_pull_processes_messages() -> None:
             sub._shutdown_event.set()
             break
 
-    stream_stream = cast(AsyncMock, sub._channel.stream_stream)
-    stream_stream.return_value = stream_call
+    stream_stream = cast(MagicMock, sub._channel.stream_stream)
+    stream_stream.return_value.side_effect = _mock_stream_call(stream_call)
 
     await sub._run_streaming_pull(config)
 
@@ -691,8 +769,8 @@ async def test_run_streaming_pull_shutdown_during_response() -> None:
         sub._shutdown_event.set()
         yield MagicMock()  # This should be skipped
 
-    stream_stream = cast(AsyncMock, sub._channel.stream_stream)
-    stream_stream.return_value = stream_call
+    stream_stream = cast(MagicMock, sub._channel.stream_stream)
+    stream_stream.return_value.side_effect = _mock_stream_call(stream_call)
 
     await sub._run_streaming_pull(_make_config())
 
@@ -708,13 +786,10 @@ async def test_run_streaming_pull_empty_stream() -> None:
         return
         yield  # make it an async generator
 
-    stream_stream = cast(AsyncMock, sub._channel.stream_stream)
-    stream_stream.return_value = stream_call
+    stream_stream = cast(MagicMock, sub._channel.stream_stream)
+    stream_stream.return_value.side_effect = _mock_stream_call(stream_call)
 
     await sub._run_streaming_pull(config)
-
-
-# --- _process_background ---
 
 
 async def test_process_background_runs_all_tasks() -> None:
@@ -731,3 +806,121 @@ async def test_process_background_runs_all_tasks() -> None:
 
         mock_stream.assert_called_once_with(config)
         mock_dispatch.assert_called_once()
+
+
+async def test_fatal_stream_failure_stops_siblings_and_close_drains_callbacks() -> None:
+    failing = _make_config(channel="failing")
+    sibling = _make_config(channel="sibling")
+    sub = _make_subscriber(channel_configs=[failing, sibling])
+    sibling_stopped = asyncio.Event()
+    callback_started = asyncio.Event()
+
+    async def pull(config: ChannelConfig) -> None:
+        if config is failing:
+            await callback_started.wait()
+            raise RuntimeError("fatal stream failure")
+        try:
+            await asyncio.Future()
+        finally:
+            sibling_stopped.set()
+
+    async def callback(_message: ReceivedMessageT) -> None:
+        callback_started.set()
+        await asyncio.Future()
+
+    message = MagicMock(is_acted_on=False, reject=AsyncMock())
+    sub._in_flight_messages.add(message)
+    sub._delivery_queue.put_nowait(QueuedDelivery(message=message, callback=callback))
+    with patch.object(sub, "_streaming_pull_loop", side_effect=pull):
+        sub._start_background_tasks()
+        with pytest.raises(RuntimeError, match="fatal stream failure"):
+            await asyncio.wait_for(sub.task, 1)
+
+    assert sibling_stopped.is_set()
+    await asyncio.wait_for(sub.close(), 1)
+    message.reject.assert_awaited_once()
+
+
+@pytest.mark.parametrize("buffered_response", [False, True])
+async def test_pause_cancels_live_pull_and_resume_reopens_stream(buffered_response: bool) -> None:
+    delivered: asyncio.Queue[PubsubReceivedMessage] = asyncio.Queue()
+    reopened = asyncio.Event()
+
+    async def callback(message: PubsubReceivedMessage) -> None:
+        delivered.put_nowait(message)
+
+    class PullCall:
+        def __init__(self, ack_id: str) -> None:
+            self.ack_id = ack_id
+            self.cancelled = asyncio.Event()
+
+        def cancel(self) -> None:
+            self.cancelled.set()
+
+        async def __aiter__(self) -> AsyncIterator[StreamingPullResponse]:
+            if self.ack_id == "second":
+                reopened.set()
+            yield StreamingPullResponse(
+                received_messages=[ReceivedMessage(message=PubsubMessage(), ack_id=self.ack_id)],
+            )
+            await self.cancelled.wait()
+            if buffered_response:
+                yield StreamingPullResponse(
+                    received_messages=[ReceivedMessage(message=PubsubMessage(), ack_id="buffered")],
+                )
+            else:
+                raise asyncio.CancelledError
+
+    first, second = PullCall("first"), PullCall("second")
+    batcher = MagicMock(add_ack=AsyncMock(), add_modify_deadline=AsyncMock())
+    sub = _make_subscriber(
+        channel_configs=[_make_config(callback=callback)],
+        resilience_state=MagicMock(spec=ResilienceState, record_success=AsyncMock()),
+        server=MagicMock(_control_batcher=batcher),
+    )
+    stream = cast(MagicMock, sub._channel.stream_stream)
+    stream.return_value.side_effect = [first, second]
+    sub._start_background_tasks()
+    try:
+        message = await asyncio.wait_for(delivered.get(), 1)
+        await sub.pause()
+        assert first.cancelled.is_set()
+        await message.ack()
+        batcher.add_ack.assert_awaited_once_with("projects/p/subscriptions/s", "first")
+        await asyncio.sleep(0)
+        assert not reopened.is_set()
+        assert delivered.empty()
+
+        await sub.resume()
+        await asyncio.wait_for(reopened.wait(), 1)
+        resumed = await asyncio.wait_for(delivered.get(), 1)
+        assert resumed._ack_id == "second"
+        if buffered_response:
+            batcher.add_modify_deadline.assert_awaited_once_with(
+                "projects/p/subscriptions/s",
+                "buffered",
+                1,
+            )
+    finally:
+        await sub.close()
+
+
+async def test_pause_during_credentials_refresh_skips_opening_pull() -> None:
+    refreshing = asyncio.Event()
+    release = asyncio.Event()
+
+    async def refresh() -> None:
+        refreshing.set()
+        await release.wait()
+
+    sub = _make_subscriber(
+        credentials_provider=MagicMock(ensure_valid=AsyncMock(side_effect=refresh)),
+    )
+    starting = asyncio.create_task(sub._run_streaming_pull(_make_config()))
+    try:
+        await asyncio.wait_for(refreshing.wait(), 1)
+        await sub.pause()
+    finally:
+        release.set()
+        await asyncio.wait_for(starting, 1)
+    cast(MagicMock, sub._channel.stream_stream).assert_not_called()

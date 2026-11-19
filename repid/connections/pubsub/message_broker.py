@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import logging
-import uuid
-from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import grpc.aio
 
-from repid.connections.abc import CapabilitiesT, ReceivedMessageT, SentMessageT, SubscriberT
+from repid.connections.abc import (
+    CapabilitiesT,
+    MessageCallbackT,
+    SentMessageT,
+    SubscriberT,
+)
+from repid.data.concurrency import Concurrency
 
 from .helpers import ChannelOverride
 from .protocol import (
@@ -103,8 +108,6 @@ class PubsubServer:
             reconnect_jitter_factor: Jitter factor (0.0-1.0) for retry delays.
             stability_threshold: Seconds of stability before resetting retry counter.
             stream_ack_deadline_seconds: Ack deadline for StreamingPull.
-            max_outstanding_messages: Flow control for outstanding messages.
-            max_outstanding_bytes: Flow control for outstanding bytes (0=unlimited).
             credentials_provider: Custom credentials provider for auth. Overrides
                 automatic credential selection.
             channel_factory: Custom gRPC channel factory.
@@ -171,7 +174,6 @@ class PubsubServer:
         # Connection state
         self._channel: grpc.aio.Channel | None = None
         self._active_subscribers: list[PubsubSubscriber] = []
-        self._client_id = str(uuid.uuid4())
         self._protocol_client: PubsubProtocolClient | None = None
         self._control_batcher: PubsubControlBatcher | None = None
 
@@ -374,14 +376,15 @@ class PubsubServer:
     async def subscribe(
         self,
         *,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        channels_to_callbacks: dict[str, MessageCallbackT],
+        channel_concurrency: dict[str, Concurrency],
     ) -> SubscriberT:
         """Subscribe to Pub/Sub channels.
 
         Args:
             channels_to_callbacks: Mapping of channel names to callback functions.
-            concurrency_limit: Maximum concurrent message processing (None=unlimited).
+            channel_concurrency: Effective message and byte limits per channel;
+                a missing channel is unlimited.
 
         Returns:
             A subscriber that can be used to manage the subscription.
@@ -405,6 +408,7 @@ class PubsubServer:
                     channel=channel,
                     subscription_path=subscription_path,
                     callback=callback,
+                    concurrency=channel_concurrency.get(channel, Concurrency()),
                 ),
             )
 
@@ -414,8 +418,6 @@ class PubsubServer:
             credentials_provider=self._credentials_provider,
             resilience_state=self._resilience_state,
             stream_ack_deadline_seconds=self._stream_ack_deadline_seconds,
-            client_id=self._client_id,
-            concurrency_limit=concurrency_limit,
             server=self,
         )
         self._active_subscribers.append(subscriber)

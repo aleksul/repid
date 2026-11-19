@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from repid.connections.amqp._uamqp.performatives import (
@@ -29,10 +28,8 @@ from . import links
 from .states import SessionState, SessionStateMachine
 
 if TYPE_CHECKING:
-    from repid.connections.amqp._uamqp.message import Properties
-
     from .connection import AmqpConnection
-    from .links import ReceiverLink, SenderLink
+    from .links import ReceiverLink, SenderLink, _ReceiverCallback
 
 logger = logging.getLogger("repid.connections.amqp.protocol")
 
@@ -213,6 +210,8 @@ class Session:
         return delivery_id
 
     async def _ensure_incoming_window(self, minimum: int) -> None:
+        # A session may combine credits from many links. FLOW encodes this as uint.
+        minimum = min(minimum, 0xFFFFFFFF)
         if minimum <= self._incoming_window:
             return
 
@@ -515,10 +514,7 @@ class Session:
     async def create_receiver(
         self,
         address: str,
-        callback: Callable[
-            [bytes, dict[str, Any] | None, int, bytes, ReceiverLink, Properties | None],
-            Any,
-        ],
+        callback: _ReceiverCallback,
         name: str | None = None,
         prefetch: int = 100,
     ) -> ReceiverLink:
@@ -555,8 +551,22 @@ class Session:
         self._links[name] = link
         self._links_by_handle[handle] = link
 
-        await link.attach()
-        await link.wait_ready()  # Wait for ATTACH response
+        attachment = asyncio.create_task(link.attach())
+        try:
+            # Cancellation during write can arrive after ATTACH was sent.
+            # Let attach record its state before deciding whether to detach.
+            await asyncio.wait({attachment})
+            attachment.result()
+            await link.wait_ready()  # Wait for ATTACH response
+        except BaseException:
+            await asyncio.gather(attachment, return_exceptions=True)
+            try:
+                await link.detach()
+            except Exception:
+                logger.exception("session.receiver.detach_error", extra={"link": name})
+            finally:
+                self._remove_link(link)
+            raise
         return link
 
     # Backward-compatible aliases
@@ -572,10 +582,7 @@ class Session:
         self,
         address: str,
         name: str,
-        callback: Callable[
-            [bytes, dict[str, Any] | None, int, bytes, ReceiverLink, Properties | None],
-            Any,
-        ],
+        callback: _ReceiverCallback,
     ) -> ReceiverLink:
         """Create a receiver link (alias for create_receiver)."""
         return await self.create_receiver(address, callback, name)

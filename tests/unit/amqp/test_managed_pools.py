@@ -16,7 +16,7 @@ from repid.connections.amqp.protocol.events import (
     EventData,
     EventEmitter,
 )
-from repid.connections.amqp.protocol.links import LinkError, ReceiverLink
+from repid.connections.amqp.protocol.links import LinkError, ReceiverLink, _ReceivedHeaders
 from repid.connections.amqp.protocol.managed import (
     ReceiverPool,
     SenderPool,
@@ -61,12 +61,9 @@ async def test_sender_pool_stale_link_removal() -> None:
     managed = ManagedSession(cast(AmqpConnection, connection))
     pool = managed.sender_pool
 
-    # Add a stale link manually
     pool._links["/queues/test"] = cast(Any, StaleLink())
 
-    # Send should create a new link instead of using stale one
     await pool.send("/queues/test", b"data")
-    # Should have created new link
     assert pool._links["/queues/test"].is_usable
 
 
@@ -87,7 +84,6 @@ async def test_sender_pool_max_retries_exceeded() -> None:
     managed = ManagedSession(cast(AmqpConnection, SlowConnection()))
     pool = managed.sender_pool
 
-    # Override to return immediately
     async def no_wait(timeout: float = 5.0) -> None:  # noqa: ARG001
         return None
 
@@ -109,12 +105,10 @@ async def test_sender_pool_wait_for_connection_timeout_error() -> None:
             receiver_links=[],
         )
 
-    # Connection that stays disconnected
     connection = FakeManagedConnection(is_connected=False, session_factory=session_factory)
     managed = ManagedSession(cast(AmqpConnection, connection))
     sender_pool = SenderPool(managed)
 
-    # Should timeout
     with pytest.raises(ConnectionError, match="Connection not available"):
         await sender_pool._wait_for_connection(timeout=0.2)
 
@@ -143,10 +137,8 @@ async def test_sender_pool_removes_stale_link() -> None:
     managed = ManagedSession(cast(AmqpConnection, connection))
     sender_pool = SenderPool(managed)
 
-    # Add a stale link
     sender_pool._links["test-address"] = StaleLink()  # pyrefly: ignore[unsupported-operation]
 
-    # Get should remove stale link and create new one
     link = await sender_pool.get("test-address")
     assert link is not None
 
@@ -159,7 +151,6 @@ async def test_sender_pool_send_retries_on_link_error() -> None:
         detached: bool = False
 
         async def send(self, _payload: bytes, **_kwargs: Any) -> None:
-            # Always fail to trigger retry logic
             raise LinkError("send always fails for testing")
 
         async def detach(self) -> None:
@@ -169,7 +160,6 @@ async def test_sender_pool_send_retries_on_link_error() -> None:
         return cast(FakeSenderLink, AlwaysFailingLink())
 
     def session_factory() -> FakeSessionForPools:
-        # Return a session that creates failing links via factory
         return FakeSessionForPools(
             connection=None,
             sender_links=[],
@@ -181,7 +171,6 @@ async def test_sender_pool_send_retries_on_link_error() -> None:
     managed = ManagedSession(cast(AmqpConnection, connection))
     sender_pool = SenderPool(managed)
 
-    # Send should retry max_retries times and fail
     with pytest.raises(LinkError, match="send always fails"):
         await sender_pool.send("test-address", b"test-payload", max_retries=2)
 
@@ -210,21 +199,16 @@ async def test_sender_pool_get_with_stale_link() -> None:
     managed = ManagedSession(cast(AmqpConnection, connection))
     sender_pool = SenderPool(managed)
 
-    # Add a stale link manually
     stale = StaleLink()
     sender_pool._links["test-address"] = cast(Any, stale)
 
-    # Verify stale link is there
     assert "test-address" in sender_pool._links
     assert sender_pool._links["test-address"] is stale
 
-    # Get should remove stale link and create new one
     link = await sender_pool.get("test-address")
 
-    # Verify we got a different link
     assert link is not None
     assert link is not stale
-    # The new link should be in the pool
     assert "test-address" in sender_pool._links
     assert sender_pool._links["test-address"] is link
 
@@ -251,11 +235,9 @@ async def test_sender_pool_get_reuses_usable_link() -> None:
     managed = ManagedSession(cast(AmqpConnection, connection))
     sender_pool = SenderPool(managed)
 
-    # Add a usable link manually
     usable = UsableLink()
     sender_pool._links["test-address"] = cast(Any, usable)
 
-    # Get should return the same usable link
     link = await sender_pool.get("test-address")
     assert link is usable
 
@@ -299,13 +281,10 @@ async def test_receiver_pool_on_reconnected_error_handling() -> None:
     managed = ManagedSession(cast(AmqpConnection, connection))
     pool = managed.receiver_pool
 
-    # Add a bad link
     pool._links["/queues/test"] = cast(Any, BadLink())
 
-    # Trigger reconnection - should handle detach error
     await pool._on_reconnected(EventData(ConnectionEvent.RECONNECTED))
 
-    # Links should be cleared despite error
     assert len(pool._links) == 0
 
 
@@ -327,22 +306,19 @@ async def test_receiver_pool_close_with_link_error() -> None:
     managed = ManagedSession(cast(AmqpConnection, connection))
     pool = managed.receiver_pool
 
-    # Add bad link and a callback
     pool._links["/queues/test"] = cast(Any, BadLink())
-    pool._callbacks["/queues/test"] = lambda *_: None
+    pool._subscriptions["/queues/test"] = ("/queues/test", lambda *_: None, "test", 100)
 
-    # Should handle error without raising
     await pool.close()
 
-    # Should clear both links and callbacks
     assert len(pool._links) == 0
-    assert len(pool._callbacks) == 0
+    assert len(pool._subscriptions) == 0
 
 
 async def test_receiver_pool_on_reconnected_re_subscribe() -> None:
     async def callback(
         _body: bytes,
-        _headers: dict[str, Any] | None,
+        _headers: _ReceivedHeaders | None,
         _delivery_id: int,
         _tag: bytes,
         _link: ReceiverLink,
@@ -363,15 +339,35 @@ async def test_receiver_pool_on_reconnected_re_subscribe() -> None:
     managed = ManagedSession(cast(AmqpConnection, connection))
     receiver_pool = ReceiverPool(managed)
 
-    # Subscribe to an address
-    receiver_pool._callbacks["test-queue"] = callback
-    receiver_pool._link_names["test-queue"] = "test-receiver"
+    receiver_pool._subscriptions["test-queue"] = ("test-queue", callback, "test-receiver", 123)
 
-    # Call _on_reconnected to trigger re-subscription
     await receiver_pool._on_reconnected()
 
-    # Link should be created
     assert "test-queue" in receiver_pool._links
+
+
+async def test_receiver_pool_same_address_subscriptions_reconnect_and_close_independently() -> None:
+    first, second, reconnected_first, reconnected_second = [FakeReceiverLink() for _ in range(4)]
+    session = FakeSessionForPools(
+        connection=None,
+        sender_links=[],
+        receiver_links=[first, second, reconnected_first, reconnected_second],
+    )
+    connection = FakeManagedConnection(is_connected=True, session_factory=lambda: session)
+    pool = ManagedSession(cast(AmqpConnection, connection)).receiver_pool
+
+    assert await pool.subscribe("queue", lambda *_: None, subscription_key="one") is first
+    assert await pool.subscribe("queue", lambda *_: None, subscription_key="two") is second
+    with pytest.raises(ValueError, match="already exists"):
+        await pool.subscribe("queue", lambda *_: None, subscription_key="one")
+    await pool._on_reconnected()
+
+    await pool.unsubscribe("one")
+    assert reconnected_first.detached
+    assert not reconnected_second.detached
+
+    await pool.close()
+    assert reconnected_second.detached
 
 
 async def test_receiver_pool_invalidate() -> None:
@@ -386,10 +382,8 @@ async def test_receiver_pool_invalidate() -> None:
     managed = ManagedSession(cast(AmqpConnection, connection))
     receiver_pool = ReceiverPool(managed)
 
-    # Add a fake link
     receiver_pool._links["test"] = cast(Any, object())
 
-    # Invalidate should clear
     receiver_pool.invalidate()
 
     assert len(receiver_pool._links) == 0

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import logging
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import botocore.exceptions
 
@@ -16,9 +17,24 @@ from repid.connections.sqs.constants import (
 )
 
 if TYPE_CHECKING:
+    from types_aiobotocore_sqs.type_defs import MessageAttributeValueTypeDef, MessageTypeDef
+
     from repid.connections.sqs.message_broker import SqsServer
 
 logger = logging.getLogger("repid.connections.sqs")
+_Result = TypeVar("_Result")
+
+
+async def _finish_operation(operation: Awaitable[_Result]) -> _Result:
+    task = asyncio.ensure_future(operation)
+    try:
+        # Wait without forwarding cancellation into the RPC. Python 3.14's
+        # shield also reports late RPC failures to the event loop's handler.
+        await asyncio.wait({task})
+    except asyncio.CancelledError:
+        await asyncio.gather(task, return_exceptions=True)
+        raise
+    return task.result()
 
 
 class SqsReceivedMessage(ReceivedMessageT):
@@ -27,7 +43,7 @@ class SqsReceivedMessage(ReceivedMessageT):
         server: SqsServer,
         channel: str,
         queue_url: str,
-        msg: Mapping[str, Any],
+        msg: MessageTypeDef,
         visibility_timeout: int = 30,
     ) -> None:
         self._server = server
@@ -35,8 +51,16 @@ class SqsReceivedMessage(ReceivedMessageT):
         self._queue_url = queue_url
         self._msg = msg
         self._action: MessageAction | None = None
+        self._keep_alive_during_settlement = False
+        # Set once a DLQ copy is published. A failed delete is then finished
+        # by any later settlement instead of publishing or returning it again.
+        self._dead_lettered = False
+        self._lease_expired = False
+        self._visibility_lock = asyncio.Lock()
         self._visibility_timeout = visibility_timeout
-        self._keep_alive_interval: int = visibility_timeout // 3
+        self._keep_alive_interval: float | None = (
+            visibility_timeout / 3 if visibility_timeout > 0 else None
+        )
 
         self._message_id = msg.get("MessageId")
         self._receipt_handle = msg.get("ReceiptHandle")
@@ -98,7 +122,7 @@ class SqsReceivedMessage(ReceivedMessageT):
         return self._message_id
 
     @property
-    def keep_alive_interval(self) -> int:
+    def keep_alive_interval(self) -> float | None:
         return self._keep_alive_interval
 
     @staticmethod
@@ -107,19 +131,25 @@ class SqsReceivedMessage(ReceivedMessageT):
         return (
             isinstance(error_dict, dict)
             and bool(error_dict)
-            and error_dict.get("Code") == "ReceiptHandleIsInvalid"
+            and error_dict.get("Code") in ("ReceiptHandleIsInvalid", "MessageNotInflight")
         )
 
-    async def keep_alive(self) -> None:
-        # Settlements reserve _action before their first await, so a plain
-        # check here is enough to keep a renewal from racing a settlement.
-        if self._action is not None:
-            return
-        if self._server._client is None:
-            raise ConnectionError("SQS client is not connected.")
-        if not self._receipt_handle:
-            return
-        await self._change_visibility(self._visibility_timeout)
+    async def keep_alive(self) -> bool | None:
+        async with self._visibility_lock:
+            if self._visibility_timeout <= 0 or self._lease_expired:
+                return False
+            if self._action is not None and not self._keep_alive_during_settlement:
+                return False
+            if self._server._client is None:
+                raise ConnectionError("SQS client is not connected.")
+            if not self._receipt_handle:
+                return False
+            # Even if the timer is cancelled, a visibility extension must
+            # finish before a waiting reject can set the timeout to zero.
+            await _finish_operation(self._change_visibility(self._visibility_timeout))
+            if self._lease_expired:
+                return False
+        return None
 
     async def _change_visibility(self, visibility_timeout: int) -> None:
         # Re-check the client and receipt handle after crossing the method boundary.
@@ -136,6 +166,7 @@ class SqsReceivedMessage(ReceivedMessageT):
         except botocore.exceptions.ClientError as exc:
             if not self._is_stale_receipt_error(exc):
                 raise
+            self._lease_expired = True
 
     async def _delete_message(self) -> None:
         client = self._server._client
@@ -151,41 +182,48 @@ class SqsReceivedMessage(ReceivedMessageT):
             if not self._is_stale_receipt_error(exc):
                 raise
 
-    async def ack(self) -> None:
+    def _can_settle(self) -> bool:
         if self._server._client is None:
             raise ConnectionError("SQS client is not connected.")
-        if not self._receipt_handle:
-            return
-        # Reserve the action before the RPC: in a single event loop the
-        # check-and-set is atomic, so concurrent settlements are deduplicated,
-        # and a settlement cancelled mid-RPC is never followed by a second one.
-        if self._action is not None:
-            return
-        self._action = MessageAction.acked
+        return self._action is None and bool(self._receipt_handle) and not self._lease_expired
+
+    async def _settle(
+        self,
+        action: MessageAction,
+        operation: Callable[[], Awaitable[None]],
+    ) -> None:
+        # Reserve the action before I/O. Shutdown sees the reservation and
+        # skips rejection, so carry the settlement through caller cancellation.
+        if self._dead_lettered:
+            action, operation = MessageAction.nacked, self._delete_message
+        self._action = action
+        self._keep_alive_during_settlement = action is not MessageAction.rejected
+
+        await _finish_operation(self._perform_settlement(operation))
+
+    async def _perform_settlement(self, operation: Callable[[], Awaitable[None]]) -> None:
         try:
-            await self._delete_message()
+            await operation()
         except Exception:
-            # Cancellation is not caught, so a cancelled settlement stays
-            # reserved even if the RPC may have reached the server.
             self._action = None
             raise
+        finally:
+            self._keep_alive_during_settlement = False
+
+    async def ack(self) -> None:
+        if self._can_settle():
+            await self._settle(MessageAction.acked, self._delete_message)
 
     async def nack(self) -> None:
-        if self._server._client is None:
-            raise ConnectionError("SQS client is not connected.")
-        if not self._receipt_handle:
-            return
-        if self._action is not None:
-            return
-        self._action = MessageAction.nacked
-        try:
-            dlq_strategy = self._server._dlq_queue_strategy
-            if dlq_strategy:
-                await self._publish_to_dlq(dlq_strategy(self._channel))
-            await self._delete_message()
-        except Exception:
-            self._action = None
-            raise
+        if self._can_settle():
+            await self._settle(MessageAction.nacked, self._dead_letter)
+
+    async def _dead_letter(self) -> None:
+        dlq_strategy = self._server._dlq_queue_strategy
+        if dlq_strategy:
+            await self._publish_to_dlq(dlq_strategy(self._channel))
+            self._dead_lettered = True
+        await self._delete_message()
 
     async def _publish_to_dlq(self, dlq_channel: str) -> None:
         # Re-check the client after crossing the method boundary.
@@ -194,7 +232,7 @@ class SqsReceivedMessage(ReceivedMessageT):
             raise ConnectionError("SQS client is not connected.")
         dlq_queue_url = await self._server._get_queue_url(dlq_channel)
 
-        message_attributes: dict[str, Any] = {}
+        message_attributes: dict[str, MessageAttributeValueTypeDef] = {}
         for k, v in self._headers.items():
             message_attributes[k] = {"DataType": "String", "StringValue": v}
         if self._content_type:
@@ -215,20 +253,11 @@ class SqsReceivedMessage(ReceivedMessageT):
         )
 
     async def reject(self) -> None:
-        if self._server._client is None:
-            raise ConnectionError("SQS client is not connected.")
-        if not self._receipt_handle:
+        if not self._can_settle():
             return
-        if self._action is not None:
-            return
-        self._action = MessageAction.rejected
-        try:
-            await self._change_visibility(0)
-        except Exception:
-            # Cancellation is not caught, so a cancelled settlement stays
-            # reserved even if the RPC may have reached the server.
-            self._action = None
-            raise
+        async with self._visibility_lock:
+            if self._can_settle():
+                await self._settle(MessageAction.rejected, lambda: self._change_visibility(0))
 
     async def reply(
         self,

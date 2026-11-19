@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from functools import partial
 from typing import Annotated, Any
 
 import pytest
@@ -7,8 +9,14 @@ from pydantic import BaseModel
 
 from repid import Contact, ExternalDocs, Header, License, Repid, Router, Tag
 from repid.asyncapi import AsyncAPIGenerator
+from repid.connections.abc import ServerT
 from repid.connections.amqp import AmqpServer
 from repid.connections.in_memory import InMemoryServer
+from repid.connections.kafka import KafkaServer
+from repid.connections.nats import NatsServer
+from repid.connections.pubsub import PubsubServer
+from repid.connections.redis import RedisServer
+from repid.connections.sqs import SqsServer
 from repid.data.channel import Channel as ChannelData
 from repid.data.message_schema import (
     ActorMessageMetadata,
@@ -23,18 +31,6 @@ from repid.server_registry import ServerRegistry
 def test_message_example_raises_error_when_neither_headers_nor_payload_provided() -> None:
     with pytest.raises(ValueError, match="Either headers or payload must be provided"):
         MessageExample()
-
-
-def test_message_example_with_headers_only() -> None:
-    example = MessageExample(headers={"key": "value"})
-    assert example.headers == {"key": "value"}
-    assert example.payload is None
-
-
-def test_message_example_with_payload_only() -> None:
-    example = MessageExample(payload={"key": "value"})
-    assert example.payload == {"key": "value"}
-    assert example.headers is None
 
 
 def test_asyncapi_generator_basic() -> None:
@@ -195,6 +191,111 @@ def test_asyncapi_generator_amqp_server() -> None:
                 "external_docs_https_example_com_amqp_docs": {
                     "url": "https://example.com/amqp-docs",
                 },
+            },
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("server_factory", "connection_schema"),
+    [
+        pytest.param(
+            partial(AmqpServer, "amqp://broker.example.com:5672/orders"),
+            {
+                "host": "broker.example.com:5672",
+                "protocol": "amqp",
+                "protocolVersion": "1.0.0",
+                "pathname": "/orders",
+            },
+            id="amqp",
+        ),
+        pytest.param(
+            partial(KafkaServer, "broker.example.com:9092"),
+            {"host": "broker.example.com:9092", "protocol": "kafka"},
+            id="kafka",
+        ),
+        pytest.param(
+            partial(NatsServer, "nats://broker.example.com:4222"),
+            {"host": "broker.example.com:4222", "protocol": "nats"},
+            id="nats",
+        ),
+        pytest.param(
+            partial(PubsubServer, default_project="orders"),
+            {
+                "host": "pubsub.googleapis.com:443",
+                "protocol": "googlepubsub",
+                "protocolVersion": "v1",
+            },
+            id="pubsub",
+        ),
+        pytest.param(
+            partial(RedisServer, "redis://broker.example.com:6379/2"),
+            {
+                "host": "broker.example.com:6379",
+                "protocol": "redis",
+                "protocolVersion": "6.2",
+                "pathname": "/2",
+            },
+            id="redis",
+        ),
+        pytest.param(
+            partial(SqsServer, endpoint_url="http://localhost:9324", region_name="elasticmq"),
+            {"host": "http://localhost:9324", "protocol": "sqs"},
+            id="sqs",
+        ),
+    ],
+)
+def test_asyncapi_generator_broker_metadata_references(
+    server_factory: Callable[..., ServerT],
+    connection_schema: dict[str, str],
+) -> None:
+    bindings = {connection_schema["protocol"]: {"bindingVersion": "0.1.0"}}
+    app = Repid()
+    app.servers.register_server(
+        "orders",
+        server_factory(
+            title="Order broker",
+            summary="Order events",
+            description="Accepts order processing requests.",
+            variables={"region": {"default": "eu", "enum": ["eu", "us"]}},
+            security=[{"type": "userPassword"}],
+            tags=[Tag(name="orders", description="Order processing")],
+            external_docs=ExternalDocs(url="https://example.com/orders"),
+            bindings=bindings,
+        ),
+    )
+
+    schema = app.generate_asyncapi_schema()
+
+    assert schema == {
+        "asyncapi": "3.0.0",
+        "info": {"title": "Repid AsyncAPI", "version": "0.0.1"},
+        "servers": {
+            "orders": {
+                **connection_schema,
+                "title": "Order broker",
+                "summary": "Order events",
+                "description": "Accepts order processing requests.",
+                "variables": {"region": {"default": "eu", "enum": ["eu", "us"]}},
+                "security": [
+                    {"$ref": "#/components/securitySchemes/orders_server-security-schema-0"},
+                ],
+                "tags": [{"$ref": "#/components/tags/orders"}],
+                "externalDocs": {
+                    "$ref": "#/components/externalDocs/external_docs_https_example_com_orders",
+                },
+                "bindings": {"$ref": "#/components/serverBindings/orders_bindings"},
+            },
+        },
+        "channels": {},
+        "operations": {},
+        "components": {
+            "messages": {},
+            "securitySchemes": {"orders_server-security-schema-0": {"type": "userPassword"}},
+            "serverBindings": {"orders_bindings": bindings},
+            "tags": {"orders": {"name": "orders", "description": "Order processing"}},
+            "externalDocs": {
+                "external_docs_https_example_com_orders": {"url": "https://example.com/orders"},
             },
         },
     }

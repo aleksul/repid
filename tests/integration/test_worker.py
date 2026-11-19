@@ -2,22 +2,36 @@ from __future__ import annotations
 
 import asyncio
 import signal
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
 
-from repid import Repid, Router
-from repid.connections.abc import ServerT, SubscriberT
+from repid import Channel, Concurrency, Repid, Router
+from repid.connections.abc import ReceivedMessageT, ServerT, SubscriberT
+from repid.connections.nats import NatsServer
+from tests.channel_limits import channel_limits
+
+
+async def _reset_nats_stream(server: NatsServer, stream: str) -> None:
+    # A new durable takes its acknowledgment window from the first worker that creates
+    # it, so recreate durables with empty streams to keep each test's limits its own.
+    js = server._js
+    assert js is not None
+    await js.purge_stream(stream)
+    for info in await js.consumers_info(stream):
+        await js.delete_consumer(stream, info.name)
 
 
 @pytest.fixture(autouse=True)
 async def seed_conn(
     autoconn: Repid,
     request: pytest.FixtureRequest,
-) -> AsyncIterator[ServerT]:
+) -> AsyncGenerator[ServerT, None]:
     async with autoconn.servers.default.connection() as conn:
+        if isinstance(conn, NatsServer):
+            await _reset_nats_stream(conn, "repid_default")
         amount_of_jobs = getattr(request, "param", 1)
 
         if amount_of_jobs > 0:
@@ -43,7 +57,7 @@ async def managed_subscriber(subscriber: SubscriberT) -> AsyncGenerator[Any, Non
         await subscriber.close()
 
 
-@pytest.mark.parametrize("seed_conn", [30], indirect=True)
+@pytest.mark.parametrize("seed_conn", [pytest.param(30, id="thirty_messages")], indirect=True)
 async def test_more_concurrent_tasks_than_limit(autoconn: Repid) -> None:
     hit = 0
 
@@ -60,7 +74,10 @@ async def test_more_concurrent_tasks_than_limit(autoconn: Repid) -> None:
     # tests capability of the worker to properly handle concurrency limits -
     # timeout is set to 10 seconds, there are 30 tasks that each take 1 second to complete,
     # but concurrency limit is set to 10, so the whole run should take approximately 3 seconds
-    await asyncio.wait_for(autoconn.run_worker(messages_limit=30, tasks_limit=10), timeout=10.0)
+    await asyncio.wait_for(
+        autoconn.run_worker(messages_limit=30, concurrency=Concurrency(messages=10)),
+        timeout=10.0,
+    )
 
     assert hit == 30
 
@@ -91,7 +108,6 @@ async def test_forced_worker_stop(autoconn: Repid) -> None:
 
         await asyncio.wait_for(actor_started_event.wait(), timeout=5.0)
 
-        # terminate the worker immediately, and thus actor cannot finish
         signal.raise_signal(signal.SIGUSR1)
 
         await worker_task
@@ -103,7 +119,6 @@ async def test_forced_worker_stop(autoconn: Repid) -> None:
     actor_started_event.clear()
     actor_finished_event.clear()
 
-    # tests that worker didn't lose the message when shutting down
     async with autoconn.servers.default.connection():
         runner = await autoconn.run_worker(
             messages_limit=1,
@@ -116,25 +131,136 @@ async def test_forced_worker_stop(autoconn: Repid) -> None:
 
 
 async def test_another_channel_is_not_consumed(seed_conn: ServerT) -> None:
-    queue: asyncio.Queue[Any] = asyncio.Queue()
+    queue: asyncio.Queue[ReceivedMessageT] = asyncio.Queue()
 
-    async def wrong_callback(msg: Any) -> None:
+    async def wrong_callback(msg: ReceivedMessageT) -> None:
         await queue.put(msg)
 
-    consumer = await seed_conn.subscribe(channels_to_callbacks={"another": wrong_callback})
+    consumer = await seed_conn.subscribe(
+        channel_concurrency=channel_limits(("another",)),
+        channels_to_callbacks={"another": wrong_callback},
+    )
     async with managed_subscriber(consumer):
         with pytest.raises(asyncio.TimeoutError):
-            # there should be nothing to consume,
-            # since the message was scheduled on 'default' channel
             await asyncio.wait_for(queue.get(), 1.0)
 
-    queue2: asyncio.Queue[Any] = asyncio.Queue()
+    queue2: asyncio.Queue[ReceivedMessageT] = asyncio.Queue()
 
-    async def right_callback(msg: Any) -> None:
+    async def right_callback(msg: ReceivedMessageT) -> None:
         await queue2.put(msg)
 
-    consumer = await seed_conn.subscribe(channels_to_callbacks={"default": right_callback})
+    consumer = await seed_conn.subscribe(
+        channel_concurrency=channel_limits(("default",)),
+        channels_to_callbacks={"default": right_callback},
+    )
     async with managed_subscriber(consumer):
         rmsg = await asyncio.wait_for(queue2.get(), 10.0)
         assert rmsg.channel == "default"
         await rmsg.ack()
+
+
+@pytest.mark.parametrize("seed_conn", [pytest.param(0, id="empty_queue")], indirect=True)
+@pytest.mark.parametrize(
+    "dimension",
+    [
+        pytest.param("messages", id="messages"),
+        pytest.param("payload_bytes", id="payload_bytes"),
+        pytest.param("oversized_channel", id="oversized_channel"),
+        pytest.param("oversized_worker", id="oversized_worker"),
+    ],
+)
+async def test_worker_and_channel_concurrency(autoconn: Repid, dimension: str) -> None:
+    limits = {
+        "messages": Concurrency(messages=1),
+        "payload_bytes": Concurrency(payload_bytes=2),
+        "oversized_channel": Concurrency(payload_bytes=1),
+        "oversized_worker": Concurrency(payload_bytes=8),
+    }[dimension]
+    worker_limits = Concurrency(
+        messages=3,
+        payload_bytes=1 if dimension == "oversized_worker" else 8,
+    )
+    router = Router(channel=Channel(address="default", concurrency=limits))
+    active = 0
+    peak = 0
+
+    @router.actor
+    async def limited_job() -> None:
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        try:
+            await asyncio.sleep(0.02)
+        finally:
+            active -= 1
+
+    autoconn.include_router(router)
+    for _ in range(6):
+        await autoconn.send_message(
+            channel="default",
+            payload=b"{}",
+            headers={"topic": "limited_job"},
+        )
+    result = await asyncio.wait_for(
+        autoconn.run_worker(
+            messages_limit=6,
+            concurrency=worker_limits,
+        ),
+        timeout=15,
+    )
+    assert result.processed == 6
+    assert peak == 1
+    assert active == 0
+
+
+@pytest.mark.parametrize("seed_conn", [pytest.param(0, id="empty_queue")], indirect=True)
+async def test_channel_waiting_for_bytes_leaves_room_for_another_channel(autoconn: Repid) -> None:
+    router = Router(channel=Channel(address="default", concurrency=Concurrency(payload_bytes=2)))
+    first_started = asyncio.Event()
+    other_started = asyncio.Event()
+    release_first = asyncio.Event()
+    starts = 0
+
+    @router.actor
+    async def limited_job() -> None:
+        nonlocal starts
+        starts += 1
+        if starts == 1:
+            first_started.set()
+            await release_first.wait()
+
+    @router.actor(channel="another")
+    async def other_job() -> None:
+        other_started.set()
+
+    autoconn.include_router(router)
+    for _ in range(3):
+        await autoconn.send_message(
+            channel="default",
+            payload=b"{}",
+            headers={"topic": "limited_job"},
+        )
+
+    worker = asyncio.create_task(
+        autoconn.run_worker(messages_limit=4, concurrency=Concurrency(messages=2, payload_bytes=4)),
+    )
+    try:
+        async with asyncio.timeout(15):
+            await first_started.wait()
+            await autoconn.send_message(
+                channel="another",
+                payload=b"{}",
+                headers={"topic": "other_job"},
+            )
+            await other_started.wait()
+            assert starts == 1
+            release_first.set()
+            result = await worker
+    finally:
+        release_first.set()
+        if not worker.done():
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
+
+    assert result.processed == 4
+    assert starts == 3

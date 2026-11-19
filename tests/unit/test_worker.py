@@ -10,7 +10,7 @@ import pytest
 
 from repid import Router
 from repid._runner import _Runner
-from repid._worker import _Worker
+from repid._worker import _Worker, logger
 from repid.asyncapi import AsyncAPI3Schema
 from repid.asyncapi_server import AsyncAPIServerSettings
 from repid.connections.in_memory import InMemoryServer
@@ -51,7 +51,6 @@ async def test_worker_with_no_actors() -> None:
 
         runner = await worker.run()
 
-        # Worker should exit immediately with no actors
         assert runner.processed == 0
 
 
@@ -350,7 +349,7 @@ def test_worker_unregister_signals_logs_subsequent_errors() -> None:
     loop.remove_signal_handler.side_effect = [first_error, second_error]
 
     with (
-        patch("repid._worker.logger.exception") as log_exception,
+        patch.object(logger, "exception") as log_exception,
         pytest.raises(RuntimeError) as raised,
     ):
         worker._unregister_signals(loop)

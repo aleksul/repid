@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 if TYPE_CHECKING:
     from repid.asyncapi.models.operations import OperationBindingsObject
@@ -12,7 +12,10 @@ if TYPE_CHECKING:
     from repid.data.message_schema import ActorMessageMetadata
     from repid.serializer import SerializerT
 
-FnReturnT = TypeVar("FnReturnT")
+_ActorCall: TypeAlias = Callable[
+    ["ReceivedMessageT", "ActorData"],
+    Coroutine[object, None, object],
+]
 
 
 AutoActionT = Literal["ack", "nack", "reject"]
@@ -33,17 +36,13 @@ class ActorExecutionContext:
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ActorData:
-    fn: Callable[..., Coroutine[Any, Any, FnReturnT]]
+    fn: Callable[..., Awaitable[object]]
     name: str
     confirmation_mode: Literal["auto", "always_ack", "ack_first", "manual", "manual_explicit"]
     routing_strategy: Callable[[BaseMessageT], bool]
     middleware_pipeline: Callable[
-        [
-            Callable[[ReceivedMessageT, ActorData], Coroutine[Any, Any, FnReturnT]],
-            ReceivedMessageT,
-            ActorData,
-        ],
-        Coroutine[Any, Any, Any],
+        [_ActorCall, ReceivedMessageT, ActorData],
+        Coroutine[object, None, object],
     ]
     channel_address: str
     converter: ConverterT

@@ -43,7 +43,6 @@ def test_message_body_types() -> None:
 
 
 def test_decode_primitives() -> None:
-    # Helper to decode
     def decode(code: int, payload: bytes) -> Any:
         decoder = _DECODE_MAP[code]
         buffer = memoryview(payload)
@@ -77,7 +76,6 @@ def test_decode_primitives() -> None:
 
 
 def test_decode_compounds() -> None:
-    # Helper to decode
     def decode(code: int, payload: bytes) -> Any:
         decoder = _DECODE_MAP[code]
         buffer = memoryview(payload)
@@ -200,7 +198,6 @@ def test_decode_errors() -> None:
     # Unknown constructor for descriptor (0x00 then 0xFF)
     header_bad_desc = b"\x00\x00\x00\x0a\x02\x00\x00\x00"
 
-    # Mock _DECODE_MAP to return None for 255
     with (
         patch.dict(_DECODE_MAP, {255: None}),
         pytest.raises(
@@ -226,7 +223,6 @@ def test_decode_errors() -> None:
     ):
         bytes_to_performative(header_bad_list + b"\x00\x53\x10\xff")
 
-    # Test line 361 in _decode.py (_construct_message value unknown)
     data_bad_val = b"\x00\x53\x75\xff"
     with (
         patch.dict(_DECODE_MAP, {255: None}),
@@ -253,7 +249,6 @@ def test_construct_message_coverage() -> None:
     ):
         _construct_message(b"\x00\xff")
 
-    # Helper to build section
     def build_section(code: int, value_bytes: bytes) -> bytes:
         return b"\x00" + b"\x53" + struct.pack("B", code) + value_bytes
 
@@ -334,8 +329,6 @@ def test_transfer_frames_to_message_coverage() -> None:
     # 1. Frames with payload
     # Payload must be a valid message section. e.g. Data (0x75) + string "A"
     # Data section: 0x00 (Desc) | 0x53 0x75 (Desc Data) | 0xA0 ... (Binary)
-    # Let's just execute it with any payload, as _construct_message will parse it.
-    # But _construct_message expects valid sections.
     # Section: 0x00 | 0x53 0x77 (Value) | 0x50 0x01 (ubyte 1)
     payload_chunk = b"\x00\x53\x77\x50\x01"
 
@@ -415,7 +408,6 @@ def test_amqp_types_bool() -> None:
 
 def test_amqp_types_ubyte() -> None:
     # Python ints usually encode to smallest fitting type or long
-    # We verify that they come back equal
     assert round_trip(10) == 10
     assert round_trip(255) == 255
 
@@ -488,19 +480,3 @@ def test_amqp_types_list() -> None:
 def test_amqp_types_map() -> None:
     m = {"key": "value", "int": 1, "list": [1, 2]}
     assert round_trip(m) == m
-
-
-def test_amqp_types_symbol() -> None:
-    # Symbols are not native python type, but might be supported via wrapped types or simple strings
-    # _encode_unknown might not infer symbol from string.
-    # Usually one needs a wrapper type like amqp.Symbol('name').
-    # But current implementation uses native types mostly.
-    pass
-
-
-def test_amqp_types_arrays() -> None:
-    # Arrays are lists of same type.
-    # Python lists are heterogeneous.
-    # _encode_list vs _encode_array.
-    # _encode_unknown will likely choose List.
-    pass

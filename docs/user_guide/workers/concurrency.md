@@ -1,31 +1,212 @@
-# Concurrency limit
+# Concurrency Limits
 
-A Repid worker runs inside a single `asyncio` event loop. It can pull multiple messages from the
-broker and execute them concurrently.
+Concurrency limits keep a worker from taking more work than it can handle.
+For example, you can use them to protect memory, database pools, external services, etc.
 
-You can configure `tasks_limit` when starting the worker:
+Configure message count and payload bytes with `Concurrency`:
 
 ```python
-# Cap the worker at processing up to 2000 messages concurrently
-await app.run_worker(tasks_limit=2000)
+from repid import Concurrency
+
+await app.run_worker(
+    concurrency=Concurrency(
+        messages=200,
+        payload_bytes=64 * 1024**2,
+    ),
+)
 ```
 
-By default, Repid allows up to **1000 tasks** inside a single worker.
+## Default worker limit
 
-!!! note "Concurrency vs Bottlenecks"
-    The `tasks_limit` is not primarily meant as a strict business
-    concurrency restriction, but rather a way to avoid overloading
-    the Python process. Because `asyncio` runs entirely on a single CPU core,
-    scheduling too many concurrent tasks will cause the event loop
-    to start throttling. This typically happens in the range of
-    ~1000 to 4000 concurrent tasks depending on your hardware. You are highly
-    encouraged to benchmark your specific workload and adjust this
-    limit to find your process's optimal sweet spot.
+A worker admits up to 1,000 messages by default:
 
-!!! tip "Scaling Out"
-    If you need to process more messages than a single Python event loop can
-    handle without throttling, you should scale vertically
-    (run multiple workers using multiprocessing) and/or horizontally
-    (by running multiple instances of the application,
-    e.g. docker containers or kubernetes pods)
-    rather than endlessly increasing `tasks_limit`.
+```python
+await app.run_worker()  # same as Concurrency(messages=1000)
+```
+
+To remove this limit, pass an empty `Concurrency` object:
+
+```python
+await app.run_worker(concurrency=Concurrency())
+```
+
+There is no default payload byte cap.
+
+Any `Concurrency` you pass replaces the default as a whole, and a field you leave out is
+unlimited. A worker configured with only `payload_bytes` therefore has no message limit, and
+small or empty payloads can still start an unbounded number of actors. Set both fields to
+bound both:
+
+```python
+await app.run_worker(
+    concurrency=Concurrency(messages=1000, payload_bytes=64 * 1024**2),
+)
+```
+
+The `tasks_limit` worker argument is deprecated. Use `concurrency=Concurrency(messages=...)`
+to set the same limit.
+
+Each field accepts a positive integer or `None` for unlimited.
+
+Routers and actors have no default limits.
+
+??? Note "Why is the default 1,000 messages?"
+    In tests, the processing overhead of receiving and scheduling about 1,000 to 2,000 no-op
+    messages can saturate one CPU core. This number is based on Repid's
+    message-consumption overhead, does not include any work done by your actors.
+
+    When a worker takes more messages than its CPU can process, it can also take work away from
+    less busy workers, thus the whole system becomes less efficient.
+    The best value depends on your CPU, broker, and actors.
+    Measure your workload and adjust the limit.
+
+## Channel limits
+
+Declare an additional budget on a channel:
+
+```python
+from repid import Channel, Concurrency, Router
+
+images = Channel(
+    address="images",
+    concurrency=Concurrency(
+        messages=8,
+        payload_bytes=32 * 1024**2,
+    ),
+)
+router = Router(channel=images)
+
+await app.run_worker(
+    concurrency=Concurrency(
+        messages=100,
+        payload_bytes=128 * 1024**2,
+    ),
+)
+```
+
+The worker limit applies to all channels combined. A message counts toward the worker limit and
+any limit set for its channel. All channels draw from the same pool of worker capacity.
+
+=== "With a channel limit"
+
+    The worker waits until both budgets can admit the message.
+
+    ```mermaid
+    flowchart TD
+        routed["Message routed to a channel"] --> worker{"Room in the shared worker budget?"}
+        worker -->|Yes| channel{"Room in the images channel budget?"}
+        worker -->|No| wait["Wait for capacity"]
+        channel -->|No| wait
+        wait -->|Retry| worker
+        channel -->|Yes| reserve["Reserve worker and channel capacity together"]
+        reserve --> process["Process the message"]
+    ```
+
+=== "Without a channel limit"
+
+    The worker checks only its own budget.
+
+    ```mermaid
+    flowchart TD
+        routed["Message routed to a channel"] --> capacity{"Room in the worker budget?"}
+        capacity -->|Yes| process["Reserve worker capacity and process the message"]
+        capacity -->|No| wait["Wait for capacity"]
+        wait --> capacity
+    ```
+
+### Sharing a channel limit across actors
+
+Both actors below use the same `images` address, so they share one 8-message limit.
+
+```python
+from repid import Channel, Concurrency, Router
+
+router = Router()
+
+
+@router.actor(
+    channel=Channel(
+        address="images",
+        concurrency=Concurrency(messages=8),
+    ),
+)
+async def resize_image() -> None: ...
+
+
+@router.actor(
+    channel=Channel(
+        address="images",
+        concurrency=Concurrency(messages=8),
+    ),
+)
+async def make_thumbnail() -> None: ...
+```
+
+If 6 messages are running in `resize_image` and 2 in `make_thumbnail`, the next `images`
+message waits for a slot.
+
+If you explicitly set concurrency limits for the same channel address more than once,
+the settings must match exactly. Repid will raise an error when it materializes the router
+if the settings differ.
+A limit declared on a router's default channel also applies when actors in other included
+routers use the same address.
+
+You can also declare the limit once and reference the channel by its address:
+
+```python
+from repid import Channel, Concurrency, Router
+
+router = Router()
+
+
+@router.actor(
+    channel=Channel(
+        address="images",
+        concurrency=Concurrency(messages=8),
+    ),
+)
+async def resize_image() -> None: ...
+
+
+@router.actor(channel="images")  # (1)
+async def make_thumbnail() -> None: ...
+```
+
+1. Implicitly references earlier declaration of the channel with Concurrency of 8 messages.
+
+## What counts toward a limit
+
+- `messages` counts the messages the worker is processing.
+- `payload_bytes` adds up the size of their serialized payloads.
+
+A message counts from the moment it starts until the worker has finished with it, including the
+final acknowledgment. A message larger than a byte limit runs alone once that limit is free.
+
+## Prefetch
+
+Subscribers fetch only as many messages as the worker has room for. With `prefetch=N`, they
+fetch up to N extra messages per channel and keep them ready, so a slot freed by a finished actor
+fills without waiting for the broker.
+
+```python
+from repid.connections import RedisServer
+
+server = RedisServer("redis://localhost:6379/0", prefetch=10)
+```
+
+| Broker | `prefetch` default |
+| --- | --- |
+| Redis Streams | `batch_size`, up to the channel's message limit |
+| SQS | `batch_size`, up to the channel's message limit |
+| AMQP 1.0, Google Pub/Sub, Kafka, NATS JetStream | `0` |
+| In-memory | not available |
+
+Prefetched messages are reserved for this worker and don't count toward `payload_bytes`. Keep
+`prefetch` small when actors are slow or many workers share a queue, and raise it when actors are
+fast and broker round trips are the bottleneck.
+
+### NATS JetStream
+
+Repid sets the consumer's `max_ack_pending` to the channel's message limit plus `prefetch`, but
+only when it creates the consumer. All workers share that window, and Repid never changes an
+existing consumer. To change it later, update the consumer on the NATS server.

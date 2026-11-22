@@ -7,14 +7,43 @@ from urllib.parse import urlsplit
 
 import pytest
 from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.typing import KeyT, StreamIdT
 
 from repid import Concurrency
 from repid.connections.abc import ReceivedMessageT
 from repid.connections.redis import RedisServer
-from repid.connections.redis.message_broker import ChannelConfig, RedisSubscriber
+from repid.connections.redis.message_broker import (
+    ChannelConfig,
+    RedisSubscriber,
+    _StreamReadResultT,
+)
 from tests.intake import callback_intake
 
 pytestmark = pytest.mark.integration_target(name="redis")
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        pytest.param("", None, id="unbounded_by_default"),
+        pytest.param("?socket_timeout=2", 2.0, id="dsn"),
+    ],
+)
+async def test_socket_timeout_does_not_bound_notification_reads(
+    redis_connection: RedisServer,
+    query: str,
+    expected: float | None,
+) -> None:
+    # Blocking notification reads may outlast any fixed socket timeout.
+    server = RedisServer(f"{redis_connection._dsn}{query}")
+    async with server.connection():
+        client = server._redis
+        assert client is not None
+        connection = await client.connection_pool.get_connection()
+        try:
+            assert connection.socket_timeout == expected
+        finally:
+            await client.connection_pool.release(connection)
 
 
 @pytest.mark.parametrize(
@@ -126,21 +155,25 @@ async def test_recover_assigned_messages_after_lost_read_reply(
         async def read_group(
             groupname: str,
             consumername: str,
-            streams: dict[str, str],
+            streams: dict[KeyT, StreamIdT],
             count: int,
         ) -> object:
             nonlocal lose_reply
-            result = await original(
-                groupname=groupname,
-                consumername=consumername,
-                streams=streams,  # pyrefly: ignore[bad-argument-type]
-                count=count,
+            result = cast(
+                "_StreamReadResultT",
+                await original(
+                    groupname=groupname,
+                    consumername=consumername,
+                    streams=streams,
+                    count=count,
+                ),
             )
             if (
                 lose_reply
                 and result
                 and all(cursor == ">" for cursor in streams.values())
-                and result[0][1][0][1][b"payload"] == b"lost"
+                and (fields := result[0][1][0][1]) is not None
+                and fields[b"payload"] == b"lost"
             ):
                 lose_reply = False
                 assigned.set()
@@ -270,6 +303,7 @@ async def test_pending_recovery_excludes_a_concurrent_claim_on_the_same_stream(
         try:
             await client.xgroup_create(stream, cfg.group, id="0", mkstream=True)
             message_id = await client.xadd(stream, {b"payload": b"job"})
+            assert isinstance(message_id, bytes)
             await client.xreadgroup(cfg.group, "recovery-race", {stream: ">"}, count=1)
             original_range = client.xrange
 
@@ -342,7 +376,7 @@ async def test_stale_reclaim_retries_completed_unsettled_delivery(
         async def read_group(
             groupname: str,
             consumername: str,
-            streams: dict[str, str],
+            streams: dict[KeyT, StreamIdT],
             count: int,
         ) -> object:
             nonlocal failed_read
@@ -354,7 +388,7 @@ async def test_stale_reclaim_retries_completed_unsettled_delivery(
                 await original_read(
                     groupname=groupname,
                     consumername=consumername,
-                    streams=streams,  # pyrefly: ignore[bad-argument-type]
+                    streams=streams,
                     count=count,
                 ),
             )

@@ -7,7 +7,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Any, Self, overload
 from uuid import uuid4
 
-from repid._runner import _actor_run
+from repid._runner import _run_actor_pipeline
 from repid.connections.abc import CapabilitiesT, MessageAction, ServerT
 from repid.data import ActorExecutionContext, MessageData
 from repid.message_registry import MessageRegistry
@@ -468,12 +468,8 @@ class TestClient:
                 raise ValueError(f"No actor found for channel '{test_message.channel}'")
             return test_message
 
-        # _actor_run returns either the result or the exception
-        actor_result = await _actor_run(
-            actor=actor,
-            message=test_message,
-            actor_context=self._actor_context,
-        )
+        # The pipeline returns either the result or the exception
+        actor_result = await _run_actor_pipeline(actor, test_message, self._actor_context)
 
         if isinstance(actor_result, Exception):
             test_message._exception = actor_result

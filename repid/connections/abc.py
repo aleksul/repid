@@ -231,6 +231,5 @@ class ServerT(Protocol):
     async def subscribe(
         self,
         *,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        intake: Intake,
     ) -> SubscriberT: ...

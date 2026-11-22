@@ -31,10 +31,13 @@ class PubsubProtocolClient:
         channel: grpc.aio.Channel,
         credentials_provider: CredentialsProvider,
         resilience_state: ResilienceState,
+        control_rpc_timeout: float = 10.0,
     ) -> None:
         self._channel = channel
         self._credentials_provider = credentials_provider
         self._resilience_state = resilience_state
+        # Acknowledge and deadline calls must give up before a lease lapses.
+        self._control_rpc_timeout = control_rpc_timeout
 
     @staticmethod
     def _serialize_request(request: SerializableRequest) -> bytes:
@@ -50,7 +53,7 @@ class PubsubProtocolClient:
         method: str,
         request: SerializableRequest,
         response_deserializer: Callable[[bytes], ResponseT],
-        timeout: int | None = None,
+        timeout: float | None = None,
     ) -> ResponseT:
         await self._credentials_provider.ensure_valid()
         unary_call = self._channel.unary_unary(
@@ -91,6 +94,7 @@ class PubsubProtocolClient:
                 method=ACKNOWLEDGE_METHOD,
                 request=request,
                 response_deserializer=self._deserialize_empty_response,
+                timeout=self._control_rpc_timeout,
             ),
             operation_name="acknowledge",
         )
@@ -118,6 +122,7 @@ class PubsubProtocolClient:
                 method=MODIFY_ACK_DEADLINE_METHOD,
                 request=request,
                 response_deserializer=self._deserialize_empty_response,
+                timeout=self._control_rpc_timeout,
             ),
             operation_name="modify_ack_deadline",
         )

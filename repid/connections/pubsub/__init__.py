@@ -10,6 +10,7 @@ This module provides a Pub/Sub server implementation with:
 
 from .helpers import ChannelOverride as ChannelOverride
 from .message_broker import PubsubServer as PubsubServer
+from .protocol import CircuitOpenError as CircuitOpenError
 from .protocol import CredentialsProvider as CredentialsProvider
 from .protocol import GoogleDefaultCredentials as GoogleDefaultCredentials
 from .protocol import InsecureCredentials as InsecureCredentials

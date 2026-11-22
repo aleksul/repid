@@ -157,7 +157,11 @@ async def test_cancelling_caller_of_full_ack_batch_does_not_abandon_other_awaite
     await batcher.stop()
 
 
-async def test_stop_waits_for_blocked_immediate_batch(client: _FakeProtocolClient) -> None:
+@pytest.mark.parametrize("max_batch_ids", [1, 100])
+async def test_stop_waits_for_blocked_batch(
+    client: _FakeProtocolClient,
+    max_batch_ids: int,
+) -> None:
     started = asyncio.Event()
     release = asyncio.Event()
 
@@ -166,18 +170,44 @@ async def test_stop_waits_for_blocked_immediate_batch(client: _FakeProtocolClien
         await release.wait()
 
     client.acknowledge.side_effect = acknowledge
-    batcher = PubsubControlBatcher(client, flush_interval=10, max_batch_ids=1)
+    batcher = PubsubControlBatcher(client, flush_interval=0.001, max_batch_ids=max_batch_ids)
     await batcher.start()
 
     add_task = asyncio.create_task(batcher.add_ack("sub1", "ack1"))
     await started.wait()
     stop_task = asyncio.create_task(batcher.stop())
-    await asyncio.sleep(0)
-    assert not stop_task.done()
+    try:
+        done, _ = await asyncio.wait({stop_task}, timeout=0.01)
+        assert not done
+        with pytest.raises(ConnectionError, match="stopped"):
+            await batcher.add_ack("sub1", "late")
+    finally:
+        release.set()
+        await asyncio.gather(stop_task, add_task)
 
-    release.set()
-    await stop_task
-    await add_task
+
+async def test_slow_deadline_batch_does_not_block_later_renewal(
+    client: _FakeProtocolClient,
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def modify(_subscription: str, ids: list[str], _seconds: int) -> None:
+        if ids == ["slow"]:
+            started.set()
+            await release.wait()
+
+    client.modify_ack_deadline.side_effect = modify
+    batcher = PubsubControlBatcher(client, flush_interval=0.001)
+    await batcher.start()
+    slow = asyncio.create_task(batcher.add_modify_deadline("sub1", "slow", 1))
+    try:
+        await asyncio.wait_for(started.wait(), 1)
+        await asyncio.wait_for(batcher.add_modify_deadline("sub1", "renew", 60), 1)
+        assert not slow.done()
+    finally:
+        release.set()
+        await asyncio.gather(slow, batcher.stop())
 
 
 @pytest.mark.parametrize("error", [RuntimeError("RPC failed"), asyncio.CancelledError()])
@@ -289,6 +319,7 @@ async def test_stop_flushes_pending_acks(client: _FakeProtocolClient) -> None:
     await batcher.start()
 
     task = asyncio.create_task(batcher.add_ack("sub1", "ack1"))
+    await asyncio.sleep(0)
 
     await batcher.stop()
 
@@ -335,13 +366,15 @@ async def test_modify_execute_cancelled_error_resolves_all_futures(
         await future
 
 
-async def test_add_after_stop_hangs_indefinitely(client: _FakeProtocolClient) -> None:
+async def test_add_after_stop_fails_immediately(client: _FakeProtocolClient) -> None:
     batcher = PubsubControlBatcher(client, flush_interval=0.01, max_batch_ids=100)
     await batcher.start()
     await batcher.stop()
 
-    with pytest.raises(asyncio.TimeoutError):
-        await asyncio.wait_for(batcher.add_ack("sub1", "ack1"), timeout=0.1)
+    with pytest.raises(ConnectionError, match="stopped"):
+        await batcher.add_ack("sub1", "ack1")
+    with pytest.raises(ConnectionError, match="stopped"):
+        await batcher.add_modify_deadline("sub1", "ack1", 60)
 
 
 async def test_relay_cancels_outer_when_operation_future_already_cancelled(
@@ -376,6 +409,21 @@ async def test_cancelling_caller_withdraws_pending_modify_operation(
 
     client.modify_ack_deadline.assert_not_awaited()
     await batcher.stop()
+
+
+async def test_cancelling_low_level_ack_withdraws_unflushed_operation(
+    client: _FakeProtocolClient,
+) -> None:
+    batcher = PubsubControlBatcher(client, flush_interval=100)
+    await batcher.start()
+    ack = asyncio.create_task(batcher.add_ack("sub1", "cancelled"))
+    await asyncio.sleep(0)
+    ack.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await ack
+
+    await batcher.stop()
+    client.acknowledge.assert_not_awaited()
 
 
 async def test_cancel_colliding_with_batch_failure_consumes_batch_error(

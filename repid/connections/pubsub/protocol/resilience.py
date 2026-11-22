@@ -1,7 +1,8 @@
 """Resilience mechanisms for Pub/Sub gRPC operations.
 
-This module provides shared retry logic with exponential backoff,
-jitter, and stability-based reset for both publishing and subscribing.
+Each unary call retries with exponential backoff and jitter. A circuit breaker
+shared by every call and stream of a server opens after too many consecutive
+failures, then lets one probe call through after a cooldown.
 """
 
 from __future__ import annotations
@@ -17,6 +18,8 @@ from typing import TypeVar
 import grpc
 import grpc.aio
 
+from repid._utils._typing import override
+
 T = TypeVar("T")
 
 
@@ -31,18 +34,33 @@ class ReconnectionExhaustedError(Exception):
         )
 
 
+class CircuitOpenError(ReconnectionExhaustedError):
+    """Raised without contacting Pub/Sub while the circuit breaker is open."""
+
+    @override
+    def __str__(self) -> str:
+        return (
+            f"Circuit breaker is open after {self.attempts} consecutive failures. "
+            f"Last error: {self.last_error}"
+        )
+
+
 @dataclass(slots=True)
 class ResilienceConfig:
     """Configuration for resilience mechanisms.
 
     Attributes:
-        max_attempts: Maximum number of retry/reconnection attempts.
+        max_attempts: Maximum number of attempts per unary call.
         base_delay: Initial delay between retries in seconds.
         max_delay: Maximum delay between retries in seconds.
         jitter_factor: Factor for randomizing delay (0.0 to 1.0).
             A value of 0.25 means ±25% jitter.
-        stability_threshold: Time in seconds of successful operation
-            after which the attempt counter resets to 0.
+        stability_threshold: Seconds a streaming pull must stay connected before
+            its responses count as recovery.
+        failure_threshold: Consecutive failed attempts, across every call and
+            stream, that open the circuit breaker.
+        open_duration: Seconds the circuit breaker stays open before one probe
+            call may try again.
         retryable_status_codes: gRPC status codes that should trigger retry.
     """
 
@@ -51,6 +69,8 @@ class ResilienceConfig:
     max_delay: float = 32.0
     jitter_factor: float = 0.25
     stability_threshold: float = 60.0
+    failure_threshold: int = 10
+    open_duration: float = 30.0
     retryable_status_codes: frozenset[grpc.StatusCode] = field(
         default_factory=lambda: frozenset(
             {
@@ -77,17 +97,20 @@ class ResilienceConfig:
 
 
 class ResilienceState:
-    """Tracks state for resilience mechanisms.
+    """Circuit breaker shared by every call and stream of one server.
 
-    This class is thread-safe and can be shared between operations
-    to provide unified retry tracking across publish and subscribe.
+    It counts consecutive failed attempts. Any successful call closes it, as
+    does a response on a stream that has stayed connected long enough. Once the
+    count reaches `failure_threshold`, calls fail without contacting Pub/Sub and
+    streams stop reconnecting. After `open_duration`, one probe call may try:
+    success closes the breaker, failure keeps it open for another period.
     """
 
     def __init__(self, config: ResilienceConfig) -> None:
         self._config = config
         self._attempt_count = 0
-        self._last_success_time: float | None = None
-        self._lock = asyncio.Lock()
+        self._opened_at: float | None = None
+        self._probing = False
 
     @property
     def config(self) -> ResilienceConfig:
@@ -99,31 +122,54 @@ class ResilienceState:
         """Current number of consecutive failed attempts."""
         return self._attempt_count
 
+    def begin_attempt(self, last_error: Exception | None = None) -> bool:
+        """Admit one attempt of a call and return whether it is the probe.
+
+        Raises:
+            CircuitOpenError: The breaker is open and its probe is not due or
+                already running.
+        """
+        if self._opened_at is None:
+            return False
+        cooling_down = time.monotonic() - self._opened_at < self._config.open_duration
+        if self._probing or cooling_down:
+            raise CircuitOpenError(self._attempt_count, last_error)
+        self._probing = True
+        return True
+
+    def end_probe(self) -> None:
+        """Release the probe slot after an attempt that reached no verdict."""
+        self._probing = False
+
     async def record_success(self) -> None:
-        """Record a successful operation, potentially resetting attempt count."""
-        async with self._lock:
-            now = time.monotonic()
+        """Record that Pub/Sub answered, closing the breaker."""
+        self._attempt_count = 0
+        self._opened_at = None
+        self._probing = False
 
-            # If we've been stable for long enough, reset attempt count
-            if (
-                self._last_success_time is not None
-                and now - self._last_success_time >= self._config.stability_threshold
-            ):
-                self._attempt_count = 0
+    async def record_stream_success(self, connected_at: float) -> None:
+        """Record a stream response, which counts once the stream proved stable.
 
-            self._last_success_time = now
+        A stream that connects and fails again right away must not hide the
+        failures around it.
+        """
+        if time.monotonic() - connected_at >= self._config.stability_threshold:
+            await self.record_success()
 
     async def record_failure(self) -> int:
-        """Record a failed operation and return the new attempt count."""
-        async with self._lock:
-            self._attempt_count += 1
-            return self._attempt_count
+        """Record a failed attempt and return the new consecutive count."""
+        self._attempt_count += 1
+        self._probing = False
+        if self._attempt_count >= self._config.failure_threshold:
+            # A failed probe starts a new open period.
+            self._opened_at = time.monotonic()
+        return self._attempt_count
 
     async def reset(self) -> None:
         """Reset state completely."""
-        async with self._lock:
-            self._attempt_count = 0
-            self._last_success_time = None
+        self._attempt_count = 0
+        self._opened_at = None
+        self._probing = False
 
     def calculate_delay(self, attempt: int | None = None) -> float:
         """Calculate the delay for the next retry attempt with jitter.
@@ -158,8 +204,8 @@ class ResilienceState:
         return code not in self._config.terminating_status_codes
 
     def should_retry(self) -> bool:
-        """Check if we should attempt another retry."""
-        return self._attempt_count < self._config.max_attempts
+        """Whether the breaker is closed, so a stream may reconnect."""
+        return self._opened_at is None
 
 
 @asynccontextmanager
@@ -201,8 +247,12 @@ async def with_retry(
 ) -> T:
     """Execute an operation with automatic retry on transient failures.
 
+    Each call makes up to `max_attempts` attempts with its own backoff. Every
+    attempt also reports to the shared circuit breaker, which stops the call
+    early once it opens.
+
     Args:
-        state: The shared resilience state.
+        state: The server's resilience state.
         operation: The async operation to execute.
         operation_name: Name for logging purposes.
 
@@ -211,25 +261,35 @@ async def with_retry(
 
     Raises:
         ReconnectionExhaustedError: If all retry attempts fail.
+        CircuitOpenError: If the circuit breaker is open.
         grpc.aio.AioRpcError: If the error is not retryable.
     """
     last_error: Exception | None = None
     _ = operation_name  # For future logging use
 
-    while state.should_retry():
+    max_attempts = state.config.max_attempts
+    for attempt in range(1, max_attempts + 1):
+        probe = state.begin_attempt(last_error)
         try:
-            async with resilient_operation(state):
-                return await operation()
+            result = await operation()
         except grpc.aio.AioRpcError as e:
             last_error = e
-
             if not state.is_retryable(e):
+                # Pub/Sub answered, so it is reachable.
+                await state.record_success()
                 raise
+            await state.record_failure()
+            if attempt < max_attempts:
+                await asyncio.sleep(state.calculate_delay(attempt))
+            continue
+        except BaseException:
+            if probe:
+                state.end_probe()
+            raise
+        await state.record_success()
+        return result
 
-            delay = state.calculate_delay()
-            await asyncio.sleep(delay)
-
-    raise ReconnectionExhaustedError(state.attempt_count, last_error)
+    raise ReconnectionExhaustedError(max_attempts, last_error)
 
 
 async def with_retry_generator(
@@ -257,8 +317,9 @@ async def with_retry_generator(
     while state.should_retry():
         try:
             iterator = create_iterator()
+            connected_at = time.monotonic()
             async for item in iterator:
-                await state.record_success()
+                await state.record_stream_success(connected_at)
                 yield item
             # Stream completed normally
             return
@@ -268,6 +329,8 @@ async def with_retry_generator(
 
             if not state.is_retryable(e):
                 raise
+            if not state.should_retry():
+                break
 
             delay = state.calculate_delay()
             await asyncio.sleep(delay)

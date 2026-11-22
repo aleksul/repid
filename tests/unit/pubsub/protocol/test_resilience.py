@@ -1,3 +1,5 @@
+import asyncio
+import time
 from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -8,20 +10,6 @@ import pytest
 from repid.connections.pubsub.protocol import resilience
 
 
-def test_resilience_config_defaults() -> None:
-    config = resilience.ResilienceConfig()
-    assert config.max_attempts == 5
-    assert config.base_delay == 1.0
-
-
-def test_resilience_state_init() -> None:
-    config = resilience.ResilienceConfig()
-    state = resilience.ResilienceState(config)
-
-    assert state.config == config
-    assert state.attempt_count == 0
-
-
 def test_calculate_delay() -> None:
     config = resilience.ResilienceConfig(
         base_delay=1.0,
@@ -30,29 +18,19 @@ def test_calculate_delay() -> None:
     )
     state = resilience.ResilienceState(config)
 
-    # Exponential backoff: base_delay * 2^(attempt-1)
-    # attempt=1: 1.0 * 2^0 = 1.0
-    # attempt=2: 1.0 * 2^1 = 2.0
-    # attempt=3: 1.0 * 2^2 = 4.0
-
-    # We can't easily check exact value due to jitter, but we can check range
-
     state._attempt_count = 1
     delay1 = state.calculate_delay()
-    # 1.0 +/- 25% -> [0.75, 1.25]
     assert 0.75 <= delay1 <= 1.25
 
     state._attempt_count = 3
     delay3 = state.calculate_delay()
-    # 4.0 +/- 25% -> [3.0, 5.0]
     assert 3.0 <= delay3 <= 5.0
 
-    # Test explicit attempt
     delay_explicit = state.calculate_delay(attempt=1)
     assert 0.75 <= delay_explicit <= 1.25
 
 
-@patch("asyncio.sleep")
+@patch.object(asyncio, "sleep")
 async def test_with_retry_generator_immediate_success(mock_sleep: AsyncMock) -> None:
     config = resilience.ResilienceConfig()
     state = resilience.ResilienceState(config)
@@ -77,7 +55,7 @@ async def test_resilience_reset() -> None:
 
     await state.reset()
     assert state.attempt_count == 0
-    assert state._last_success_time is None
+    assert state.should_retry()
 
 
 async def test_with_retry_generator_non_retryable() -> None:
@@ -100,27 +78,22 @@ async def test_with_retry_generator_non_retryable() -> None:
             pass
 
 
-def test_is_retryable() -> None:
-    config = resilience.ResilienceConfig()
-    state = resilience.ResilienceState(config)
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        pytest.param(grpc.StatusCode.UNAVAILABLE, True, id="transient_error"),
+        pytest.param(grpc.StatusCode.PERMISSION_DENIED, False, id="terminating_error"),
+        pytest.param(grpc.StatusCode.OUT_OF_RANGE, True, id="nonterminating_error"),
+    ],
+)
+def test_is_retryable(code: grpc.StatusCode, expected: bool) -> None:
+    state = resilience.ResilienceState(resilience.ResilienceConfig())
+    error = grpc.aio.AioRpcError(code, grpc.aio.Metadata(), grpc.aio.Metadata())
 
-    # Retryable
-    err_unavailable = MagicMock(spec=grpc.aio.AioRpcError)
-    err_unavailable.code.return_value = grpc.StatusCode.UNAVAILABLE
-    assert state.is_retryable(err_unavailable)
-
-    # Terminating
-    err_denied = MagicMock(spec=grpc.aio.AioRpcError)
-    err_denied.code.return_value = grpc.StatusCode.PERMISSION_DENIED
-    assert not state.is_retryable(err_denied)
-
-    # Unknown (not in terminating list)
-    err_out_range = MagicMock(spec=grpc.aio.AioRpcError)
-    err_out_range.code.return_value = grpc.StatusCode.OUT_OF_RANGE
-    assert state.is_retryable(err_out_range)  # True because it's not terminating
+    assert state.is_retryable(error) is expected
 
 
-@patch("asyncio.sleep")
+@patch.object(asyncio, "sleep")
 async def test_with_retry_success(mock_sleep: AsyncMock) -> None:
     config = resilience.ResilienceConfig()
     state = resilience.ResilienceState(config)
@@ -134,7 +107,7 @@ async def test_with_retry_success(mock_sleep: AsyncMock) -> None:
     assert state.attempt_count == 0
 
 
-@patch("asyncio.sleep")
+@patch.object(asyncio, "sleep")
 async def test_with_retry_failure_then_success(mock_sleep: AsyncMock) -> None:
     config = resilience.ResilienceConfig()
     state = resilience.ResilienceState(config)
@@ -155,7 +128,7 @@ async def test_with_retry_failure_then_success(mock_sleep: AsyncMock) -> None:
     mock_sleep.assert_called_once()
 
 
-@patch("asyncio.sleep")
+@patch.object(asyncio, "sleep")
 async def test_with_retry_exhausted(_mock_sleep: AsyncMock) -> None:  # noqa: PT019
     config = resilience.ResilienceConfig(max_attempts=2)
     state = resilience.ResilienceState(config)
@@ -175,7 +148,7 @@ async def test_with_retry_exhausted(_mock_sleep: AsyncMock) -> None:  # noqa: PT
     assert op.call_count == 2
 
 
-@patch("asyncio.sleep")
+@patch.object(asyncio, "sleep")
 async def test_with_retry_non_retryable_error(mock_sleep: AsyncMock) -> None:
     config = resilience.ResilienceConfig()
     state = resilience.ResilienceState(config)
@@ -196,16 +169,18 @@ async def test_with_retry_non_retryable_error(mock_sleep: AsyncMock) -> None:
     mock_sleep.assert_not_called()
 
 
-async def test_resilient_operation_context() -> None:
+async def test_resilient_operation_context_records_success() -> None:
     config = resilience.ResilienceConfig()
     state = resilience.ResilienceState(config)
+    await state.record_failure()
 
-    # Success
     async with resilience.resilient_operation(state):
         pass
-    assert state._last_success_time is not None
+    assert state.attempt_count == 0
 
-    # Failure
+
+async def test_resilient_operation_context_records_failure() -> None:
+    state = resilience.ResilienceState(resilience.ResilienceConfig())
     err = grpc.aio.AioRpcError(
         grpc.StatusCode.UNKNOWN,
         MagicMock(spec=grpc.aio.Metadata),
@@ -226,7 +201,7 @@ def test_reconnection_exhausted_error() -> None:
     assert str(err) == "Failed to reconnect after 3 attempts. Last error: foo"
 
 
-@patch("asyncio.sleep")
+@patch.object(asyncio, "sleep")
 async def test_with_retry_generator(mock_sleep: AsyncMock) -> None:
     config = resilience.ResilienceConfig()
     state = resilience.ResilienceState(config)
@@ -270,20 +245,29 @@ async def test_calculate_delay_no_args() -> None:
     assert delay > 0
 
 
-async def test_record_success_resets_if_stable() -> None:
+@pytest.mark.parametrize(
+    ("connected_for", "expected_count"),
+    [
+        pytest.param(0.5, 5, id="just_reconnected"),
+        pytest.param(1.0, 0, id="stable"),
+    ],
+)
+async def test_stream_response_counts_once_the_stream_is_stable(
+    connected_for: float,
+    expected_count: int,
+) -> None:
     config = resilience.ResilienceConfig(stability_threshold=1.0)
     state = resilience.ResilienceState(config)
     state._attempt_count = 5
-    state._last_success_time = 100.0
 
-    with patch("time.monotonic", return_value=102.0):
-        await state.record_success()
+    with patch.object(time, "monotonic", return_value=100.0 + connected_for):
+        await state.record_stream_success(connected_at=100.0)
 
-    assert state._attempt_count == 0
+    assert state.attempt_count == expected_count
 
 
 async def test_with_retry_generator_retries_fail() -> None:
-    config = resilience.ResilienceConfig(max_attempts=2, base_delay=0.01)
+    config = resilience.ResilienceConfig(failure_threshold=2, base_delay=0.01)
     state = resilience.ResilienceState(config)
 
     rpc_error = grpc.aio.AioRpcError(
@@ -301,20 +285,21 @@ async def test_with_retry_generator_retries_fail() -> None:
         yield 1
         raise rpc_error
 
-    with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+    with patch.object(asyncio, "sleep", new_callable=AsyncMock) as mock_sleep:
         with pytest.raises(resilience.ReconnectionExhaustedError):
             async for _ in resilience.with_retry_generator(state, gen):
                 pass
 
-        assert mock_sleep.call_count == 2
+        # The second failure opens the breaker, so there is no third connect.
+        assert mock_sleep.call_count == 1
         assert call_count == 2
 
 
 async def test_resilience_generator_exhausted() -> None:
-    config = resilience.ResilienceConfig(max_attempts=1)
+    config = resilience.ResilienceConfig(failure_threshold=1)
     rs = resilience.ResilienceState(config)
 
-    await rs.record_failure()  # Attempt 1 used
+    await rs.record_failure()  # Opens the breaker
 
     async def failing_gen() -> AsyncIterator[int]:
         yield 1
@@ -323,3 +308,157 @@ async def test_resilience_generator_exhausted() -> None:
         # Already exhausted, should raise immediately
         async for _ in resilience.with_retry_generator(rs, failing_gen):
             pass
+
+
+def _unavailable() -> grpc.aio.AioRpcError:
+    return grpc.aio.AioRpcError(
+        grpc.StatusCode.UNAVAILABLE,
+        grpc.aio.Metadata(),
+        grpc.aio.Metadata(),
+        "unavailable",
+    )
+
+
+def _breaker(*, max_attempts: int = 5, open_duration: float = 30.0) -> resilience.ResilienceState:
+    config = resilience.ResilienceConfig(
+        max_attempts=max_attempts,
+        base_delay=0,
+        max_delay=0,
+        jitter_factor=0,
+        failure_threshold=3,
+        open_duration=open_duration,
+    )
+    return resilience.ResilienceState(config)
+
+
+async def test_successful_calls_reset_the_shared_failure_count() -> None:
+    # Steady traffic with one transient failure per call must never trip the breaker.
+    state = _breaker()
+    for _ in range(10):
+        op = AsyncMock(side_effect=[_unavailable(), "ok"])
+        assert await resilience.with_retry(state, op) == "ok"
+        assert state.attempt_count == 0
+    assert state.should_retry()
+
+
+async def test_breaker_opens_after_consecutive_failures_and_fails_fast() -> None:
+    state = _breaker(max_attempts=5)
+    failing = AsyncMock(side_effect=_unavailable())
+
+    with pytest.raises(resilience.CircuitOpenError) as opened:
+        await resilience.with_retry(state, failing)
+    assert failing.call_count == 3
+    assert isinstance(opened.value.last_error, grpc.aio.AioRpcError)
+    assert not state.should_retry()
+
+    untouched = AsyncMock(return_value="ok")
+    with pytest.raises(resilience.CircuitOpenError):
+        await resilience.with_retry(state, untouched)
+    untouched.assert_not_called()
+
+
+async def test_failures_from_different_calls_add_up() -> None:
+    state = _breaker(max_attempts=2)
+    with pytest.raises(resilience.ReconnectionExhaustedError) as exhausted:
+        await resilience.with_retry(state, AsyncMock(side_effect=_unavailable()))
+    assert not isinstance(exhausted.value, resilience.CircuitOpenError)
+
+    with pytest.raises(resilience.CircuitOpenError):
+        await resilience.with_retry(state, AsyncMock(side_effect=_unavailable()))
+    assert state.attempt_count == 3
+
+
+async def test_successful_probe_after_cooldown_closes_the_breaker() -> None:
+    state = _breaker(open_duration=30)
+    with patch.object(time, "monotonic", return_value=100.0):
+        for _ in range(3):
+            await state.record_failure()
+
+    with (
+        patch.object(time, "monotonic", return_value=129.0),
+        pytest.raises(resilience.CircuitOpenError),
+    ):
+        await resilience.with_retry(state, AsyncMock(return_value="ok"))
+
+    with patch.object(time, "monotonic", return_value=130.0):
+        assert await resilience.with_retry(state, AsyncMock(return_value="ok")) == "ok"
+    assert state.should_retry()
+    assert state.attempt_count == 0
+
+
+async def test_failed_probe_keeps_the_breaker_open_for_another_period() -> None:
+    state = _breaker(open_duration=30)
+    with patch.object(time, "monotonic", return_value=100.0):
+        for _ in range(3):
+            await state.record_failure()
+
+    probe = AsyncMock(side_effect=_unavailable())
+    with (
+        patch.object(time, "monotonic", return_value=130.0),
+        pytest.raises(resilience.CircuitOpenError),
+    ):
+        await resilience.with_retry(state, probe)
+    # The probe failed, and its retry was refused by the reopened breaker.
+    probe.assert_called_once()
+
+    with (
+        patch.object(time, "monotonic", return_value=159.0),
+        pytest.raises(resilience.CircuitOpenError),
+    ):
+        await resilience.with_retry(state, AsyncMock(return_value="ok"))
+
+
+async def test_only_one_probe_runs_at_a_time() -> None:
+    state = _breaker(open_duration=0)
+    for _ in range(3):
+        await state.record_failure()
+
+    release = asyncio.Event()
+
+    async def slow_probe() -> str:
+        await release.wait()
+        return "ok"
+
+    probe = asyncio.create_task(resilience.with_retry(state, slow_probe))
+    await asyncio.sleep(0)
+    with pytest.raises(resilience.CircuitOpenError):
+        await resilience.with_retry(state, AsyncMock(return_value="ok"))
+
+    release.set()
+    assert await probe == "ok"
+    assert state.should_retry()
+
+
+async def test_cancelled_probe_lets_the_next_call_probe() -> None:
+    state = _breaker(open_duration=0)
+    for _ in range(3):
+        await state.record_failure()
+
+    probe = asyncio.create_task(resilience.with_retry(state, asyncio.Event().wait))
+    await asyncio.sleep(0)
+    probe.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await probe
+
+    assert await resilience.with_retry(state, AsyncMock(return_value="ok")) == "ok"
+
+
+async def test_non_retryable_error_shows_pub_sub_is_reachable() -> None:
+    state = _breaker()
+    await state.record_failure()
+    denied = grpc.aio.AioRpcError(
+        grpc.StatusCode.PERMISSION_DENIED,
+        grpc.aio.Metadata(),
+        grpc.aio.Metadata(),
+        "denied",
+    )
+
+    with pytest.raises(grpc.aio.AioRpcError):
+        await resilience.with_retry(state, AsyncMock(side_effect=denied))
+    assert state.attempt_count == 0
+
+
+def test_circuit_open_error_message() -> None:
+    err = resilience.CircuitOpenError(10, ValueError("down"))
+    assert isinstance(err, resilience.ReconnectionExhaustedError)
+    assert str(err) == "Circuit breaker is open after 10 consecutive failures. Last error: down"

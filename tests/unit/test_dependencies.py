@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar
 from typing import Annotated, Any
 from unittest.mock import AsyncMock, Mock
 
@@ -9,11 +11,12 @@ from annotated_types import Gt
 from pydantic import ValidationError
 
 from repid import Header, Message, Repid, Router
+from repid._utils._typing import override
 from repid.connections.abc import MessageAction
 from repid.converter import BasicConverter, DefaultConverter
 from repid.data import ActorExecutionContext, MessageData
 from repid.dependencies import Depends, MessageDependency
-from repid.dependencies._utils import get_dependency
+from repid.dependencies._utils import DependencyContext, get_dependency, resolve_dependencies
 from repid.dependencies.message_dependency import EnhancedReceivedMessage
 from repid.serializer import default_serializer
 from repid.test_client import TestClient
@@ -752,3 +755,166 @@ def test_get_dependency_skips_class_metadata() -> None:
     header_instance = Header()
     result = get_dependency(Annotated[str, header_instance])
     assert result is header_instance
+
+
+def _dependency_context(headers: dict[str, Any] | None = None) -> DependencyContext:
+    return DependencyContext(
+        message=Mock(),
+        actor=Mock(),
+        actor_context=_CONVERTER_CONTEXT,
+        parsed_args=[],
+        parsed_kwargs={},
+        parsed_headers=headers or {},
+        headers_id_to_name={},
+    )
+
+
+async def test_resolve_dependencies_runs_lookups_in_caller_task() -> None:
+    resolved_in: list[asyncio.Task[object] | None] = []
+
+    class RecordingHeader(Header):
+        @override
+        async def resolve(self, *, context: DependencyContext) -> object:
+            resolved_in.append(asyncio.current_task())
+            return await super().resolve(context=context)
+
+    class RecordingMessage(MessageDependency):
+        @override
+        async def resolve(self, *, context: DependencyContext) -> EnhancedReceivedMessage:
+            resolved_in.append(asyncio.current_task())
+            return await super().resolve(context=context)
+
+    header = RecordingHeader()
+    context = _dependency_context({"h": "value"})
+    context.headers_id_to_name[id(header)] = "h"
+
+    resolved = await resolve_dependencies({"h": header, "m": RecordingMessage()}, context)
+
+    assert resolved["h"] == "value"
+    assert isinstance(resolved["m"], EnhancedReceivedMessage)
+    assert resolved_in == [asyncio.current_task(), asyncio.current_task()]
+
+
+async def test_resolve_dependencies_runs_depends_concurrently() -> None:
+    first_started = asyncio.Event()
+    second_started = asyncio.Event()
+
+    async def first() -> str:
+        first_started.set()
+        await second_started.wait()
+        return "first"
+
+    async def second() -> str:
+        second_started.set()
+        await first_started.wait()
+        return "second"
+
+    resolved = await asyncio.wait_for(
+        resolve_dependencies(
+            {"a": Depends(first), "b": Depends(second)},
+            _dependency_context(),
+        ),
+        timeout=1.0,
+    )
+
+    assert resolved == {"a": "first", "b": "second"}
+
+
+async def test_resolve_dependencies_isolates_depends_context() -> None:
+    var: ContextVar[str] = ContextVar("var", default="caller")
+
+    async def set_var() -> str:
+        var.set("dependency")
+        return var.get()
+
+    resolved = await resolve_dependencies({"d": Depends(set_var)}, _dependency_context())
+
+    assert resolved == {"d": "dependency"}
+    assert var.get() == "caller"
+
+
+async def test_resolve_dependencies_failed_lookup_skips_depends() -> None:
+    called = False
+
+    async def dependency() -> None:
+        nonlocal called
+        called = True
+
+    with pytest.raises(KeyError):
+        await resolve_dependencies(
+            {"h": Header(), "d": Depends(dependency)},
+            _dependency_context(),
+        )
+
+    assert not called
+
+
+async def test_resolve_dependencies_failure_cancels_remaining_depends() -> None:
+    slow_cancelled = asyncio.Event()
+
+    async def failing() -> int:
+        raise ValueError("dependency failed")
+
+    async def slow() -> int:
+        try:
+            await asyncio.Future()
+        finally:
+            slow_cancelled.set()
+        return 0  # pragma: no cover
+
+    async def also_failing() -> int:
+        await asyncio.sleep(0)
+        raise RuntimeError("superseded failure")
+
+    with pytest.raises(ValueError, match="dependency failed"):
+        await resolve_dependencies(
+            {"a": Depends(failing), "b": Depends(slow), "c": Depends(also_failing)},
+            _dependency_context(),
+        )
+    assert slow_cancelled.is_set()
+
+
+async def test_resolve_dependencies_reports_a_failure_before_earlier_depends_finish() -> None:
+    slow_cancelled = asyncio.Event()
+
+    async def slow() -> int:
+        try:
+            await asyncio.Future()
+        finally:
+            slow_cancelled.set()
+        return 0  # pragma: no cover
+
+    async def failing() -> int:
+        raise ValueError("dependency failed")
+
+    with pytest.raises(ValueError, match="dependency failed"):
+        await asyncio.wait_for(
+            resolve_dependencies(
+                {"slow": Depends(slow), "failing": Depends(failing)},
+                _dependency_context(),
+            ),
+            1,
+        )
+    assert slow_cancelled.is_set()
+
+
+async def test_resolve_dependencies_cancellation_cancels_depends() -> None:
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def waits() -> int:
+        started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            cancelled.set()
+        return 0  # pragma: no cover
+
+    resolving = asyncio.create_task(
+        resolve_dependencies({"a": Depends(waits)}, _dependency_context()),
+    )
+    await asyncio.wait_for(started.wait(), 1)
+    resolving.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await resolving
+    assert cancelled.is_set()

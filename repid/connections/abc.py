@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, TypedDict
 
@@ -12,6 +13,7 @@ if TYPE_CHECKING:
     from repid.asyncapi.models.common import ServerBindingsObject
     from repid.asyncapi.models.servers import ServerVariable
     from repid.data import ExternalDocs, Tag
+    from repid.data.concurrency import Concurrency
 
 
 class MessageAction(StrEnum):
@@ -66,11 +68,16 @@ class ReceivedMessageT(BaseMessageT, Protocol):
     async def reject(self) -> None: ...
 
     @property
-    def keep_alive_interval(self) -> int | None:
-        """Recommended seconds between keep_alive() calls, or None if not needed."""
+    def keep_alive_interval(self) -> float | None:
+        """Recommended positive interval in seconds, or None if keep-alive is unnecessary."""
 
-    async def keep_alive(self) -> None:
-        """Signal the broker that this message is still being processed."""
+    async def keep_alive(self) -> bool | None:
+        """Renew this delivery's lease.
+
+        Return False if the broker adapter knows further renewals are unnecessary,
+        for example after settlement or lease expiry. Repid then ends the renewal
+        loop. Return None to keep the renewal schedule active.
+        """
 
     async def reply(
         self,
@@ -88,6 +95,58 @@ class CapabilitiesT(TypedDict):
     supports_native_reply: bool
     supports_lightweight_pause: bool
     supports_keep_alive: bool
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Demand:
+    """Free capacity in an intake scope. None means the dimension is unlimited."""
+
+    messages: int | None
+    payload_bytes: int | None
+
+
+class IntakeScope(Protocol):
+    """Capacity the worker publishes for one scope: the whole worker or one channel."""
+
+    @property
+    def limits(self) -> Concurrency:
+        """Most deliveries the worker runs at once in this scope.
+
+        Size broker-side windows (link credit, unacknowledged limits) from it.
+        """
+
+    @property
+    def demand(self) -> Demand:
+        """Free capacity right now. Size fetches from it.
+
+        Byte demand is advisory: payload sizes are only known after receipt,
+        and the worker enforces its byte budget when admitting a delivery.
+        """
+
+    @property
+    def ready(self) -> asyncio.Future[None]:
+        """Done while the scope has room for another delivery.
+
+        Otherwise it completes once room frees. Read it once per check and wait on
+        that object: await it, pass it to `asyncio.wait`, or add a done callback.
+        Cancelling a pending one affects only its reader.
+        """
+
+
+class ChannelIntake(IntakeScope, Protocol):
+    def submit(self, message: ReceivedMessageT, /) -> None:
+        """Hand a delivery over to the worker, which owns it from now on.
+
+        Synchronous and never blocks. Submit while `ready` is done; surplus
+        deliveries wait at admission. The worker settles every submitted message.
+        """
+
+
+class Intake(IntakeScope, Protocol):
+    """The worker scope, with one intake per subscribed channel."""
+
+    @property
+    def channels(self) -> Mapping[str, ChannelIntake]: ...
 
 
 class SubscriberT(Protocol):
@@ -172,6 +231,5 @@ class ServerT(Protocol):
     async def subscribe(
         self,
         *,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        intake: Intake,
     ) -> SubscriberT: ...

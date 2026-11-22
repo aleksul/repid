@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import ssl
+import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import repid.connections.amqp.protocol.connection as connection_module
 from repid.connections.amqp._uamqp.performatives import (
     BeginFrame,
     CloseFrame,
@@ -22,7 +24,7 @@ from repid.connections.amqp.protocol.connection import (
     ConnectionConfig,
     ProtocolError,
 )
-from repid.connections.amqp.protocol.events import ConnectionEvent
+from repid.connections.amqp.protocol.events import ConnectionEvent, EventData
 from repid.connections.amqp.protocol.reconnect import ReconnectConfig
 from repid.connections.amqp.protocol.session import Session
 from repid.connections.amqp.protocol.states import (
@@ -91,6 +93,7 @@ async def test_connection_do_amqp_open_records_remote_params() -> None:
         await connection._do_amqp_open()
 
         assert connection.state == ConnectionState.OPENED
+    assert connection.is_usable
     assert connection.max_frame_size == 512
     assert connection._remote_container_id == "remote-container"
     assert connection._remote_idle_timeout == 30
@@ -853,7 +856,7 @@ async def test_connection_create_session_no_free_channels() -> None:
         await conn.create_session()
 
 
-async def test_connection_properties() -> None:
+async def test_connection_max_frame_size_uses_remote_limit() -> None:
     config = ConnectionConfig(
         host="testhost",
         port=5673,
@@ -861,15 +864,6 @@ async def test_connection_properties() -> None:
     )
     conn = AmqpConnection(config)
 
-    # Test properties
-    assert conn.connection_id
-    assert conn.state == ConnectionState.START
-    assert not conn.is_connected
-    assert not conn.is_usable
-    assert conn.events == conn._events
-    assert conn.metrics == conn._metrics
-
-    # Test max_frame_size with remote value
     conn._remote_max_frame_size = 4096
     assert conn.max_frame_size == 4096  # Should use min of local and remote
 
@@ -961,6 +955,12 @@ async def test_connection_connect_retry_exhausted() -> None:
         reconnect=ReconnectConfig(enabled=True, max_attempts=2),
     )
     conn = AmqpConnection(config)
+    errors: list[EventData] = []
+
+    async def record_error(event: EventData) -> None:
+        errors.append(event)
+
+    conn.events.on(ConnectionEvent.ERROR, record_error)
 
     with (
         patch.object(
@@ -973,6 +973,13 @@ async def test_connection_connect_retry_exhausted() -> None:
         pytest.raises(ConnectionError, match="Connection failed after"),
     ):
         await conn.connect()
+
+    assert len(errors) == 3
+    assert all(event.connection_id == conn.connection_id for event in errors)
+    assert all(event.details["error"] == "Connection refused" for event in errors)
+    assert conn.metrics.metrics.errors == len(errors)
+    assert conn.metrics.metrics.last_error_at is not None
+    assert not conn.is_usable
 
 
 async def test_connection_do_sasl_auth_invalid_sasl_header() -> None:
@@ -1614,7 +1621,7 @@ async def test_connection_heartbeat_loop_no_timeout() -> None:
     conn = AmqpConnection(config)
     conn._remote_idle_timeout = 0
 
-    with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+    with patch.object(asyncio, "sleep", new_callable=AsyncMock) as mock_sleep:
         await conn._heartbeat_loop()
         mock_sleep.assert_not_called()
 
@@ -1625,18 +1632,13 @@ async def test_connection_heartbeat_loop_sends_frame() -> None:
     conn._remote_idle_timeout = 2000  # 2 seconds, interval = 1.0
     conn._state_machine._state = ConnectionState.OPENED
 
-    # Mock time.monotonic to simulate time passing
-    # 1st call: time_since_last_write = 1.0 - 0.0 = 1.0 (sleep_time = 0.0)
-    # 2nd call: time_since_last_write = 1.0 - 0.0 = 1.0 (>= interval) -> sends frame
-    # 3rd call: time_since_last_write = 1.0 - 0.0 = 1.0 (sleep_time = 0.0) -> break loop
     with (
-        patch("time.monotonic", side_effect=[1.0, 1.0, 1.0]),
+        patch.object(time, "monotonic", side_effect=[1.0, 1.0, 1.0]),
         patch.object(conn._transport, "send_performative", new_callable=AsyncMock) as mock_send,
-        patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        patch.object(asyncio, "sleep", new_callable=AsyncMock) as mock_sleep,
     ):
         conn._transport.metrics.last_write_time = 0.0
 
-        # We need to break the loop after one iteration
         original_send = mock_send.side_effect
 
         async def side_effect(*args: Any, **kwargs: Any) -> Any:
@@ -1647,7 +1649,10 @@ async def test_connection_heartbeat_loop_sends_frame() -> None:
 
         mock_send.side_effect = side_effect
 
-        with patch("repid.connections.amqp.protocol.connection.logger.debug") as mock_logger:
+        with patch.object(
+            connection_module.logger,
+            "debug",
+        ) as mock_logger:
             await conn._heartbeat_loop()
             mock_logger.assert_called_once_with("connection.heartbeat.sent")
 
@@ -1673,9 +1678,9 @@ async def test_connection_heartbeat_loop_sleeps() -> None:
         return 0.5
 
     with (
-        patch("time.monotonic", side_effect=monotonic_side_effect),
+        patch.object(time, "monotonic", side_effect=monotonic_side_effect),
         patch.object(conn._transport, "send_performative", new_callable=AsyncMock) as mock_send,
-        patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        patch.object(asyncio, "sleep", new_callable=AsyncMock) as mock_sleep,
     ):
         conn._transport.metrics.last_write_time = 0.0
 
@@ -1692,14 +1697,14 @@ async def test_connection_heartbeat_loop_handles_exception() -> None:
     conn._state_machine._state = ConnectionState.OPENED
 
     with (
-        patch("time.monotonic", side_effect=[1.0, 1.0]),
+        patch.object(time, "monotonic", side_effect=[1.0, 1.0]),
         patch.object(
             conn._transport,
             "send_performative",
             new_callable=AsyncMock,
             side_effect=Exception("Network error"),
         ) as mock_send,
-        patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        patch.object(asyncio, "sleep", new_callable=AsyncMock) as mock_sleep,
     ):
         conn._transport.metrics.last_write_time = 0.0
 
@@ -1717,14 +1722,14 @@ async def test_connection_heartbeat_loop_cancelled() -> None:
     conn._state_machine._state = ConnectionState.OPENED
 
     with (
-        patch("time.monotonic", side_effect=[1.0, 1.0]),
+        patch.object(time, "monotonic", side_effect=[1.0, 1.0]),
         patch.object(
             conn._transport,
             "send_performative",
             new_callable=AsyncMock,
             side_effect=asyncio.CancelledError(),
         ) as mock_send,
-        patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        patch.object(asyncio, "sleep", new_callable=AsyncMock) as mock_sleep,
     ):
         conn._transport.metrics.last_write_time = 0.0
 

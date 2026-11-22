@@ -10,6 +10,7 @@ from repid import Repid
 from repid.connections.abc import ReceivedMessageT
 from repid.connections.amqp import AmqpServer
 from repid.connections.amqp._uamqp.message import Properties
+from tests.intake import callback_intake
 
 if TYPE_CHECKING:
     from tests.integration.brokers import BrokerContainer
@@ -28,11 +29,15 @@ async def test_server_side_cancel(
 
     async with repid_app.servers.default.connection() as conn:
 
-        async def dummy_callback(msg: ReceivedMessageT) -> None:
-            callback_event.set()
+        async def dummy_callback(
+            msg: ReceivedMessageT,
+        ) -> None:
             await msg.ack()
+            callback_event.set()
 
-        subscriber = await conn.subscribe(channels_to_callbacks={"default": dummy_callback})
+        subscriber = await conn.subscribe(
+            intake=callback_intake({"default": dummy_callback}),
+        )
 
         consumers = rabbitmq_container.exec("rabbitmqctl", "list_consumers")
         pid: str = (
@@ -65,20 +70,24 @@ async def test_message_id_is_set_to_uuid4(rabbitmq_connection: AmqpServer) -> No
 
     async with repid_app.servers.default.connection() as conn:
 
-        async def capture_callback(msg: ReceivedMessageT) -> None:
+        async def capture_callback(
+            msg: ReceivedMessageT,
+        ) -> None:
             nonlocal received_message_id
             received_message_id = msg.message_id
-            done.set()
             await msg.ack()
+            done.set()
 
-        subscriber = await conn.subscribe(channels_to_callbacks={"default": capture_callback})
+        subscriber = await conn.subscribe(
+            intake=callback_intake({"default": capture_callback}),
+        )
 
         await repid_app.send_message(channel="default", payload=b"")
         await asyncio.wait_for(done.wait(), timeout=10.0)
         await subscriber.close()
 
     assert received_message_id is not None
-    UUID(received_message_id)  # raises ValueError if not a valid UUID
+    UUID(received_message_id)
 
 
 async def test_message_id_is_preserved_when_set_by_user(rabbitmq_connection: AmqpServer) -> None:
@@ -91,13 +100,17 @@ async def test_message_id_is_preserved_when_set_by_user(rabbitmq_connection: Amq
 
     async with repid_app.servers.default.connection() as conn:
 
-        async def capture_callback(msg: ReceivedMessageT) -> None:
+        async def capture_callback(
+            msg: ReceivedMessageT,
+        ) -> None:
             nonlocal received_message_id
             received_message_id = msg.message_id
-            done.set()
             await msg.ack()
+            done.set()
 
-        subscriber = await conn.subscribe(channels_to_callbacks={"default": capture_callback})
+        subscriber = await conn.subscribe(
+            intake=callback_intake({"default": capture_callback}),
+        )
 
         await repid_app.send_message(
             channel="default",

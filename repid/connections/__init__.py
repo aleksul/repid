@@ -1,7 +1,12 @@
+from repid._delivery import LeaseRenewal
 from repid._utils import is_installed
 from repid.connections.abc import (
     BaseMessageT,
     CapabilitiesT,
+    ChannelIntake,
+    Demand,
+    Intake,
+    IntakeScope,
     MessageAction,
     ReceivedMessageT,
     SentMessageT,
@@ -15,7 +20,12 @@ __all__ = [
     "AmqpServer",
     "BaseMessageT",
     "CapabilitiesT",
+    "ChannelIntake",
+    "Demand",
     "InMemoryServer",
+    "Intake",
+    "IntakeScope",
+    "LeaseRenewal",
     "MessageAction",
     "ReceivedMessageT",
     "SentMessageT",

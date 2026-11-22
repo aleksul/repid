@@ -13,13 +13,13 @@ Here is a simplified overview of what you need to implement:
 
 ```python
 import asyncio
-from typing import Mapping, Sequence, Callable, Coroutine, Any
-from collections.abc import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager
+from typing import Mapping, Sequence, Any
 from repid.connections.abc import (
     ServerT,
     SubscriberT,
     SentMessageT,
-    ReceivedMessageT,
+    Intake,
     CapabilitiesT,
 )
 
@@ -42,6 +42,7 @@ class MyCustomServer:
         return {
             "supports_native_reply": False,
             "supports_lightweight_pause": False,
+            "supports_keep_alive": False,
         }
 
     # 3. Connection Lifecycle
@@ -74,21 +75,81 @@ class MyCustomServer:
         ...
 
     # 5. Message Consumption
-    async def subscribe(
-        self,
-        *,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
-    ) -> SubscriberT:
-        # Start consuming from the requested channels and map them to their callbacks
-        # Return an object that implements `SubscriberT` (can manage pauses, resumes, closures)
+    async def subscribe(self, *, intake: Intake) -> SubscriberT:
+        # Start consuming from the channels in `intake.channels`, handing each delivery
+        # to its channel's intake. Return an object that implements `SubscriberT`
+        # (can manage pauses, resumes, closures).
         ...
+```
+
+### Intake
+
+`subscribe` receives the worker's `Intake`. It tells your subscriber how much work the worker
+can take. `intake.channels` maps each channel to consume to a `ChannelIntake`.
+
+Both the intake and each channel intake have three properties:
+
+- `limits`: the most messages and payload bytes the worker runs at once. Copy it into native
+  settings such as link credit or unacknowledged-message limits.
+- `demand`: the free capacity right now, as `Demand(messages=..., payload_bytes=...)`. `None`
+  means unlimited. Use it to size fetches.
+- `ready`: a future that is done while there is room for another message.
+
+A channel's values already include the worker's limit. A broker that fetches for all channels
+at once can size that fetch from `intake` itself.
+
+### Submitting messages
+
+Hand each received message to its channel with `channel.submit(message)`. The call is
+synchronous, and from then on the worker owns the message: it runs the actor and settles the
+message. Submit only while `ready` is done.
+
+A pull-based reader looks like this:
+
+```python
+async def read(channel: ChannelIntake) -> None:
+    while True:
+        ready = channel.ready
+        if not ready.done():
+            await ready
+            continue
+        room = channel.demand.messages
+        for message in await fetch(max_messages=room or DEFAULT_BATCH):
+            channel.submit(message)
+```
+
+A push-based broker sets its window from `channel.limits` and submits messages as they arrive.
+
+### Prefetching (optional)
+
+Your subscriber can fetch a few messages beyond `demand` and submit them as soon as `ready`
+completes, so freed slots fill without a broker round trip. Make the amount a server constructor
+argument such as `prefetch`. Until you submit them, held messages are your subscriber's: renew
+their leases, and return them to the broker in `close()`.
+
+### Keep-alive (optional)
+
+If your broker uses leases, set `supports_keep_alive` and implement `keep_alive()`. Repid calls
+it every `keep_alive_interval` seconds until it's done with the message. Return `False` once
+renewal is pointless (the message is settled or its lease expired), otherwise `None`.
+
+Repid starts renewing when you submit the message. To renew a message your subscriber holds
+before that, use `repid.LeaseRenewal` and submit inside `handoff()`, so the worker takes over the
+renewal:
+
+```python
+renewal = LeaseRenewal(message)
+renewal.renew_at(message.keep_alive_interval)
+...
+with renewal.handoff():
+    channel.submit(message)
+renewal.stop_if_unclaimed()
 ```
 
 ## Creating a Subscriber
 
-The `subscribe` method returns a instance, compatible with `SubscriberT` protocol.
-It represents the active listening loop. It must have these properties:
+`subscribe` returns an object compatible with the `SubscriberT` protocol. It represents the
+active listening loop and must have these members:
 
 ```python
 class MyCustomSubscriber:
@@ -117,7 +178,7 @@ class MyCustomSubscriber:
 
 ## Received Messages
 
-When invoking the callbacks provided to `subscribe`, you must provide
+The messages you submit must be
 instances compatible with `ReceivedMessageT` protocol. These objects wrap the payload, headers,
 reply metadata (`reply_to`), and methods to act on a message (`ack`, `nack`, `reject`, `reply`).
 

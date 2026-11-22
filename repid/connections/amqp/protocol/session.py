@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from repid.connections.amqp._uamqp.performatives import (
@@ -29,10 +28,8 @@ from . import links
 from .states import SessionState, SessionStateMachine
 
 if TYPE_CHECKING:
-    from repid.connections.amqp._uamqp.message import Properties
-
     from .connection import AmqpConnection
-    from .links import ReceiverLink, SenderLink
+    from .links import ReceiverLink, SenderLink, _ReceiverCallback
 
 logger = logging.getLogger("repid.connections.amqp.protocol")
 
@@ -517,10 +514,7 @@ class Session:
     async def create_receiver(
         self,
         address: str,
-        callback: Callable[
-            [bytes, dict[str, Any] | None, int, bytes, ReceiverLink, Properties | None],
-            Any,
-        ],
+        callback: _ReceiverCallback,
         name: str | None = None,
         prefetch: int = 100,
     ) -> ReceiverLink:
@@ -588,10 +582,7 @@ class Session:
         self,
         address: str,
         name: str,
-        callback: Callable[
-            [bytes, dict[str, Any] | None, int, bytes, ReceiverLink, Properties | None],
-            Any,
-        ],
+        callback: _ReceiverCallback,
     ) -> ReceiverLink:
         """Create a receiver link (alias for create_receiver)."""
         return await self.create_receiver(address, callback, name)

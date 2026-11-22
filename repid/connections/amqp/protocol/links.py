@@ -15,8 +15,8 @@ import inspect
 import json
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from collections.abc import Callable, Coroutine, Mapping
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from repid._utils._typing import override
 from repid.connections.amqp._uamqp._decode import transfer_frames_to_message
@@ -40,6 +40,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger("repid.connections.amqp.protocol")
 
 ReceiverSettlementState = Accepted | Rejected | Released
+_ReceivedHeaders: TypeAlias = Mapping[str | bytes, object]
+_ReceiverCallback: TypeAlias = Callable[
+    [bytes, _ReceivedHeaders | None, int, bytes, "ReceiverLink", Properties | None],
+    Coroutine[object, None, None] | None,
+]
 
 
 class LinkError(Exception):
@@ -521,10 +526,7 @@ class ReceiverLink(Link):
         name: str,
         address: str,
         handle: int,
-        callback: Callable[
-            [bytes, dict[str, Any] | None, int, bytes, ReceiverLink, Properties | None],
-            Any,
-        ],
+        callback: _ReceiverCallback,
         prefetch: int = 100,
     ) -> None:
         super().__init__(session, name, address, handle, role=True)
@@ -672,9 +674,10 @@ class ReceiverLink(Link):
             delivery_tag = first_transfer.delivery_tag or b""
 
             body = self._body_to_bytes(msg.body)
-            headers = (
-                dict(msg.application_properties) if msg.application_properties is not None else None
-            )
+            headers: dict[str | bytes, object] | None = None
+            if msg.application_properties is not None:
+                headers = {}
+                headers.update(msg.application_properties)
 
             # Call the callback
             self._delivery_settled_by_callback = False

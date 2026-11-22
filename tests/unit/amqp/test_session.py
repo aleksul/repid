@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 from dataclasses import dataclass, field
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import repid.connections.amqp.protocol.session as session_module
 from repid.connections.amqp._uamqp.message import Properties
 from repid.connections.amqp._uamqp.outcomes import Accepted, DeliveryState
 from repid.connections.amqp._uamqp.performatives import (
@@ -22,7 +24,7 @@ from repid.connections.amqp.protocol import links
 from repid.connections.amqp.protocol.connection import (
     AmqpConnection,
 )
-from repid.connections.amqp.protocol.links import ReceiverLink, SenderLink
+from repid.connections.amqp.protocol.links import ReceiverLink, SenderLink, _ReceivedHeaders
 from repid.connections.amqp.protocol.session import Session, SessionError
 from repid.connections.amqp.protocol.states import (
     SessionState,
@@ -95,15 +97,13 @@ async def test_session_handle_detach_missing_handle() -> None:
     connection = FakeConnection()
     session = Session(cast(AmqpConnection, connection), channel=1)
 
-    # Create detach frame with invalid data to test missing handle case
     detach = DetachFrame(handle=0)
     detach.handle = None  # pyrefly: ignore[bad-assignment]
 
-    # Should return early without error
     await session._handle_detach(detach)
 
 
-async def test_session_create_sender_link_alias(monkeypatch: Any) -> None:
+async def test_session_create_sender_link_alias() -> None:
     @dataclass(slots=True)
     class MockSenderLink:
         name: str
@@ -124,17 +124,15 @@ async def test_session_create_sender_link_alias(monkeypatch: Any) -> None:
     await session._state_machine.transition("send_begin")
     await session._state_machine.transition("recv_begin")
 
-    # Monkeypatch SenderLink to avoid full initialization
     def fake_sender_link(_session: Any, name: str, _address: str, handle: int) -> MockSenderLink:
         return MockSenderLink(name=name, _handle=handle)
 
-    monkeypatch.setattr(links, "SenderLink", fake_sender_link)
+    with patch.object(links, "SenderLink", fake_sender_link):
+        link = await session.create_sender_link("test-address", "test-sender")
+        assert link.name == "test-sender"
 
-    link = await session.create_sender_link("test-address", "test-sender")
-    assert link.name == "test-sender"
 
-
-async def test_session_create_receiver_link_alias(monkeypatch: Any) -> None:
+async def test_session_create_receiver_link_alias() -> None:
     @dataclass(slots=True)
     class MockReceiverLink:
         name: str
@@ -152,7 +150,7 @@ async def test_session_create_receiver_link_alias(monkeypatch: Any) -> None:
 
     async def callback(
         _body: bytes,
-        _headers: dict[str, Any] | None,
+        _headers: _ReceivedHeaders | None,
         _delivery_id: int,
         _tag: bytes,
         _link: ReceiverLink,
@@ -175,10 +173,9 @@ async def test_session_create_receiver_link_alias(monkeypatch: Any) -> None:
     ) -> MockReceiverLink:
         return MockReceiverLink(name=name, _handle=handle)
 
-    monkeypatch.setattr(links, "ReceiverLink", fake_receiver_link)
-
-    link = await session.create_receiver_link("test-address", "test-receiver", callback)
-    assert link.name == "test-receiver"
+    with patch.object(links, "ReceiverLink", fake_receiver_link):
+        link = await session.create_receiver_link("test-address", "test-receiver", callback)
+        assert link.name == "test-receiver"
 
 
 async def test_session_remove_link() -> None:
@@ -254,15 +251,13 @@ async def test_session_handle_transfer_missing_handle() -> None:
     connection = FakeConnection()
     session = Session(cast(AmqpConnection, connection), channel=1)
 
-    # Create transfer frame with missing handle
     transfer = TransferFrame(handle=0, delivery_id=1)
     transfer.handle = None  # pyrefly: ignore[bad-assignment]
 
-    # Should log error and return early
     await session._handle_transfer(transfer)
 
 
-async def test_session_create_sender_not_mapped(monkeypatch: Any) -> None:
+async def test_session_create_sender_not_mapped() -> None:
     @dataclass(slots=True)
     class MockSenderLink:
         name: str
@@ -281,32 +276,24 @@ async def test_session_create_sender_not_mapped(monkeypatch: Any) -> None:
     connection = FakeConnection()
     session = Session(cast(AmqpConnection, connection), channel=1)
 
-    # Start in BEGIN_SENT state (not yet mapped)
     await session._state_machine.transition("send_begin")
-
-    # Monkeypatch SenderLink
 
     def fake_sender_link(_session: Any, name: str, _address: str, handle: int) -> MockSenderLink:
         return MockSenderLink(name=name, _handle=handle)
 
-    monkeypatch.setattr(links, "SenderLink", fake_sender_link)
+    with patch.object(links, "SenderLink", fake_sender_link):
+        create_task = asyncio.create_task(session.create_sender("test-address"))
 
-    # Start create_sender in background (it will wait for ready)
-    create_task = asyncio.create_task(session.create_sender("test-address"))
+        await asyncio.sleep(0.01)
 
-    # Give it time to start waiting
-    await asyncio.sleep(0.01)
+        await session._state_machine.transition("recv_begin")
+        session._ready.set()
 
-    # Now complete the mapping
-    await session._state_machine.transition("recv_begin")
-    session._ready.set()
-
-    # Wait for the create_sender to complete
-    link = await create_task
-    assert link.name.startswith("sender-test-address")
+        link = await create_task
+        assert link.name.startswith("sender-test-address")
 
 
-async def test_session_create_receiver_not_mapped(monkeypatch: Any) -> None:
+async def test_session_create_receiver_not_mapped() -> None:
     @dataclass(slots=True)
     class MockReceiverLink:
         name: str
@@ -324,7 +311,7 @@ async def test_session_create_receiver_not_mapped(monkeypatch: Any) -> None:
 
     async def callback(
         _body: bytes,
-        _headers: dict[str, Any] | None,
+        _headers: _ReceivedHeaders | None,
         _delivery_id: int,
         _tag: bytes,
         _link: ReceiverLink,
@@ -347,24 +334,19 @@ async def test_session_create_receiver_not_mapped(monkeypatch: Any) -> None:
     ) -> MockReceiverLink:
         return MockReceiverLink(name=name, _handle=handle)
 
-    monkeypatch.setattr(links, "ReceiverLink", fake_receiver_link)
+    with patch.object(links, "ReceiverLink", fake_receiver_link):
+        create_task = asyncio.create_task(session.create_receiver("test-address", callback))
 
-    # Start create_receiver in background (it will wait for ready)
-    create_task = asyncio.create_task(session.create_receiver("test-address", callback))
+        await asyncio.sleep(0.01)
 
-    # Give it time to start waiting
-    await asyncio.sleep(0.01)
+        await session._state_machine.transition("recv_begin")
+        session._ready.set()
 
-    # Now complete the mapping
-    await session._state_machine.transition("recv_begin")
-    session._ready.set()
-
-    # Wait for the create_receiver to complete
-    link = await create_task
-    assert link.name.startswith("receiver-test-address")
+        link = await create_task
+        assert link.name.startswith("receiver-test-address")
 
 
-async def test_session_create_sender_default_name(monkeypatch: Any) -> None:
+async def test_session_create_sender_default_name() -> None:
     @dataclass(slots=True)
     class MockSenderLink:
         name: str
@@ -385,19 +367,15 @@ async def test_session_create_sender_default_name(monkeypatch: Any) -> None:
     await session._state_machine.transition("send_begin")
     await session._state_machine.transition("recv_begin")
 
-    # Monkeypatch SenderLink
-
     def fake_sender_link(_session: Any, name: str, _address: str, handle: int) -> MockSenderLink:
         return MockSenderLink(name=name, _handle=handle)
 
-    monkeypatch.setattr(links, "SenderLink", fake_sender_link)
-
-    # Don't provide name, should generate default
-    link = await session.create_sender("test-address", name=None)
-    assert link.name == "sender-test-address-0"
+    with patch.object(links, "SenderLink", fake_sender_link):
+        link = await session.create_sender("test-address", name=None)
+        assert link.name == "sender-test-address-0"
 
 
-async def test_session_create_receiver_default_name(monkeypatch: Any) -> None:
+async def test_session_create_receiver_default_name() -> None:
     @dataclass(slots=True)
     class MockReceiverLink:
         name: str
@@ -415,7 +393,7 @@ async def test_session_create_receiver_default_name(monkeypatch: Any) -> None:
 
     async def callback(
         _body: bytes,
-        _headers: dict[str, Any] | None,
+        _headers: _ReceivedHeaders | None,
         _delivery_id: int,
         _tag: bytes,
         _link: ReceiverLink,
@@ -438,11 +416,9 @@ async def test_session_create_receiver_default_name(monkeypatch: Any) -> None:
     ) -> MockReceiverLink:
         return MockReceiverLink(name=name, _handle=handle)
 
-    monkeypatch.setattr(links, "ReceiverLink", fake_receiver_link)
-
-    # Don't provide name, should generate default
-    link = await session.create_receiver("test-address", callback, name=None)
-    assert link.name == "receiver-test-address-0"
+    with patch.object(links, "ReceiverLink", fake_receiver_link):
+        link = await session.create_receiver("test-address", callback, name=None)
+        assert link.name == "receiver-test-address-0"
 
 
 async def test_session_create_sender_not_usable_race() -> None:
@@ -463,7 +439,7 @@ async def test_session_create_sender_not_usable_race() -> None:
 async def test_session_create_receiver_not_usable_race() -> None:
     async def callback(
         _body: bytes,
-        _headers: dict[str, Any] | None,
+        _headers: _ReceivedHeaders | None,
         _delivery_id: int,
         _tag: bytes,
         _link: ReceiverLink,
@@ -572,6 +548,71 @@ async def test_session_receiver_prefetch_raises_incoming_window(
         assert flow.incoming_window == incoming_window
 
 
+@pytest.mark.parametrize(
+    "detach_error",
+    [
+        pytest.param(None, id="none"),
+        pytest.param(RuntimeError("detach failed"), id="runtimeerror_detach_failed"),
+    ],
+)
+async def test_session_receiver_startup_timeout_removes_link(
+    detach_error: RuntimeError | None,
+) -> None:
+    connection = FakeConnection()
+    session = Session(cast(AmqpConnection, connection), channel=1)
+    await session.begin()
+    session._state_machine.transition_sync("recv_begin")
+
+    with (
+        patch.object(ReceiverLink, "wait_ready", side_effect=TimeoutError),
+        patch.object(ReceiverLink, "detach", side_effect=detach_error),
+        pytest.raises(TimeoutError),
+    ):
+        await session.create_receiver("queue", lambda *_args: None)
+
+    assert not session._links
+    assert not session._links_by_handle
+
+
+async def test_session_cancelled_after_receiver_attach_write_detaches_peer_link() -> None:
+    connection = FakeConnection()
+    session = Session(cast(AmqpConnection, connection), channel=1)
+    await session.begin()
+    session._state_machine.transition_sync("recv_begin")
+    connection.sent.clear()
+    attach_written = asyncio.Event()
+    attach_drained = asyncio.Event()
+    send_performative = connection.send_performative
+
+    async def send(channel: int, performative: Any) -> None:
+        await send_performative(channel, performative)
+        if isinstance(performative, AttachFrame):
+            attach_written.set()
+            await attach_drained.wait()
+        elif isinstance(performative, DetachFrame):
+            # The peer can reply to ATTACH while the local DETACH is draining.
+            await session.handle_performative(AttachFrame(name="rx", handle=2, role=False))
+            await session.handle_performative(DetachFrame(handle=2, closed=True))
+
+    with patch.object(connection, "send_performative", AsyncMock(side_effect=send)):
+        starting = asyncio.create_task(
+            session.create_receiver("queue", lambda *_args: None, name="rx", prefetch=1),
+        )
+        try:
+            await asyncio.wait_for(attach_written.wait(), 1)
+            starting.cancel()
+            await asyncio.sleep(0)
+        finally:
+            attach_drained.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(starting, 1)
+
+    assert [type(frame) for _, frame in connection.sent] == [AttachFrame, DetachFrame]
+    assert not session._links
+    assert not session._links_by_handle
+    assert not session._links_by_remote_handle
+
+
 async def test_session_handle_attach_detach_flow_disposition() -> None:
     connection = FakeConnection()
     session = Session(cast(AmqpConnection, connection), channel=1)
@@ -650,14 +691,13 @@ async def test_session_disposition_dispatches_to_sender_link() -> None:
     assert settlement.result() is accepted
 
 
-async def test_session_handle_transfer_and_invalidate(monkeypatch: Any) -> None:
+async def test_session_handle_transfer_and_invalidate() -> None:
     connection = FakeConnection()
     session = Session(cast(AmqpConnection, connection), channel=1)
 
     await session.begin()
     session._state_machine.transition_sync("recv_begin")
 
-    # Create fake receiver link without slots to allow dynamic attributes
     transferred: list[Any] = []
 
     class FakeReceiverForTest:
@@ -680,41 +720,36 @@ async def test_session_handle_transfer_and_invalidate(monkeypatch: Any) -> None:
             return True
         return original_isinstance(obj, classinfo)
 
-    monkeypatch.setattr("builtins.isinstance", mock_isinstance)
+    with patch.object(builtins, "isinstance", mock_isinstance):
+        session._links["receiver"] = cast(SenderLink | ReceiverLink, fake_receiver)
+        session._links_by_remote_handle[3] = cast(SenderLink | ReceiverLink, fake_receiver)
 
-    session._links["receiver"] = cast(SenderLink | ReceiverLink, fake_receiver)
-    session._links_by_remote_handle[3] = cast(SenderLink | ReceiverLink, fake_receiver)
+        transfer = TransferFrame(handle=3, delivery_id=1, delivery_tag=b"tag1")
+        await session.handle_performative(transfer)
+        assert len(transferred) == 1
 
-    # Test transfer handler
-    transfer = TransferFrame(handle=3, delivery_id=1, delivery_tag=b"tag1")
-    await session.handle_performative(transfer)
-    assert len(transferred) == 1
+        transfer_unknown = TransferFrame(handle=99, delivery_id=2, delivery_tag=b"tag2")
+        await session.handle_performative(transfer_unknown)
 
-    # Test transfer with unknown handle (warning path)
-    transfer_unknown = TransferFrame(handle=99, delivery_id=2, delivery_tag=b"tag2")
-    await session.handle_performative(transfer_unknown)
+        class FakeSenderForTest:
+            def __init__(self) -> None:
+                self._remote_handle: int | None = 4
 
-    # Test transfer on sender link (warning path)
-    class FakeSenderForTest:
-        def __init__(self) -> None:
-            self._remote_handle: int | None = 4
+            def invalidate(self) -> None:
+                pass
 
-        def invalidate(self) -> None:
-            pass
+        fake_sender = FakeSenderForTest()
+        session._links["sender"] = cast(SenderLink | ReceiverLink, fake_sender)
+        session._links_by_remote_handle[4] = cast(SenderLink | ReceiverLink, fake_sender)
+        transfer_sender = TransferFrame(handle=4, delivery_id=3, delivery_tag=b"tag3")
+        await session.handle_performative(transfer_sender)
 
-    fake_sender = FakeSenderForTest()
-    session._links["sender"] = cast(SenderLink | ReceiverLink, fake_sender)
-    session._links_by_remote_handle[4] = cast(SenderLink | ReceiverLink, fake_sender)
-    transfer_sender = TransferFrame(handle=4, delivery_id=3, delivery_tag=b"tag3")
-    await session.handle_performative(transfer_sender)
-
-    # Test invalidate
-    session.invalidate()
-    assert session.state == SessionState.UNMAPPED
-    assert fake_receiver.detached
+        session.invalidate()
+        assert session.state == SessionState.UNMAPPED
+        assert fake_receiver.detached
 
 
-async def test_session_sends_flow_before_incoming_window_exhaustion(monkeypatch: Any) -> None:
+async def test_session_sends_flow_before_incoming_window_exhaustion() -> None:
     connection = FakeConnection()
     session = Session(cast(AmqpConnection, connection), channel=1)
     session._incoming_window = 4
@@ -736,21 +771,21 @@ async def test_session_sends_flow_before_incoming_window_exhaustion(monkeypatch:
             return True
         return original_isinstance(obj, classinfo)
 
-    monkeypatch.setattr("builtins.isinstance", mock_isinstance)
-    session._links_by_remote_handle[3] = cast(SenderLink | ReceiverLink, fake_receiver)
+    with patch.object(builtins, "isinstance", mock_isinstance):
+        session._links_by_remote_handle[3] = cast(SenderLink | ReceiverLink, fake_receiver)
 
-    await session.handle_performative(TransferFrame(handle=3, delivery_id=1, delivery_tag=b"1"))
-    assert connection.sent == []
+        await session.handle_performative(TransferFrame(handle=3, delivery_id=1, delivery_tag=b"1"))
+        assert connection.sent == []
 
-    await session.handle_performative(TransferFrame(handle=3, delivery_id=2, delivery_tag=b"2"))
+        await session.handle_performative(TransferFrame(handle=3, delivery_id=2, delivery_tag=b"2"))
 
-    assert len(connection.sent) == 1
-    channel, flow = connection.sent[0]
-    assert channel == 1
-    assert isinstance(flow, FlowFrame)
-    assert flow.handle is None
-    assert flow.next_incoming_id == 2
-    assert flow.incoming_window == 4
+        assert len(connection.sent) == 1
+        channel, flow = connection.sent[0]
+        assert channel == 1
+        assert isinstance(flow, FlowFrame)
+        assert flow.handle is None
+        assert flow.next_incoming_id == 2
+        assert flow.incoming_window == 4
 
 
 async def test_session_rejects_transfer_beyond_incoming_window() -> None:
@@ -855,95 +890,18 @@ async def test_session_handle_end_various_states() -> None:
     await session.begin()
     session._state_machine.transition_sync("recv_begin")
 
-    # Test handle end in END_RCVD state
     end = EndFrame()
     await session.handle_performative(end)
 
 
-@patch(
-    "repid.connections.amqp.protocol.session.Session.wait_ready",
+@patch.object(
+    session_module.Session,
+    "wait_ready",
     side_effect=asyncio.TimeoutError,
 )
 async def test_session_create_sender_not_ready(_mock_wait_ready: MagicMock) -> None:  # noqa: PT019
     connection = FakeConnection()
     session = Session(cast(AmqpConnection, connection), channel=1)
 
-    # Session not yet ready - should fail or wait
     with pytest.raises((SessionError, asyncio.TimeoutError)):
         await session.create_sender("queue", name="test-sender")
-
-
-async def test_session_properties() -> None:
-    connection = FakeConnection()
-    session = Session(cast(AmqpConnection, connection), channel=5)
-
-    assert session.connection == connection
-    assert session.channel == 5
-    assert session.state == SessionState.UNMAPPED
-    assert not session.is_mapped
-    assert not session.is_usable
-
-
-@pytest.mark.parametrize(
-    "detach_error",
-    [
-        pytest.param(None, id="none"),
-        pytest.param(RuntimeError("detach failed"), id="runtimeerror_detach_failed"),
-    ],
-)
-async def test_session_receiver_startup_timeout_removes_link(
-    detach_error: RuntimeError | None,
-) -> None:
-    connection = FakeConnection()
-    session = Session(cast(AmqpConnection, connection), channel=1)
-    await session.begin()
-    session._state_machine.transition_sync("recv_begin")
-
-    with (
-        patch.object(ReceiverLink, "wait_ready", side_effect=TimeoutError),
-        patch.object(ReceiverLink, "detach", side_effect=detach_error),
-        pytest.raises(TimeoutError),
-    ):
-        await session.create_receiver("queue", lambda *_args: None)
-
-    assert not session._links
-    assert not session._links_by_handle
-
-
-async def test_session_cancelled_after_receiver_attach_write_detaches_peer_link() -> None:
-    connection = FakeConnection()
-    session = Session(cast(AmqpConnection, connection), channel=1)
-    await session.begin()
-    session._state_machine.transition_sync("recv_begin")
-    connection.sent.clear()
-    attach_written = asyncio.Event()
-    attach_drained = asyncio.Event()
-    send_performative = connection.send_performative
-
-    async def send(channel: int, performative: Any) -> None:
-        await send_performative(channel, performative)
-        if isinstance(performative, AttachFrame):
-            attach_written.set()
-            await attach_drained.wait()
-        elif isinstance(performative, DetachFrame):
-            # The peer can reply to ATTACH while the local DETACH is draining.
-            await session.handle_performative(AttachFrame(name="rx", handle=2, role=False))
-            await session.handle_performative(DetachFrame(handle=2, closed=True))
-
-    with patch.object(connection, "send_performative", AsyncMock(side_effect=send)):
-        starting = asyncio.create_task(
-            session.create_receiver("queue", lambda *_args: None, name="rx", prefetch=1),
-        )
-        try:
-            await asyncio.wait_for(attach_written.wait(), 1)
-            starting.cancel()
-            await asyncio.sleep(0)
-        finally:
-            attach_drained.set()
-            with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(starting, 1)
-
-    assert [type(frame) for _, frame in connection.sent] == [AttachFrame, DetachFrame]
-    assert not session._links
-    assert not session._links_by_handle
-    assert not session._links_by_remote_handle

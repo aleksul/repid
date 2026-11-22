@@ -2,15 +2,20 @@ from __future__ import annotations
 
 import logging
 import math
-import uuid
-from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import grpc.aio
 
-from repid.connections.abc import CapabilitiesT, ReceivedMessageT, SentMessageT, SubscriberT
+from repid.connections.abc import (
+    CapabilitiesT,
+    Intake,
+    SentMessageT,
+    SubscriberT,
+)
+from repid.data.concurrency import Concurrency
 
 from .helpers import ChannelOverride
 from .protocol import (
@@ -77,6 +82,8 @@ class PubsubServer:
         control_rpc_timeout: float = 10.0,
         # Subscriber configuration
         stream_ack_deadline_seconds: int = 300,
+        prefetch: int = 0,
+        prefetch_bytes: int = 0,
         # Dependency injection for testability
         credentials_provider: CredentialsProvider | None = None,
     ) -> None:
@@ -116,12 +123,17 @@ class PubsubServer:
             control_rpc_timeout: Timeout in seconds for each acknowledge and deadline
                 extension attempt. Keep it well below the acknowledgment deadline.
             stream_ack_deadline_seconds: Ack deadline for StreamingPull.
-            max_outstanding_messages: Flow control for outstanding messages.
-            max_outstanding_bytes: Flow control for outstanding bytes (0=unlimited).
+            prefetch: Messages per subscription the stream may deliver beyond the
+                worker's message limit, held with renewed leases until the worker
+                has room. Default: 0.
+            prefetch_bytes: Payload bytes per subscription the stream may deliver
+                beyond the worker's byte limit. Default: 0.
             credentials_provider: Custom credentials provider for auth. Overrides
                 automatic credential selection.
             channel_factory: Custom gRPC channel factory.
         """
+        if prefetch < 0 or prefetch_bytes < 0:
+            raise ValueError("prefetch and prefetch_bytes must be non-negative")
         self._dsn = dsn
         self._default_project = default_project
         self._channel_overrides: dict[str, ChannelOverride] = dict(channel_overrides or {})
@@ -159,6 +171,8 @@ class PubsubServer:
 
         # Subscriber configuration
         self._stream_ack_deadline_seconds = stream_ack_deadline_seconds
+        self._prefetch = prefetch
+        self._prefetch_bytes = prefetch_bytes
 
         # Determine credentials provider
         # Priority: explicit credentials_provider > use_google_auth flag > DSN-based detection
@@ -194,7 +208,6 @@ class PubsubServer:
         # Connection state
         self._channel: grpc.aio.Channel | None = None
         self._active_subscribers: list[PubsubSubscriber] = []
-        self._client_id = str(uuid.uuid4())
         self._protocol_client: PubsubProtocolClient | None = None
         self._control_batcher: PubsubControlBatcher | None = None
 
@@ -398,14 +411,12 @@ class PubsubServer:
     async def subscribe(
         self,
         *,
-        channels_to_callbacks: dict[str, Callable[[ReceivedMessageT], Coroutine[None, None, None]]],
-        concurrency_limit: int | None = None,
+        intake: Intake,
     ) -> SubscriberT:
         """Subscribe to Pub/Sub channels.
 
         Args:
-            channels_to_callbacks: Mapping of channel names to callback functions.
-            concurrency_limit: Maximum concurrent message processing (None=unlimited).
+            intake: The worker's intake, with one entry per channel to subscribe.
 
         Returns:
             A subscriber that can be used to manage the subscription.
@@ -418,17 +429,26 @@ class PubsubServer:
 
         logger.debug(
             "channel.subscribe",
-            extra={"channels": list(channels_to_callbacks.keys())},
+            extra={"channels": list(intake.channels)},
         )
 
         channel_configs: list[ChannelConfig] = []
-        for channel, callback in channels_to_callbacks.items():
+        for channel, channel_intake in intake.channels.items():
             subscription_path = self._resolve_subscription_path(channel)
+            limits = channel_intake.limits
             channel_configs.append(
                 ChannelConfig(
                     channel=channel,
                     subscription_path=subscription_path,
-                    callback=callback,
+                    intake=channel_intake,
+                    concurrency=Concurrency(
+                        messages=None
+                        if limits.messages is None
+                        else limits.messages + self._prefetch,
+                        payload_bytes=None
+                        if limits.payload_bytes is None
+                        else limits.payload_bytes + self._prefetch_bytes,
+                    ),
                 ),
             )
 
@@ -438,8 +458,6 @@ class PubsubServer:
             credentials_provider=self._credentials_provider,
             resilience_state=self._resilience_state,
             stream_ack_deadline_seconds=self._stream_ack_deadline_seconds,
-            client_id=self._client_id,
-            concurrency_limit=concurrency_limit,
             server=self,
         )
         self._active_subscribers.append(subscriber)

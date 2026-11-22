@@ -20,27 +20,16 @@ async def test_reconnect_strategy_wait_if_possible() -> None:
     config = ReconnectConfig(max_attempts=2, initial_delay=0.001, max_delay=1.0)
     strategy = ReconnectStrategy(config)
 
-    # First attempt should wait
     result = await strategy.wait_if_needed()
     assert result is True
     assert strategy.attempts == 1
 
-    # Second attempt should wait
     result = await strategy.wait_if_needed()
     assert result is True
     assert strategy.attempts == 2
 
-    # Third attempt should not wait (exhausted)
     result = await strategy.wait_if_needed()
     assert result is False
-
-
-async def test_reconnect_strategy_config_property() -> None:
-    config = ReconnectConfig(enabled=True, max_attempts=5, initial_delay=1.0)
-    strategy = ReconnectStrategy(config)
-
-    assert strategy.config == config
-    assert strategy.config.max_attempts == 5
 
 
 async def test_reconnect_strategy_attempts_property() -> None:

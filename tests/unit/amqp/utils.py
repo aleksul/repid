@@ -194,6 +194,7 @@ class FakeSenderLink:
 class FakeReceiverLink:
     handle: int = 1
     is_usable: bool = True
+    can_settle: bool = True
     detached: bool = False
     deferred_delivery_ids: set[int] = field(default_factory=set)
     settled_delivery_ids: set[int] = field(default_factory=set)

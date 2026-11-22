@@ -6,7 +6,6 @@ not be imported directly by users.
 """
 
 from ._helpers import ChannelConfig as ChannelConfig
-from ._helpers import QueuedDelivery as QueuedDelivery
 from .channel import create_channel as create_channel
 from .channel import parse_dsn as parse_dsn
 from .client import ACKNOWLEDGE_METHOD as ACKNOWLEDGE_METHOD

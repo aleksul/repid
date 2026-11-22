@@ -3,14 +3,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator
-from contextlib import suppress
-from typing import TYPE_CHECKING, cast
+from collections.abc import AsyncIterator, Iterable
+from typing import TYPE_CHECKING
 
 import grpc
 import grpc.aio
 
-from ._helpers import ChannelConfig, QueuedDelivery
+from repid.connections._submission import _SubmissionQueue
+
+from ._helpers import ChannelConfig
 from .proto import ReceivedMessage, StreamingPullRequest, StreamingPullResponse
 from .received_message import PubsubReceivedMessage
 from .resilience import ResilienceState
@@ -18,6 +19,7 @@ from .resilience import ResilienceState
 logger = logging.getLogger("repid.connections.pubsub.protocol")
 
 if TYPE_CHECKING:
+    from repid.connections.abc import ReceivedMessageT
     from repid.connections.pubsub.message_broker import PubsubServer
 
     from .credentials import CredentialsProvider
@@ -42,9 +44,8 @@ class PubsubSubscriber:
         credentials_provider: CredentialsProvider,
         resilience_state: ResilienceState,
         stream_ack_deadline_seconds: int,
-        client_id: str,
-        concurrency_limit: int | None,
         server: PubsubServer,
+        client_id: str | None = None,
         heartbeat_interval: float = 25.0,
         error_retry_delay: float = 1.0,
     ) -> None:
@@ -54,7 +55,6 @@ class PubsubSubscriber:
         self._resilience_state = resilience_state
         self._stream_ack_deadline_seconds = stream_ack_deadline_seconds
         self._client_id = client_id
-        self._concurrency_limit = concurrency_limit
         self._server = server
         self._heartbeat_interval = heartbeat_interval
         self._error_retry_delay = error_retry_delay
@@ -63,13 +63,19 @@ class PubsubSubscriber:
         self._pause_event.set()
         self._shutdown_event = asyncio.Event()
         self._is_active = True
-        self._is_closing = False
+        self._close_task: asyncio.Task[None] | None = None
 
-        self._delivery_queue: asyncio.Queue[QueuedDelivery] = asyncio.Queue()
-        self._callback_tasks: set[asyncio.Task[None]] = set()
+        # Deliveries the worker has no room for yet, renewed until submitted.
+        self._submissions: dict[str, _SubmissionQueue[PubsubReceivedMessage]] = {
+            config.channel: _SubmissionQueue(config.intake, keep_alive=True)
+            for config in channel_configs
+        }
+        self._streaming_calls: set[
+            grpc.aio.StreamStreamCall[StreamingPullRequest, StreamingPullResponse]
+        ] = set()
         self._task: asyncio.Task[None] | None = None
 
-        # Track in-flight messages for nacking on close
+        # Late receipts close is rejecting, kept visible to its final cleanup.
         self._in_flight_messages: set[PubsubReceivedMessage] = set()
 
     @classmethod
@@ -81,9 +87,8 @@ class PubsubSubscriber:
         credentials_provider: CredentialsProvider,
         resilience_state: ResilienceState,
         stream_ack_deadline_seconds: int,
-        client_id: str,
-        concurrency_limit: int | None,
         server: PubsubServer,
+        client_id: str | None = None,
     ) -> PubsubSubscriber:
         """Create and start a new subscriber."""
         subscriber = cls(
@@ -92,9 +97,8 @@ class PubsubSubscriber:
             credentials_provider=credentials_provider,
             resilience_state=resilience_state,
             stream_ack_deadline_seconds=stream_ack_deadline_seconds,
-            client_id=client_id,
-            concurrency_limit=concurrency_limit,
             server=server,
+            client_id=client_id,
         )
         subscriber._start_background_tasks()
         return subscriber
@@ -110,10 +114,16 @@ class PubsubSubscriber:
     async def _process_background(self) -> None:
         """Main background processing loop."""
         tasks = [
-            *(self._streaming_pull_loop(config) for config in self._channel_configs),
-            self._dispatch_loop(),
+            asyncio.create_task(self._streaming_pull_loop(config))
+            for config in self._channel_configs
         ]
-        await asyncio.gather(*tasks)
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                if not task.done() and not task.cancelling():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _streaming_pull_loop(self, config: ChannelConfig) -> None:
         """StreamingPull loop for a single subscription with resilience."""
@@ -185,12 +195,13 @@ class PubsubSubscriber:
     ) -> AsyncIterator[StreamingPullRequest]:
         """Generate requests for the stream and keep it open after initialization."""
         # Send initial request with subscription info
+        limits = config.concurrency
         yield StreamingPullRequest(
             subscription=config.subscription_path,
             stream_ack_deadline_seconds=self._stream_ack_deadline_seconds,
-            client_id=self._client_id,
-            max_outstanding_messages=self._concurrency_limit or 0,
-            max_outstanding_bytes=0,
+            client_id=self._client_id if self._client_id is not None else config.client_id,
+            max_outstanding_messages=min(limits.messages or 0, 2**63 - 1),
+            max_outstanding_bytes=min(limits.payload_bytes or 0, 2**63 - 1),
         )
 
         while not self._shutdown_event.is_set():
@@ -206,10 +217,13 @@ class PubsubSubscriber:
         self,
         received_msg: ReceivedMessage,
         config: ChannelConfig,
-    ) -> PubsubReceivedMessage:
+    ) -> PubsubReceivedMessage | None:
         """Create a PubsubReceivedMessage from a raw received message."""
+        raw_message = received_msg.message
+        if raw_message is None:
+            return None
         return PubsubReceivedMessage(
-            raw_message=received_msg.message,  # pyrefly: ignore[bad-argument-type]
+            raw_message=raw_message,
             ack_id=received_msg.ack_id,
             delivery_attempt=received_msg.delivery_attempt,
             subscription_path=config.subscription_path,
@@ -223,15 +237,21 @@ class PubsubSubscriber:
         response: StreamingPullResponse,
         config: ChannelConfig,
     ) -> None:
-        """Process a single StreamingPull response."""
-        for received_msg in response.received_messages:
-            if received_msg.message is None:
-                continue
-            message = self._create_received_message(received_msg, config)
-            self._in_flight_messages.add(message)
-            await self._delivery_queue.put(
-                QueuedDelivery(callback=config.callback, message=message),
-            )
+        """Hand a single StreamingPull response's messages to the worker."""
+        submissions = self._submissions[config.channel]
+        for message in self._received_messages(response, config):
+            submissions.put(message)
+
+    def _received_messages(
+        self,
+        response: StreamingPullResponse,
+        config: ChannelConfig,
+    ) -> Iterable[PubsubReceivedMessage]:
+        return (
+            delivery
+            for message in response.received_messages
+            if (delivery := self._create_received_message(message, config)) is not None
+        )
 
     async def _run_streaming_pull(
         self,
@@ -240,6 +260,8 @@ class PubsubSubscriber:
         """Run a single StreamingPull session."""
         # Ensure credentials are valid
         await self._credentials_provider.ensure_valid()
+        if not self._pause_event.is_set() or self._shutdown_event.is_set():
+            return
 
         # Create the bidirectional stream
         stream_method = self._channel.stream_stream(
@@ -254,49 +276,29 @@ class PubsubSubscriber:
         call = stream_method(iterator)
         connected_at = time.monotonic()
 
-        # Process responses
-        async for response in call:
-            await self._resilience_state.record_stream_success(connected_at)
-
-            if self._shutdown_event.is_set():
-                break
-
-            await self._process_response(response, config)
-
-    async def _dispatch_loop(self) -> None:
-        """Dispatch messages to callbacks."""
+        self._streaming_calls.add(call)
         try:
-            while True:
-                delivery = await self._delivery_queue.get()
-                task = asyncio.create_task(self._execute_callback(delivery))
-                self._callback_tasks.add(task)
-                task.add_done_callback(self._callback_tasks.discard)
-                self._delivery_queue.task_done()
+            async for response in call:
+                if self._shutdown_event.is_set() or call not in self._streaming_calls:
+                    late = set(self._received_messages(response, config))
+                    # Close can interrupt this rejection. Keep the receipts
+                    # visible to its final cleanup until rejection finishes.
+                    self._in_flight_messages.update(late)
+                    await self._reject_unacted(late)
+                    self._in_flight_messages.difference_update(late)
+                    break
+                await self._process_response(response, config)
+                await self._resilience_state.record_stream_success(connected_at)
         except asyncio.CancelledError:
-            raise
+            # A locally cancelled call ends this session without stopping the
+            # subscriber. Cancellation of the reader task still propagates.
+            reader = asyncio.current_task()
+            if call in self._streaming_calls or (reader is not None and reader.cancelling()):
+                raise
         finally:
-            logger.debug("dispatcher.stop")
-
-    async def _execute_callback(self, delivery: QueuedDelivery) -> None:
-        """Execute a single callback."""
-        try:
-            await delivery.callback(delivery.message)
-        except asyncio.CancelledError:
-            if not delivery.message.is_acted_on:
-                with suppress(Exception):
-                    await delivery.message.reject()
-            raise
-        except Exception as exc:
-            logger.exception(
-                "message.callback.error",
-                exc_info=exc,
-            )
-            if not delivery.message.is_acted_on:
-                with suppress(Exception):
-                    await delivery.message.nack()
-        finally:
-            # Remove from in-flight tracking (message was either acked/nacked by callback)
-            self._in_flight_messages.discard(cast(PubsubReceivedMessage, delivery.message))
+            if call in self._streaming_calls:
+                self._streaming_calls.remove(call)
+                call.cancel()
 
     @property
     def is_active(self) -> bool:
@@ -311,11 +313,17 @@ class PubsubSubscriber:
         return self._task
 
     async def pause(self) -> None:
-        """Pause message processing."""
+        """Stop pulling new messages while allowing settlement of existing deliveries."""
         if not self.is_active:
             return
-        self._pause_event.clear()
+        self._pause_streams()
         self._is_active = False
+
+    def _pause_streams(self) -> None:
+        self._pause_event.clear()
+        calls, self._streaming_calls = self._streaming_calls, set()
+        for call in calls:
+            call.cancel()
 
     async def resume(self) -> None:
         """Resume message processing."""
@@ -324,55 +332,36 @@ class PubsubSubscriber:
         self._pause_event.set()
         self._is_active = True
 
-    def _cancel_callback_tasks(self) -> list[asyncio.Task[None]]:
-        """Cancel all pending callback tasks and return them."""
-        if not self._callback_tasks:
-            return []
-        logger.warning(
-            "subscriber.close.tasks_pending",
-            extra={"count": len(self._callback_tasks)},
-        )
-        callbacks = list(self._callback_tasks)
-        self._callback_tasks.clear()
-        for task in callbacks:
-            task.cancel()
-        return callbacks
-
     async def close(self) -> None:
         """Close the subscriber and clean up."""
-        if self._is_closing:
-            return
-        self._is_closing = True
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close())
+        await asyncio.shield(self._close_task)
 
+    async def _close(self) -> None:
         # First, pause to stop receiving new messages
-        self._pause_event.clear()
+        self._pause_streams()
 
         # Now signal shutdown
         self._shutdown_event.set()
 
         if self._task is not None:
             self._task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._task
+            await asyncio.gather(self._task, return_exceptions=True)
 
         self._is_active = False
 
-        # Reject any messages still sitting in the delivery queue
-        while not self._delivery_queue.empty():
-            delivery = self._delivery_queue.get_nowait()
-            if not delivery.message.is_acted_on:
-                with suppress(Exception):
-                    await delivery.message.reject()
-            self._delivery_queue.task_done()
+        # Deliveries the worker never received, plus late receipts close interrupted.
+        queued: set[ReceivedMessageT] = set()
+        for submissions in self._submissions.values():
+            queued.update(submissions.close())
+        queued.update(self._in_flight_messages)
+        self._in_flight_messages.clear()
+        await self._reject_unacted(queued)
 
-        # Clean up remaining callback tasks
-        callbacks = self._cancel_callback_tasks()
-        if callbacks:
-            with suppress(asyncio.CancelledError):
-                await asyncio.wait(callbacks)
-
-        # Final safety pass after callbacks had a chance to ack/reject on cancellation.
-        for msg in list(self._in_flight_messages):
-            if not msg.is_acted_on:
-                with suppress(Exception):
-                    await msg.reject()
+    @staticmethod
+    async def _reject_unacted(messages: Iterable[ReceivedMessageT]) -> None:
+        await asyncio.gather(
+            *(message.reject() for message in messages if not message.is_acted_on),
+            return_exceptions=True,
+        )

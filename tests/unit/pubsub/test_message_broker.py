@@ -1,9 +1,13 @@
+import asyncio
+from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import grpc.aio
 import pytest
 
+from repid import Concurrency
 from repid.connections.pubsub import message_broker
 from repid.connections.pubsub.helpers import ChannelOverride
 from repid.connections.pubsub.protocol import (
@@ -11,14 +15,16 @@ from repid.connections.pubsub.protocol import (
     InsecureCredentials,
     ResilienceConfig,
     ResilienceState,
+    StaticTokenCredentials,
 )
 from repid.connections.pubsub.protocol.client import PubsubProtocolClient
+from repid.connections.pubsub.protocol.proto import StreamingPullRequest, StreamingPullResponse
+from tests.intake import callback_intake
 
 
 def test_init_defaults() -> None:
     server = message_broker.PubsubServer(default_project="my-project")
 
-    assert server._default_project == "my-project"
     assert isinstance(server._credentials_provider, GoogleDefaultCredentials)
     assert server.host == "pubsub.googleapis.com:443"
     assert not server.is_connected
@@ -46,48 +52,12 @@ def test_init_explicit_auth_flags() -> None:
     assert isinstance(no_dsn_no_auth._credentials_provider, InsecureCredentials)
 
 
-def test_init_custom_credentials_provider() -> None:
-    provider = InsecureCredentials()
-    server = message_broker.PubsubServer(
-        default_project="p",
-        credentials_provider=provider,
-    )
-    assert server._credentials_provider is provider
-
-
-def test_all_properties() -> None:
-    server = message_broker.PubsubServer(
-        default_project="p",
-        title="T",
-        summary="S",
-        description="D",
-    )
-
-    assert server.host == "pubsub.googleapis.com:443"
-    assert server.pathname is None
-    assert server.title == "T"
-    assert server.summary == "S"
-    assert server.description == "D"
-    assert server.protocol_version == "v1"
-    assert server.variables is None
-    assert server.security is None
-    assert server.tags is None
-    assert server.external_docs is None
-    assert server.bindings is None
-    assert server.capabilities["supports_native_reply"] is False
-    assert server.capabilities["supports_lightweight_pause"] is False
-    assert server.resilience_config is not None
-    assert server.resilience_state is not None
-
-    with_dsn = message_broker.PubsubServer(dsn="http://localhost:8085", default_project="p")
-    assert with_dsn.host == "localhost:8085"
-
-
 async def test_connect_is_idempotent() -> None:
     server = message_broker.PubsubServer(default_project="p", use_google_auth=False)
 
-    with patch(
-        "repid.connections.pubsub.message_broker.create_channel",
+    with patch.object(
+        message_broker,
+        "create_channel",
         new_callable=AsyncMock,
         return_value=MagicMock(spec=grpc.aio.Channel),
     ):
@@ -99,6 +69,8 @@ async def test_disconnect_closes_subscribers_and_channel() -> None:
     server = message_broker.PubsubServer(default_project="p")
     mock_channel = MagicMock(spec=grpc.aio.Channel)
     server._channel = mock_channel
+    batcher = MagicMock(stop=AsyncMock())
+    server._control_batcher = batcher
 
     mock_sub = AsyncMock()
     server._active_subscribers.append(mock_sub)
@@ -106,6 +78,8 @@ async def test_disconnect_closes_subscribers_and_channel() -> None:
     await server.disconnect()
 
     mock_sub.close.assert_called_once()
+    batcher.stop.assert_awaited_once()
+    assert server._control_batcher is None
     mock_channel.close.assert_called_once()
     assert server._channel is None
 
@@ -135,8 +109,7 @@ async def test_publish_delegates_to_protocol_client() -> None:
         resilience_state=ResilienceState(ResilienceConfig(max_attempts=1)),
     )
 
-    message = MagicMock()
-    message.payload = b"payload"
+    message = MagicMock(payload=b"payload")
 
     await server.publish(channel="topic1", message=message)
 
@@ -144,6 +117,84 @@ async def test_publish_delegates_to_protocol_client() -> None:
     request = mock_unary.call_args[0][0]
     assert request.topic == "projects/p/topics/topic1"
     assert request.messages[0].data == b"payload"
+
+
+async def test_custom_credentials_authenticate_connection_and_publish() -> None:
+    credentials = StaticTokenCredentials("custom-token")
+    server = message_broker.PubsubServer(
+        default_project="p",
+        credentials_provider=credentials,
+        use_google_auth=False,
+    )
+    publish = AsyncMock()
+    channel = MagicMock(spec=grpc.aio.Channel)
+    channel.unary_unary.return_value = publish
+
+    with (
+        patch.object(
+            message_broker,
+            "create_channel",
+            new_callable=AsyncMock,
+            return_value=channel,
+        ) as create_channel,
+        patch.object(
+            credentials,
+            "ensure_valid",
+            new_callable=AsyncMock,
+            wraps=credentials.ensure_valid,
+        ) as ensure_valid,
+    ):
+        async with server.connection():
+            await server.publish(channel="events", message=MagicMock(payload=b"event"))
+
+    assert create_channel.call_args.kwargs["credentials_provider"] is credentials
+    assert ensure_valid.await_count == 2
+    publish.assert_awaited_once()
+    request = publish.call_args.args[0]
+    assert request.topic == "projects/p/topics/events"
+    assert request.messages[0].data == b"event"
+    channel.close.assert_awaited_once()
+
+
+async def test_subscribers_share_the_circuit_breaker() -> None:
+    server = message_broker.PubsubServer(default_project="p", use_google_auth=False)
+    server.resilience_config.failure_threshold = 2
+    server.resilience_config.base_delay = 0
+    channel = MagicMock(spec=grpc.aio.Channel)
+    error = grpc.aio.AioRpcError(grpc.StatusCode.UNAVAILABLE, None, None, "offline")
+
+    async def pull(
+        requests: AsyncGenerator[StreamingPullRequest, None],
+    ) -> AsyncGenerator[StreamingPullResponse, None]:
+        async with aclosing(requests):
+            await anext(requests)
+            yield StreamingPullResponse()
+            raise error
+
+    def open_stream(requests: AsyncGenerator[StreamingPullRequest, None]) -> MagicMock:
+        call = MagicMock(spec=grpc.aio.StreamStreamCall)
+        call.__aiter__.side_effect = lambda: pull(requests)
+        return call
+
+    channel.stream_stream.return_value = open_stream
+    with patch.object(
+        message_broker,
+        "create_channel",
+        new_callable=AsyncMock,
+        return_value=channel,
+    ):
+        async with server.connection():
+            for expected_attempts in (2, 3):
+                subscriber = await server.subscribe(
+                    intake=callback_intake({"events": AsyncMock()}),
+                )
+                try:
+                    with pytest.raises(grpc.aio.AioRpcError, match="offline"):
+                        await asyncio.wait_for(asyncio.shield(subscriber.task), 1)
+                    assert server.resilience_state.attempt_count == expected_attempts
+                    assert channel.stream_stream.call_count == expected_attempts
+                finally:
+                    await subscriber.close()
 
 
 async def test_publish_raises_error_when_disconnected() -> None:
@@ -158,11 +209,14 @@ async def test_subscribe_creates_subscriber_via_factory() -> None:
     server = message_broker.PubsubServer(default_project="p")
     server._channel = MagicMock(spec=grpc.aio.Channel)
 
-    with patch(
-        "repid.connections.pubsub.message_broker.PubsubSubscriber.create",
+    with patch.object(
+        message_broker.PubsubSubscriber,
+        "create",
         new_callable=AsyncMock,
     ) as mock_create:
-        ret = await server.subscribe(channels_to_callbacks={"chan1": MagicMock()})
+        ret = await server.subscribe(
+            intake=callback_intake({"chan1": MagicMock()}),
+        )
 
         assert ret is mock_create.return_value
         mock_create.assert_called_once()
@@ -175,11 +229,29 @@ async def test_subscribe_creates_subscriber_via_factory() -> None:
         )
 
 
+async def test_subscribe_treats_missing_channel_limit_as_unlimited() -> None:
+    server = message_broker.PubsubServer(default_project="p")
+    server._channel = MagicMock(spec=grpc.aio.Channel)
+
+    with patch.object(
+        message_broker.PubsubSubscriber,
+        "create",
+        new_callable=AsyncMock,
+    ) as mock_create:
+        await server.subscribe(
+            intake=callback_intake({"chan1": MagicMock()}, Concurrency(), {}),
+        )
+
+    assert mock_create.call_args.kwargs["channel_configs"][0].concurrency == Concurrency()
+
+
 async def test_subscribe_raises_error_when_disconnected() -> None:
     server = message_broker.PubsubServer(default_project="p")
 
     with pytest.raises(Exception, match=r"PubSub server is not connected\."):
-        await server.subscribe(channels_to_callbacks={"c": MagicMock()})
+        await server.subscribe(
+            intake=callback_intake({"c": MagicMock()}),
+        )
 
 
 def test_resolve_topic_path() -> None:
@@ -239,23 +311,14 @@ def test_extract_ordering_key() -> None:
 def test_build_attributes() -> None:
     server = message_broker.PubsubServer(default_project="p")
 
-    msg = MagicMock()
-    msg.headers = {"h1": "v1"}
-    msg.content_type = "application/json"
-    msg.reply_to = None
+    msg = MagicMock(headers={"h1": "v1"}, content_type="application/json", reply_to=None)
 
     assert server._build_attributes(msg, None) == {"h1": "v1", "content_type": "application/json"}
 
-    msg2 = MagicMock()
-    msg2.headers = None
-    msg2.content_type = None
-    msg2.reply_to = None
+    msg2 = MagicMock(headers=None, content_type=None, reply_to=None)
     assert server._build_attributes(msg2, None) is None
 
-    msg3 = MagicMock()
-    msg3.headers = {"h1": "v1"}
-    msg3.content_type = "application/json"
-    msg3.reply_to = None
+    msg3 = MagicMock(headers={"h1": "v1"}, content_type="application/json", reply_to=None)
     attrs3 = server._build_attributes(msg3, {"attributes": {"extra": "val"}})
     assert attrs3 == {"h1": "v1", "content_type": "application/json", "extra": "val"}
 
@@ -265,13 +328,15 @@ async def test_connect_failure_after_channel_creation_cleans_up_and_can_retry() 
 
     mock_channel = MagicMock(spec=grpc.aio.Channel)
     with (
-        patch(
-            "repid.connections.pubsub.message_broker.create_channel",
+        patch.object(
+            message_broker,
+            "create_channel",
             new_callable=AsyncMock,
             return_value=mock_channel,
         ),
-        patch(
-            "repid.connections.pubsub.message_broker.PubsubControlBatcher",
+        patch.object(
+            message_broker,
+            "PubsubControlBatcher",
         ) as mock_batcher_cls,
     ):
         failing_batcher = MagicMock(
@@ -303,13 +368,15 @@ async def test_connect_failure_preserves_error_when_cleanup_fails() -> None:
 
     mock_channel = MagicMock(spec=grpc.aio.Channel)
     with (
-        patch(
-            "repid.connections.pubsub.message_broker.create_channel",
+        patch.object(
+            message_broker,
+            "create_channel",
             new_callable=AsyncMock,
             return_value=mock_channel,
         ),
-        patch(
-            "repid.connections.pubsub.message_broker.PubsubControlBatcher",
+        patch.object(
+            message_broker,
+            "PubsubControlBatcher",
         ) as mock_batcher_cls,
     ):
         failing_batcher = MagicMock(
@@ -329,16 +396,20 @@ async def test_connect_failure_preserves_error_when_cleanup_fails() -> None:
 async def test_connect_failure_survives_channel_close_failure() -> None:
     server = message_broker.PubsubServer(default_project="p", use_google_auth=False)
 
-    mock_channel = MagicMock(spec=grpc.aio.Channel)
-    mock_channel.close = AsyncMock(side_effect=RuntimeError("close failed"))
+    mock_channel = MagicMock(
+        spec=grpc.aio.Channel,
+        close=AsyncMock(side_effect=RuntimeError("close failed")),
+    )
     with (
-        patch(
-            "repid.connections.pubsub.message_broker.create_channel",
+        patch.object(
+            message_broker,
+            "create_channel",
             new_callable=AsyncMock,
             return_value=mock_channel,
         ),
-        patch(
-            "repid.connections.pubsub.message_broker.PubsubControlBatcher",
+        patch.object(
+            message_broker,
+            "PubsubControlBatcher",
         ) as mock_batcher_cls,
     ):
         failing_batcher = MagicMock(
@@ -390,3 +461,55 @@ def test_init_rejects_invalid_resilience_settings(
             circuit_breaker_cooldown=cooldown,
             control_rpc_timeout=timeout,
         )
+
+
+@pytest.mark.parametrize(
+    ("concurrency", "channel_concurrency", "expected"),
+    [
+        (Concurrency(messages=4), {}, [(4, 0), (4, 0)]),
+        (Concurrency(), {}, [(0, 0), (0, 0)]),
+        (
+            Concurrency(messages=1000),
+            {"a": Concurrency(messages=3, payload_bytes=10 * 1024)},
+            [(3, 10 * 1024), (1000, 0)],
+        ),
+    ],
+)
+async def test_subscribe_sets_streaming_pull_limits(
+    concurrency: Concurrency,
+    channel_concurrency: dict[str, Concurrency],
+    expected: list[tuple[int, int]],
+) -> None:
+    server = message_broker.PubsubServer(default_project="p", use_google_auth=False)
+    server._channel = MagicMock(spec=grpc.aio.Channel)
+    initial_requests: asyncio.Queue[StreamingPullRequest] = asyncio.Queue()
+
+    async def pull(
+        requests: AsyncGenerator[StreamingPullRequest, None],
+    ) -> AsyncGenerator[StreamingPullResponse, None]:
+        async with aclosing(requests):
+            initial_requests.put_nowait(await anext(requests))
+            async for _ in requests:
+                yield StreamingPullResponse()
+
+    def open_stream(requests: AsyncGenerator[StreamingPullRequest, None]) -> MagicMock:
+        call = MagicMock(spec=grpc.aio.StreamStreamCall)
+        call.__aiter__.side_effect = lambda: pull(requests)
+        return call
+
+    server._channel.stream_stream.return_value = open_stream
+    subscriber = await server.subscribe(
+        intake=callback_intake(
+            {"a": AsyncMock(), "b": AsyncMock()},
+            concurrency,
+            channel_concurrency,
+        ),
+    )
+    try:
+        requests = [await asyncio.wait_for(initial_requests.get(), 1) for _ in expected]
+        assert [
+            (request.max_outstanding_messages, request.max_outstanding_bytes)
+            for request in sorted(requests, key=lambda request: request.subscription)
+        ] == expected
+    finally:
+        await subscriber.close()

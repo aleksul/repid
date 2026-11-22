@@ -4,7 +4,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import grpc.aio
-import pytest
 
 from repid.connections.pubsub.protocol import (
     ChannelConfig,
@@ -13,7 +12,7 @@ from repid.connections.pubsub.protocol import (
     proto,
 )
 from repid.connections.pubsub.protocol import subscriber as sub_module
-from repid.connections.pubsub.protocol._helpers import QueuedDelivery
+from tests.intake import CallbackIntake, callback_intake
 
 
 def _make_subscriber(**overrides: Any) -> sub_module.PubsubSubscriber:
@@ -25,19 +24,18 @@ def _make_subscriber(**overrides: Any) -> sub_module.PubsubSubscriber:
         "resilience_state": MagicMock(spec=ResilienceState),
         "server": MagicMock(),
         "stream_ack_deadline_seconds": 10,
-        "client_id": "client",
-        "concurrency_limit": 10,
     }
     defaults.update(overrides)
     return sub_module.PubsubSubscriber(**defaults)
 
 
-def _make_config(**overrides: Any) -> ChannelConfig:
+def _make_config(intake: CallbackIntake | None = None, **overrides: Any) -> ChannelConfig:
     """Helper to create a ChannelConfig with sensible defaults."""
+    intake = intake or callback_intake({"chan1": AsyncMock()})
     defaults: dict[str, Any] = {
         "channel": "chan1",
         "subscription_path": "sub1",
-        "callback": AsyncMock(),
+        "intake": intake.channels["chan1"],
     }
     defaults.update(overrides)
     return ChannelConfig(**defaults)
@@ -91,7 +89,8 @@ async def test_run_streaming_pull_logic() -> None:
     stream_mock = MagicMock()
     channel.stream_stream.return_value = stream_mock
 
-    config = _make_config()
+    intake = callback_intake({"chan1": AsyncMock()})
+    config = _make_config(intake)
 
     subscriber = _make_subscriber(
         channel=channel,
@@ -116,10 +115,12 @@ async def test_run_streaming_pull_logic() -> None:
 
     def side_effect(
         iterator: AsyncIterator[proto.StreamingPullRequest],
-    ) -> AsyncIterator[proto.StreamingPullResponse]:
+    ) -> MagicMock:
         nonlocal captured_iterator
         captured_iterator = iterator
-        return stream_iterator()
+        call = MagicMock()
+        call.__aiter__.side_effect = stream_iterator
+        return call
 
     stream_mock.side_effect = side_effect
 
@@ -135,35 +136,14 @@ async def test_run_streaming_pull_logic() -> None:
 
     await asyncio.sleep(0.1)
 
-    assert not subscriber._delivery_queue.empty()
-    item = subscriber._delivery_queue.get_nowait()
-    assert item.message.payload == b"data"
+    (submitted,) = intake.submitted
+    assert submitted.payload == b"data"
 
     continue_stream.set()
     await task
 
     if hasattr(gen, "aclose"):
         await gen.aclose()
-
-
-async def test_dispatch_loop() -> None:
-    subscriber = _make_subscriber()
-
-    callback = AsyncMock()
-    msg = MagicMock()
-
-    delivery = QueuedDelivery(callback=callback, message=msg)
-    await subscriber._delivery_queue.put(delivery)
-
-    task = asyncio.create_task(subscriber._dispatch_loop())
-
-    await asyncio.sleep(0.1)
-
-    callback.assert_called_once_with(msg)
-
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
 
 
 async def test_lifecycle_control() -> None:
@@ -183,13 +163,15 @@ async def test_lifecycle_control() -> None:
 
     await subscriber.close()
     assert not subscriber.is_active
-    assert subscriber._is_closing
+    assert subscriber._close_task is not None
+    assert subscriber._close_task.done()
     assert subscriber._task.cancelled()
 
 
 async def test_process_response_directly() -> None:
-    subscriber = _make_subscriber()
-    config = _make_config()
+    intake = callback_intake({"chan1": AsyncMock()})
+    config = _make_config(intake)
+    subscriber = _make_subscriber(channel_configs=[config])
 
     msg = proto.PubsubMessage(data=b"test-data")
     response = proto.StreamingPullResponse(
@@ -201,24 +183,5 @@ async def test_process_response_directly() -> None:
 
     await subscriber._process_response(response, config)
 
-    assert subscriber._delivery_queue.qsize() == 1
-    assert len(subscriber._in_flight_messages) == 1
-
-
-async def test_cancel_callback_tasks() -> None:
-    subscriber = _make_subscriber()
-    t1, t2 = MagicMock(), MagicMock()
-    subscriber._callback_tasks.add(t1)
-    subscriber._callback_tasks.add(t2)
-
-    result = subscriber._cancel_callback_tasks()
-
-    assert len(result) == 2
-    t1.cancel.assert_called_once()
-    t2.cancel.assert_called_once()
-    assert len(subscriber._callback_tasks) == 0
-
-
-async def test_cancel_callback_tasks_empty() -> None:
-    subscriber = _make_subscriber()
-    assert subscriber._cancel_callback_tasks() == []
+    assert len(intake.submitted) == 1
+    await intake.join()

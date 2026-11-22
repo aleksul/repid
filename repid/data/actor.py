@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 if TYPE_CHECKING:
     from repid.asyncapi.models.operations import OperationBindingsObject
@@ -12,7 +12,12 @@ if TYPE_CHECKING:
     from repid.data.message_schema import ActorMessageMetadata
     from repid.serializer import SerializerT
 
-FnReturnT = TypeVar("FnReturnT")
+# An actor function as written: `async def`, or a plain `def` that Repid runs in
+# an executor. It may return anything.
+ActorFunctionT: TypeAlias = Callable[..., Coroutine[Any, Any, Any]] | Callable[..., Any]
+
+# The next step of a middleware pipeline. Actor results are arbitrary user data.
+_ActorCall: TypeAlias = Callable[["ReceivedMessageT", "ActorData"], Coroutine[Any, Any, Any]]
 
 
 AutoActionT = Literal["ack", "nack", "reject"]
@@ -33,16 +38,13 @@ class ActorExecutionContext:
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ActorData:
-    fn: Callable[..., Coroutine[Any, Any, FnReturnT]]
+    # Already wrapped into a coroutine function.
+    fn: Callable[..., Coroutine[Any, Any, Any]]
     name: str
     confirmation_mode: Literal["auto", "always_ack", "ack_first", "manual", "manual_explicit"]
     routing_strategy: Callable[[BaseMessageT], bool]
     middleware_pipeline: Callable[
-        [
-            Callable[[ReceivedMessageT, ActorData], Coroutine[Any, Any, FnReturnT]],
-            ReceivedMessageT,
-            ActorData,
-        ],
+        [_ActorCall, ReceivedMessageT, ActorData],
         Coroutine[Any, Any, Any],
     ]
     channel_address: str

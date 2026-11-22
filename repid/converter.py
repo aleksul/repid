@@ -4,7 +4,7 @@ import asyncio
 import inspect
 import itertools
 import json
-from collections.abc import Callable, Coroutine, Iterable
+from collections.abc import Coroutine, Iterable
 from typing import TYPE_CHECKING, Any, Protocol, cast, get_args
 
 from repid._utils import is_installed
@@ -17,6 +17,7 @@ from repid.dependencies.header_dependency import Header
 if TYPE_CHECKING:
     from repid.connections.abc import ReceivedMessageT
     from repid.data import ActorData, CorrelationId
+    from repid.data.actor import ActorFunctionT
     from repid.dependencies._utils import DependencyT
 
 if is_installed("pydantic"):
@@ -64,7 +65,7 @@ async def _resolve_dependencies(  # noqa: PLR0917
 class ConverterT(Protocol):
     def __init__(
         self,
-        fn: Callable[..., Coroutine[Any, Any, Any]],
+        fn: ActorFunctionT,
         *,
         fn_locals: dict[str, Any] | None = None,
         correlation_id: CorrelationId | None,
@@ -84,7 +85,7 @@ class ConverterT(Protocol):
 class DefaultConverter:
     def __new__(
         cls,
-        fn: Callable[..., Coroutine[Any, Any, Any]],
+        fn: ActorFunctionT,
         *,
         fn_locals: dict[str, Any] | None = None,
         correlation_id: CorrelationId | None,
@@ -98,7 +99,7 @@ class DefaultConverter:
     # pretend to be an implementation of ConverterT
     def __init__(
         self,
-        fn: Callable[..., Coroutine[Any, Any, Any]],
+        fn: ActorFunctionT,
         *,
         fn_locals: dict[str, Any] | None = None,
         correlation_id: CorrelationId | None,
@@ -121,7 +122,7 @@ class DefaultConverter:
 class BasicConverter:
     def __init__(
         self,
-        fn: Callable[..., Coroutine[Any, Any, Any]],
+        fn: ActorFunctionT,
         *,
         fn_locals: dict[str, Any] | None = None,
         correlation_id: CorrelationId | None,
@@ -248,7 +249,7 @@ class BasicConverter:
 class PydanticConverter:
     def __init__(
         self,
-        fn: Callable[..., Coroutine[Any, Any, Any]],
+        fn: ActorFunctionT,
         *,
         fn_locals: dict[str, Any] | None = None,
         correlation_id: CorrelationId | None,

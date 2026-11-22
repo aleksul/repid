@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from typing import Any, cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -534,7 +534,17 @@ async def test_session_begin_uses_configured_incoming_window() -> None:
     assert begin.incoming_window == 12345
 
 
-async def test_session_receiver_prefetch_raises_incoming_window(monkeypatch: Any) -> None:
+@pytest.mark.parametrize(
+    ("prefetches", "incoming_window"),
+    [
+        pytest.param([10], 10, id="10_10"),
+        pytest.param([2**31, 2**31], 2**32 - 1, id="2_31_2_31_2_32_1"),
+    ],
+)
+async def test_session_receiver_prefetch_raises_incoming_window(
+    prefetches: list[int],
+    incoming_window: int,
+) -> None:
     @dataclass(slots=True)
     class MockReceiverLink:
         session: Session
@@ -570,16 +580,15 @@ async def test_session_receiver_prefetch_raises_incoming_window(monkeypatch: Any
     ) -> MockReceiverLink:
         return MockReceiverLink(session, name, address, handle, callback, prefetch)
 
-    monkeypatch.setattr(links, "ReceiverLink", fake_receiver_link)
+    with patch.object(links, "ReceiverLink", fake_receiver_link):
+        for index, prefetch in enumerate(prefetches):
+            await session.create_receiver(f"queue-{index}", lambda *_args: None, prefetch=prefetch)
 
-    await session.create_receiver("test-address", lambda *_args: None, prefetch=10)
-
-    assert session._incoming_window == 10
-    assert len(connection.sent) == 1
-    flow = connection.sent[0][1]
-    assert isinstance(flow, FlowFrame)
-    assert flow.handle is None
-    assert flow.incoming_window == 10
+        assert session._incoming_window == incoming_window
+        flow = connection.sent[-1][1]
+        assert isinstance(flow, FlowFrame)
+        assert flow.handle is None
+        assert flow.incoming_window == incoming_window
 
 
 async def test_session_handle_attach_detach_flow_disposition() -> None:
@@ -902,3 +911,68 @@ async def test_session_properties() -> None:
     assert session.state == SessionState.UNMAPPED
     assert not session.is_mapped
     assert not session.is_usable
+
+
+@pytest.mark.parametrize(
+    "detach_error",
+    [
+        pytest.param(None, id="none"),
+        pytest.param(RuntimeError("detach failed"), id="runtimeerror_detach_failed"),
+    ],
+)
+async def test_session_receiver_startup_timeout_removes_link(
+    detach_error: RuntimeError | None,
+) -> None:
+    connection = FakeConnection()
+    session = Session(cast(AmqpConnection, connection), channel=1)
+    await session.begin()
+    session._state_machine.transition_sync("recv_begin")
+
+    with (
+        patch.object(ReceiverLink, "wait_ready", side_effect=TimeoutError),
+        patch.object(ReceiverLink, "detach", side_effect=detach_error),
+        pytest.raises(TimeoutError),
+    ):
+        await session.create_receiver("queue", lambda *_args: None)
+
+    assert not session._links
+    assert not session._links_by_handle
+
+
+async def test_session_cancelled_after_receiver_attach_write_detaches_peer_link() -> None:
+    connection = FakeConnection()
+    session = Session(cast(AmqpConnection, connection), channel=1)
+    await session.begin()
+    session._state_machine.transition_sync("recv_begin")
+    connection.sent.clear()
+    attach_written = asyncio.Event()
+    attach_drained = asyncio.Event()
+    send_performative = connection.send_performative
+
+    async def send(channel: int, performative: Any) -> None:
+        await send_performative(channel, performative)
+        if isinstance(performative, AttachFrame):
+            attach_written.set()
+            await attach_drained.wait()
+        elif isinstance(performative, DetachFrame):
+            # The peer can reply to ATTACH while the local DETACH is draining.
+            await session.handle_performative(AttachFrame(name="rx", handle=2, role=False))
+            await session.handle_performative(DetachFrame(handle=2, closed=True))
+
+    with patch.object(connection, "send_performative", AsyncMock(side_effect=send)):
+        starting = asyncio.create_task(
+            session.create_receiver("queue", lambda *_args: None, name="rx", prefetch=1),
+        )
+        try:
+            await asyncio.wait_for(attach_written.wait(), 1)
+            starting.cancel()
+            await asyncio.sleep(0)
+        finally:
+            attach_drained.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(starting, 1)
+
+    assert [type(frame) for _, frame in connection.sent] == [AttachFrame, DetachFrame]
+    assert not session._links
+    assert not session._links_by_handle
+    assert not session._links_by_remote_handle

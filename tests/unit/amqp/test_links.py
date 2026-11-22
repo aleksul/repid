@@ -909,3 +909,34 @@ async def test_receiver_set_credit(receiver: ReceiverLink) -> None:
 async def test_receiver_set_credit_rejects_negative_credit(receiver: ReceiverLink) -> None:
     with pytest.raises(ValueError, match="credit must be non-negative"):
         await receiver.set_credit(-1)
+
+
+@pytest.mark.parametrize(
+    "close_mode",
+    [
+        pytest.param("detach", id="detach"),
+        pytest.param("remote_detach", id="remote_detach"),
+        pytest.param("invalidate", id="invalidate"),
+    ],
+)
+async def test_receiver_link_closure_disables_late_settlement(
+    receiver: ReceiverLink,
+    close_mode: str,
+) -> None:
+    receiver._state_machine.transition_sync("send_attach")
+    receiver._state_machine.transition_sync("recv_attach")
+    receiver._credit_pending_delivery_ids.add(42)
+    receiver._link_credit = 0
+
+    if close_mode == "detach":
+        await receiver.detach()
+    elif close_mode == "remote_detach":
+        await receiver._handle_detach(DetachFrame(handle=receiver.handle, closed=True))
+    else:
+        receiver.invalidate()
+
+    sent = cast(Any, receiver.session.connection).sent
+    sent.clear()
+    await receiver.settle_delivery(42, Accepted())
+    assert receiver._credit_pending_delivery_ids == set()
+    assert sent == []

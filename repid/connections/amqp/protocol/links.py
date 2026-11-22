@@ -174,14 +174,14 @@ class Link(ABC):
             return
 
         # Send DETACH if possible
-        if self._state_machine.is_usable():
+        if self._state_machine.is_usable() or self.state is LinkState.ATTACH_SENT:
             try:
                 detach_frame = DetachFrame(handle=self._handle, closed=True)
+                await self._state_machine.transition("send_detach")
                 await self._session.connection.send_performative(
                     self._session.channel,
                     detach_frame,
                 )
-                await self._state_machine.transition("send_detach")
             except (TimeoutError, OSError):
                 logger.warning("link.detach_frame.error", exc_info=True)
 
@@ -237,11 +237,11 @@ class Link(ABC):
         # Send DETACH response if we haven't already
         if self._state_machine.state == LinkState.DETACH_RCVD:
             with contextlib.suppress(OSError, asyncio.TimeoutError, ValueError):
+                await self._state_machine.transition("send_detach")
                 await self._session.connection.send_performative(
                     self._session.channel,
                     DetachFrame(handle=self._handle, closed=True),
                 )
-                await self._state_machine.transition("send_detach")
 
         self._session._remove_link(self)  # pyrefly: ignore[bad-argument-type]
 
@@ -535,6 +535,7 @@ class ReceiverLink(Link):
         self._delivery_count = 0
         self._link_credit = prefetch
         self._prefetch = prefetch
+        self._closing = False
 
         # Multi-frame transfer handling
         self._incoming_transfers: list[TransferFrame] = []
@@ -582,13 +583,29 @@ class ReceiverLink(Link):
             self._delivery_count = _attach.initial_delivery_count
 
         # Send initial FLOW to grant credit
-        await self._send_flow()
+        if not self._closing:
+            await self._send_flow()
 
     async def _handle_flow(self, flow: FlowFrame) -> None:
         """Handle FLOW frame (echo request)."""
         # Receivers typically only respond to drain/echo requests
-        if flow.echo:
+        if flow.echo and not self._closing:
             await self._send_flow()
+
+    @override
+    async def detach(self, _error: Exception | None = None) -> None:
+        self._closing = True
+        await super().detach(_error)
+
+    @override
+    async def _handle_detach(self, _detach: DetachFrame) -> None:
+        self._closing = True
+        await super()._handle_detach(_detach)
+
+    @override
+    def invalidate(self) -> None:
+        self._closing = True
+        super().invalidate()
 
     async def _send_flow(self) -> None:
         """Send FLOW frame to grant credit."""
@@ -684,8 +701,13 @@ class ReceiverLink(Link):
         await self._session.connection.send_performative(self._session.channel, disp)
         self._delivery_settled_by_callback = True
 
+    @property
+    def can_settle(self) -> bool:
+        """Whether deliveries received on this link can still be settled."""
+        return not self._closing and self.is_attached
+
     async def settle_delivery(self, delivery_id: int, state: ReceiverSettlementState) -> None:
-        if not self.is_delivery_settled(delivery_id):
+        if self.can_settle and not self.is_delivery_settled(delivery_id):
             await self._send_disposition(delivery_id, state)
         await self.release_delivery_credit(delivery_id)
 
@@ -740,7 +762,7 @@ class ReceiverLink(Link):
 
             if self._link_credit < self._prefetch:
                 self._link_credit += 1
-                if self.is_usable:
+                if self.is_attached and not self._closing:
                     await self._send_flow()
 
     async def set_credit(self, credit: int) -> None:

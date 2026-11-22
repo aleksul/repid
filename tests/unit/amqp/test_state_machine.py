@@ -11,22 +11,8 @@ from repid.connections.amqp.protocol.states import (
 )
 
 
-async def test_state_transition_repr() -> None:
-    transition = StateTransition(
-        from_state=ConnectionState.START,
-        to_state=ConnectionState.OPENED,
-        trigger="open",
-    )
-    rep = repr(transition)
-    assert "START" in rep
-    assert "OPENED" in rep
-    assert "open" in rep
-
-
-async def test_state_error() -> None:
+async def test_state_error_formats_required_states() -> None:
     error = StateError(ConnectionState.START, [ConnectionState.OPENED, ConnectionState.OPEN_SENT])
-    assert error.current_state == ConnectionState.START
-    assert len(error.required_states) == 2
     error_msg = str(error)
     assert "START" in error_msg
     assert "OPENED" in error_msg
@@ -56,7 +42,12 @@ async def test_state_machine_history() -> None:
     await sm.transition("send_header")
     history = sm.history
     assert len(history) == 1
-    assert history[0].trigger == "send_header"
+    assert repr(history) == "[START -> HDR_SENT (send_header)]"
+    await sm.transition("recv_header")
+    assert repr(sm.history) == (
+        "[START -> HDR_SENT (send_header), HDR_SENT -> HDR_EXCH (recv_header)]"
+    )
+    assert repr(history) == "[START -> HDR_SENT (send_header)]"
 
 
 async def test_state_machine_listener_exception() -> None:

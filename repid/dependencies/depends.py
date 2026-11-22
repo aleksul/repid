@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 import inspect
 from collections.abc import Callable, Coroutine, Generator
 from concurrent.futures import Executor
 from typing import TYPE_CHECKING, Any
 
 from repid._utils import asyncify
-from repid.dependencies._utils import DependencyT, get_dependency
+from repid.dependencies._utils import DependencyT, get_dependency, resolve_dependencies
 from repid.dependencies.header_dependency import Header
 
 if TYPE_CHECKING:
@@ -58,17 +57,7 @@ class Depends:
         self._update_subdependencies()
 
     async def resolve(self, *, context: DependencyContext) -> Any:
-        unresolved_dependencies: dict[str, Coroutine[Any, Any, Any]] = {
-            dep_name: dep.resolve(context=context)
-            for dep_name, dep in self._subdependencies.items()
-        }
-
-        unresolved_dependencies_names = list(unresolved_dependencies.keys())
-        unresolved_dependencies_values = list(unresolved_dependencies.values())
-
-        resolved = await asyncio.gather(*unresolved_dependencies_values)
-
-        dependency_kwargs = dict(zip(unresolved_dependencies_names, resolved, strict=False))
+        dependency_kwargs = await resolve_dependencies(self._subdependencies, context)
 
         payload_arguments = {}
         for name in self._payload_arguments:

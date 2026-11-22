@@ -1,22 +1,27 @@
 from __future__ import annotations
 
-import asyncio
 import inspect
 import itertools
 import json
-from collections.abc import Callable, Coroutine, Iterable
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Protocol, cast, get_args
 
 from repid._utils import is_installed
 from repid.data import ConverterInputSchema
 from repid.data.actor import ActorExecutionContext
-from repid.dependencies._utils import DependencyContext, get_dependency, get_full_payload_marker
+from repid.dependencies._utils import (
+    DependencyContext,
+    get_dependency,
+    get_full_payload_marker,
+    resolve_dependencies,
+)
 from repid.dependencies.depends import Depends as DependsClass
 from repid.dependencies.header_dependency import Header
 
 if TYPE_CHECKING:
     from repid.connections.abc import ReceivedMessageT
     from repid.data import ActorData, CorrelationId
+    from repid.data.actor import ActorFunctionT
     from repid.dependencies._utils import DependencyT
 
 if is_installed("pydantic"):
@@ -37,6 +42,8 @@ async def _resolve_dependencies(  # noqa: PLR0917
     headers_id_to_name: dict[int, str],
     dependencies: dict[str, DependencyT],
 ) -> dict[str, Any]:
+    if not dependencies:
+        return {}
     context = DependencyContext(
         message=message,
         actor=actor,
@@ -47,24 +54,13 @@ async def _resolve_dependencies(  # noqa: PLR0917
         headers_id_to_name=headers_id_to_name,
     )
 
-    unresolved_dependencies: dict[str, Coroutine[Any, Any, Any]] = {
-        dep_name: dep.resolve(context=context) for dep_name, dep in dependencies.items()
-    }
-
-    unresolved_dependencies_names, unresolved_dependencies_values = (
-        unresolved_dependencies.keys(),
-        unresolved_dependencies.values(),
-    )
-
-    resolved = await asyncio.gather(*unresolved_dependencies_values)
-
-    return dict(zip(unresolved_dependencies_names, resolved, strict=False))
+    return await resolve_dependencies(dependencies, context)
 
 
 class ConverterT(Protocol):
     def __init__(
         self,
-        fn: Callable[..., Coroutine[Any, Any, Any]],
+        fn: ActorFunctionT,
         *,
         fn_locals: dict[str, Any] | None = None,
         correlation_id: CorrelationId | None,
@@ -84,7 +80,7 @@ class ConverterT(Protocol):
 class DefaultConverter:
     def __new__(
         cls,
-        fn: Callable[..., Coroutine[Any, Any, Any]],
+        fn: ActorFunctionT,
         *,
         fn_locals: dict[str, Any] | None = None,
         correlation_id: CorrelationId | None,
@@ -98,7 +94,7 @@ class DefaultConverter:
     # pretend to be an implementation of ConverterT
     def __init__(
         self,
-        fn: Callable[..., Coroutine[Any, Any, Any]],
+        fn: ActorFunctionT,
         *,
         fn_locals: dict[str, Any] | None = None,
         correlation_id: CorrelationId | None,
@@ -121,7 +117,7 @@ class DefaultConverter:
 class BasicConverter:
     def __init__(
         self,
-        fn: Callable[..., Coroutine[Any, Any, Any]],
+        fn: ActorFunctionT,
         *,
         fn_locals: dict[str, Any] | None = None,
         correlation_id: CorrelationId | None,
@@ -248,7 +244,7 @@ class BasicConverter:
 class PydanticConverter:
     def __init__(
         self,
-        fn: Callable[..., Coroutine[Any, Any, Any]],
+        fn: ActorFunctionT,
         *,
         fn_locals: dict[str, Any] | None = None,
         correlation_id: CorrelationId | None,

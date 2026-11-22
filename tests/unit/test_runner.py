@@ -863,7 +863,6 @@ async def test_runner_unrouted_message_counts_are_channel_scoped() -> None:
     server = InMemoryServer()
     runner = _Runner(actor_context=_make_actor_context(server), max_unrouted_retries=2)
 
-    # The same message id is seen on two channels; each channel counts separately.
     for _ in range(2):
         msg = _make_unrouted_message("msg-poison", channel="first")
         await runner._message_handler([], msg)

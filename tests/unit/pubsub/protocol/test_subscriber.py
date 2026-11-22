@@ -74,9 +74,6 @@ async def test_start_empty_config_sets_inactive() -> None:
     assert sub._task is None
 
 
-# --- _is_expected_stream_close ---
-
-
 def test_is_expected_stream_close_true() -> None:
     error = grpc.aio.AioRpcError(
         code=grpc.StatusCode.UNAVAILABLE,
@@ -107,9 +104,6 @@ def test_is_expected_stream_close_wrong_details() -> None:
     assert PubsubSubscriber._is_expected_stream_close(error) is False
 
 
-# --- _create_received_message ---
-
-
 def test_create_received_message() -> None:
     server = MagicMock(spec=PubsubServer)
     sub = _make_subscriber(server=server)
@@ -126,9 +120,6 @@ def test_create_received_message() -> None:
     assert result._subscription_path == "sub/path"
     assert result._channel_name == "my-ch"
     assert result._server is server
-
-
-# --- _process_response ---
 
 
 async def test_process_response_filters_none_messages() -> None:
@@ -232,9 +223,6 @@ async def test_request_iterator_sends_heartbeats() -> None:
     await cast(AsyncGenerator[StreamingPullRequest, None], it).aclose()
 
 
-# --- _execute_callback ---
-
-
 async def test_execute_callback_success() -> None:
     sub = _make_subscriber()
     msg = MagicMock()
@@ -307,9 +295,6 @@ async def test_execute_callback_cancelled_skips_reject_when_acted_on() -> None:
     msg.reject.assert_not_called()
 
 
-# --- _dispatch_loop ---
-
-
 async def test_dispatch_loop_dispatches_and_cancels() -> None:
     sub = _make_subscriber()
     callback = AsyncMock()
@@ -325,9 +310,6 @@ async def test_dispatch_loop_dispatches_and_cancels() -> None:
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-
-
-# --- Lifecycle: pause / resume / task ---
 
 
 async def test_pause_resume_lifecycle() -> None:
@@ -375,9 +357,6 @@ async def test_task_property_returns_task() -> None:
         await sub._task  # pyrefly: ignore[not-async]
 
 
-# --- _cancel_callback_tasks ---
-
-
 def test_cancel_callback_tasks_empty() -> None:
     sub = _make_subscriber()
     result = sub._cancel_callback_tasks()
@@ -412,7 +391,6 @@ async def test_close_basic() -> None:
 async def test_close_idempotent() -> None:
     sub = _make_subscriber()
     await sub.close()
-    # Second close is a no-op
     with patch.object(sub._pause_event, "clear") as mock_clear:
         await sub.close()
         mock_clear.assert_not_called()
@@ -501,9 +479,6 @@ async def test_close_waits_for_callbacks_before_rejecting_in_flight() -> None:
 
     assert msg.acted
     msg.reject.assert_not_called()
-
-
-# --- _streaming_pull_loop ---
 
 
 async def test_streaming_pull_loop_normal_execution() -> None:

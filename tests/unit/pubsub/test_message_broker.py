@@ -353,3 +353,40 @@ async def test_connect_failure_survives_channel_close_failure() -> None:
         assert server.is_connected is False
         assert server._channel is None
         mock_channel.close.assert_awaited_once()
+
+
+def test_init_passes_circuit_breaker_and_control_timeout_settings() -> None:
+    server = message_broker.PubsubServer(
+        default_project="p",
+        circuit_breaker_threshold=4,
+        circuit_breaker_cooldown=12.5,
+        control_rpc_timeout=3.0,
+    )
+
+    assert server.resilience_state.config.failure_threshold == 4
+    assert server.resilience_state.config.open_duration == 12.5
+    assert server._control_rpc_timeout == 3.0
+
+
+@pytest.mark.parametrize(
+    ("threshold", "cooldown", "timeout"),
+    [
+        pytest.param(0, 30.0, 10.0, id="threshold_zero"),
+        pytest.param(10, -1.0, 10.0, id="negative_cooldown"),
+        pytest.param(10, float("inf"), 10.0, id="infinite_cooldown"),
+        pytest.param(10, 30.0, 0.0, id="zero_timeout"),
+        pytest.param(10, 30.0, float("nan"), id="nan_timeout"),
+    ],
+)
+def test_init_rejects_invalid_resilience_settings(
+    threshold: int,
+    cooldown: float,
+    timeout: float,
+) -> None:
+    with pytest.raises(ValueError, match=r"circuit_breaker|control_rpc_timeout"):
+        message_broker.PubsubServer(
+            default_project="p",
+            circuit_breaker_threshold=threshold,
+            circuit_breaker_cooldown=cooldown,
+            control_rpc_timeout=timeout,
+        )

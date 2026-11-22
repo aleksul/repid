@@ -27,6 +27,7 @@ from .proto import ReceivedMessage as ReceivedMessage
 from .proto import StreamingPullRequest as StreamingPullRequest
 from .proto import StreamingPullResponse as StreamingPullResponse
 from .received_message import PubsubReceivedMessage as PubsubReceivedMessage
+from .resilience import CircuitOpenError as CircuitOpenError
 from .resilience import ReconnectionExhaustedError as ReconnectionExhaustedError
 from .resilience import ResilienceConfig as ResilienceConfig
 from .resilience import ResilienceState as ResilienceState

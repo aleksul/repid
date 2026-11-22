@@ -2,11 +2,14 @@
 
 import argparse
 import asyncio
+import os
 import shutil
+import socket
 import subprocess
 import sys
 from contextlib import suppress
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 from uuid import uuid4
 
@@ -77,7 +80,10 @@ BROKERS = {
             "-c",
             (
                 "while [ ! -s /tmp/port ]; do sleep 0.1; done; "
-                "exec /usr/bin/rpk redpanda start --smp 1 --reserve-memory 0M --overprovisioned "
+                # Without --memory Redpanda sizes itself to all memory Docker has,
+                # and the kernel OOM-kills it once other brokers share the host.
+                "exec /usr/bin/rpk redpanda start --smp 1 --memory 1G --reserve-memory 0M "
+                "--overprovisioned "
                 "--node-id 0 --kafka-addr PLAINTEXT://0.0.0.0:29092 "
                 '--advertise-kafka-addr "PLAINTEXT://127.0.0.1:$(cat /tmp/port)"'
             ),
@@ -280,15 +286,80 @@ async def _prepare_sqs(address: str) -> None:
             await client.create_queue(QueueName=name)
 
 
-def start_broker(target: str) -> BrokerContainer:
+_OWNER_LABEL = "repid-test.owner"
+
+
+@cache
+def _host_id() -> str:
+    """Identify this machine stably enough to tell its test sessions from others'.
+
+    A macOS hostname changes with the network, so use the hardware UUID there.
+    Elsewhere the hostname is stable, and unique per container sharing a daemon.
+    """
+    if sys.platform == "darwin":
+        with suppress(OSError, subprocess.SubprocessError):
+            return subprocess.check_output(
+                ["/usr/sbin/sysctl", "-n", "kern.uuid"],
+                text=True,
+                timeout=5,
+            ).strip()
+    return socket.gethostname()
+
+
+def _owner() -> str:
+    return f"{_host_id()}:{os.getpid()}"
+
+
+def _owner_alive(owner: str) -> bool:
+    host, _, pid = owner.rpartition(":")
+    if host != _host_id() or not pid.isdigit():
+        # Another machine's container, or a label we did not write: leave it alone.
+        return True
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def remove_orphaned_brokers() -> None:
+    """Remove brokers left by test sessions on this host that were killed before teardown.
+
+    Cleanup is best effort: a Docker failure here must not fail the session.
+    """
+    try:
+        listing = _docker(
+            "ps",
+            "--all",
+            "--filter",
+            f"label={_OWNER_LABEL}",
+            "--format",
+            f'{{{{.Names}}}} {{{{.Label "{_OWNER_LABEL}"}}}}',
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        sys.stderr.write(f"Skipping orphaned broker cleanup: {exc}\n")
+        return
+    for line in listing.splitlines():
+        name, _, owner = line.partition(" ")
+        if not _owner_alive(owner):
+            with suppress(OSError, subprocess.SubprocessError):
+                _docker("rm", "--force", "--volumes", name)
+
+
+def start_broker(target: str, *, owned: bool = False) -> BrokerContainer:
+    """Start a broker; an owned broker is labelled so a later session can reap it."""
     config = BROKERS[target]
     name = f"repid-test-{target}-{uuid4().hex[:12]}"
+    labels = ("--label", f"{_OWNER_LABEL}={_owner()}") if owned else ()
     try:
         _docker(
             "run",
             "--detach",
             "--name",
             name,
+            *labels,
             "--publish",
             f"127.0.0.1::{config.port}",
             *config.options,

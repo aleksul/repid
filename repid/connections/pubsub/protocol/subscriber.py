@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from typing import TYPE_CHECKING, cast
@@ -251,10 +252,11 @@ class PubsubSubscriber:
 
         # Start the stream
         call = stream_method(iterator)
+        connected_at = time.monotonic()
 
         # Process responses
         async for response in call:
-            await self._resilience_state.record_success()
+            await self._resilience_state.record_stream_success(connected_at)
 
             if self._shutdown_event.is_set():
                 break

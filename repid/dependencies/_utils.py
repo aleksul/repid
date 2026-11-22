@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import warnings
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Any, Protocol, get_origin, runtime_checkable
 
@@ -28,6 +30,49 @@ class DependencyContext:
 @runtime_checkable
 class DependencyT(Protocol):
     async def resolve(self, *, context: DependencyContext) -> Any: ...
+
+
+# Lookups that never suspend. Running them inline avoids a task per dependency per message.
+_INLINE_DEPENDENCIES = (Header, MessageDependency)
+
+
+async def resolve_dependencies(
+    dependencies: Mapping[str, DependencyT],
+    context: DependencyContext,
+) -> dict[str, Any]:
+    """Resolve dependencies by name, running the remaining ones concurrently as tasks."""
+    resolved: dict[str, Any] = {}
+    concurrent: list[tuple[str, DependencyT]] = []
+    for name, dependency in dependencies.items():
+        if isinstance(dependency, _INLINE_DEPENDENCIES):
+            resolved[name] = await dependency.resolve(context=context)
+        else:
+            concurrent.append((name, dependency))
+    if concurrent:
+        # Create tasks only after inline lookups succeed, so a failed lookup
+        # starts no dependency.
+        tasks = [
+            asyncio.create_task(dependency.resolve(context=context)) for _, dependency in concurrent
+        ]
+        try:
+            values = await asyncio.gather(*tasks)
+        except BaseException:
+            await _cancel_remaining(tasks)
+            raise
+        for (name, _), value in zip(concurrent, values, strict=True):
+            resolved[name] = value
+    return resolved
+
+
+async def _cancel_remaining(tasks: list[asyncio.Task[Any]]) -> None:
+    """Stop dependencies still running after one failed or the caller was cancelled."""
+    for task in tasks:
+        task.cancel()
+    await asyncio.wait(tasks)
+    for task in tasks:
+        if not task.cancelled():
+            # Their failures are superseded by the one being raised.
+            task.exception()
 
 
 def get_dependency(t: Any) -> DependencyT | None:

@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import json
 from typing import Annotated, Any
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from pydantic import BaseModel, ValidationError
 
 from repid import FullPayload, Header
-from repid.converter import BasicConverter, ConverterT, PydanticConverter
+from repid.converter import BasicConverter, ConverterT, DefaultConverter, PydanticConverter
 from repid.data import ActorExecutionContext, MessageData
 from repid.dependencies import Depends
 from repid.serializer import default_serializer
@@ -872,3 +872,23 @@ def test_basic_converter_full_payload_model_raises() -> None:
 
     with pytest.raises(ValueError, match="FullPayload\\(\\) requires PydanticConverter"):
         BasicConverter(fn, fn_locals=locals(), correlation_id=None)
+
+
+async def _actor_for_default_converter(user_id: int) -> None: ...
+
+
+def test_default_converter_falls_back_to_basic_without_pydantic() -> None:
+    with patch("repid.converter.is_installed", return_value=False):
+        converter = DefaultConverter(_actor_for_default_converter, correlation_id=None)
+    assert isinstance(converter, BasicConverter)
+
+
+def test_default_converter_rejects_unsupported_pydantic() -> None:
+    def pydantic_1_installed(_dependency: str, version_constraints: str | None = None) -> bool:
+        return version_constraints is None
+
+    with (
+        patch("repid.converter.is_installed", side_effect=pydantic_1_installed),
+        pytest.raises(ValueError, match=r"only 2\.x is supported"),
+    ):
+        DefaultConverter(_actor_for_default_converter, correlation_id=None)

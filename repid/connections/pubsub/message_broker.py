@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import uuid
 from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
@@ -71,6 +72,9 @@ class PubsubServer:
         reconnect_max_delay: float = 32.0,
         reconnect_jitter_factor: float = 0.25,
         stability_threshold: float = 60.0,
+        circuit_breaker_threshold: int = 10,
+        circuit_breaker_cooldown: float = 30.0,
+        control_rpc_timeout: float = 10.0,
         # Subscriber configuration
         stream_ack_deadline_seconds: int = 300,
         # Dependency injection for testability
@@ -97,11 +101,20 @@ class PubsubServer:
             external_docs: AsyncAPI external documentation link.
             bindings: AsyncAPI server bindings.
             channel_overrides: Per-channel configuration overrides.
-            max_reconnect_attempts: Maximum retry/reconnection attempts.
+            max_reconnect_attempts: Maximum attempts per publish, acknowledge or
+                deadline call.
             reconnect_base_delay: Initial retry delay in seconds.
             reconnect_max_delay: Maximum retry delay in seconds.
             reconnect_jitter_factor: Jitter factor (0.0-1.0) for retry delays.
-            stability_threshold: Seconds of stability before resetting retry counter.
+            stability_threshold: Seconds a streaming pull must stay connected before
+                its responses reset the failure count.
+            circuit_breaker_threshold: Consecutive failed attempts, across all calls
+                and streams, after which calls fail without contacting Pub/Sub and
+                streams stop reconnecting.
+            circuit_breaker_cooldown: Seconds the circuit breaker stays open before
+                one call may probe Pub/Sub again.
+            control_rpc_timeout: Timeout in seconds for each acknowledge and deadline
+                extension attempt. Keep it well below the acknowledgment deadline.
             stream_ack_deadline_seconds: Ack deadline for StreamingPull.
             max_outstanding_messages: Flow control for outstanding messages.
             max_outstanding_bytes: Flow control for outstanding bytes (0=unlimited).
@@ -124,6 +137,13 @@ class PubsubServer:
         self._external_docs = external_docs
         self._bindings = bindings
 
+        if circuit_breaker_threshold < 1:
+            raise ValueError("circuit_breaker_threshold must be at least 1")
+        if not 0 <= circuit_breaker_cooldown < math.inf:
+            raise ValueError("circuit_breaker_cooldown must be non-negative and finite")
+        if not 0 < control_rpc_timeout < math.inf:
+            raise ValueError("control_rpc_timeout must be positive and finite")
+
         # Resilience configuration
         self._resilience_config = ResilienceConfig(
             max_attempts=max_reconnect_attempts,
@@ -131,8 +151,11 @@ class PubsubServer:
             max_delay=reconnect_max_delay,
             jitter_factor=reconnect_jitter_factor,
             stability_threshold=stability_threshold,
+            failure_threshold=circuit_breaker_threshold,
+            open_duration=circuit_breaker_cooldown,
         )
         self._resilience_state = ResilienceState(self._resilience_config)
+        self._control_rpc_timeout = control_rpc_timeout
 
         # Subscriber configuration
         self._stream_ack_deadline_seconds = stream_ack_deadline_seconds
@@ -267,6 +290,7 @@ class PubsubServer:
             channel=channel,
             credentials_provider=self._credentials_provider,
             resilience_state=self._resilience_state,
+            control_rpc_timeout=self._control_rpc_timeout,
         )
         control_batcher = PubsubControlBatcher(protocol_client)
         try:

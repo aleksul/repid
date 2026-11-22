@@ -1189,9 +1189,13 @@ class RedisServer(ServerT):
             retry=retry,
             retry_on_error=[ConnectionError, TimeoutError],
             decode_responses=False,  # We handle decoding ourselves
+            # redis-py 8 defaults to a 5s socket timeout, which would abort notification
+            # reads blocking for longer (block_ms=0 waits indefinitely). RPCs are bounded
+            # by read_timeout instead. A socket_timeout in the DSN still takes precedence.
+            socket_timeout=None,
         )
         try:
-            await redis.ping()  # pyrefly: ignore[not-async]
+            await redis.ping()
         except BaseException:
             try:
                 await redis.aclose()

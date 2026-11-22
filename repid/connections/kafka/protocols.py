@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from aiokafka.abc import ConsumerRebalanceListener
+    from aiokafka.structs import OffsetAndMetadata, RecordMetadata, TopicPartition
 
 
 class ConsumerRecordProtocol(Protocol):
@@ -11,25 +17,32 @@ class ConsumerRecordProtocol(Protocol):
     timestamp_type: int
     key: bytes | None
     value: bytes | None
-    headers: list[tuple[str, bytes]] | None
+    headers: Sequence[tuple[str, bytes | None]] | None
     checksum: int | None
     serialized_key_size: int
     serialized_value_size: int
 
 
 class AIOKafkaConsumerProtocol(Protocol):
+    def subscribe(
+        self,
+        topics: tuple[str, ...],
+        *,
+        listener: ConsumerRebalanceListener,
+    ) -> None: ...
     async def start(self) -> None: ...
     async def stop(self) -> None: ...
     async def getmany(
         self,
-        *partitions: Any,
+        *partitions: TopicPartition,
         timeout_ms: int = 0,
         max_records: int | None = None,
-    ) -> dict[Any, list[ConsumerRecordProtocol]]: ...
-    async def commit(self, offsets: dict[Any, Any] | None = None) -> None: ...
-    def pause(self, *partitions: Any) -> None: ...
-    def resume(self, *partitions: Any) -> None: ...
-    def assignment(self) -> set[Any]: ...
+    ) -> dict[TopicPartition, list[ConsumerRecordProtocol]]: ...
+    async def commit(self, offsets: dict[TopicPartition, OffsetAndMetadata]) -> None: ...
+    def pause(self, *partitions: TopicPartition) -> None: ...
+    def paused(self) -> set[TopicPartition]: ...
+    def resume(self, *partitions: TopicPartition) -> None: ...
+    def assignment(self) -> set[TopicPartition]: ...
 
 
 class AIOKafkaProducerProtocol(Protocol):
@@ -43,4 +56,4 @@ class AIOKafkaProducerProtocol(Protocol):
         partition: int | None = None,
         timestamp_ms: int | None = None,
         headers: list[tuple[str, bytes]] | None = None,
-    ) -> Any: ...
+    ) -> RecordMetadata | None: ...
